@@ -1,9 +1,16 @@
 //! Native service entry point, P2P startup, and sync loop.
 
 use super::*;
+mod sync_body_backpressure {
+    include!("sync_body_backpressure.rs");
+}
 #[cfg(test)]
 mod sync_queue_qualification_tests {
     include!("sync_queue_qualification_tests.rs");
+}
+#[cfg(test)]
+mod sync_control_backpressure_tests {
+    include!("sync_control_backpressure_tests.rs");
 }
 
 pub async fn run(cli: NativeCli) -> Result<()> {
@@ -2099,18 +2106,36 @@ pub(crate) fn truncate_native_sync_response_blocks_to_wire_budget(
 }
 
 async fn send_native_block_body_request(
+    transport: &mut NativeBlockBodyTransport,
     handle: &ProtocolHandle,
     peer_id: PeerId,
     locator: &NativeBlockBodyLocator,
 ) -> bool {
-    send_sync_message(
-        handle,
-        peer_id,
-        NativeSyncMessage::BlockBodyRequest {
-            block_hash: locator.block_hash,
+    let payload = match encode_sync_message(&NativeSyncMessage::BlockBodyRequest {
+        block_hash: locator.block_hash,
+    }) {
+        Ok(payload) => payload,
+        Err(err) => {
+            warn!(error = %err, "failed to encode native block body request");
+            transport.defer_unsent_body_request(peer_id, locator);
+            return false;
+        }
+    };
+    let queued = handle.sender().try_send(DirectedProtocolMessage {
+        target: Some(peer_id),
+        message: ProtocolMessage {
+            protocol: NATIVE_SYNC_PROTOCOL_ID,
+            payload,
         },
-    )
-    .await
+    });
+    if let Err(err) = queued {
+        debug!(error = %err, "deferred native block body request under local queue pressure");
+        transport.defer_unsent_body_request(peer_id, locator);
+        false
+    } else {
+        info!(peer = %hex32(&peer_id), message = "block_body_request", "queued native sync message");
+        true
+    }
 }
 
 async fn send_native_block_body_chunks_with_sender(
@@ -4377,7 +4402,8 @@ async fn handle_native_sync_import_completion(
             }
             match block_body_transport.start_next(peer_id, Instant::now()) {
                 Ok(Some(locator)) => {
-                    send_native_block_body_request(handle, peer_id, &locator).await;
+                    send_native_block_body_request(block_body_transport, handle, peer_id, &locator)
+                        .await;
                 }
                 Ok(None) => {}
                 Err(err) => {
@@ -4404,6 +4430,7 @@ pub(crate) async fn native_sync_loop(node: Arc<NativeNode>, mut handle: Protocol
     let mut sync_import_queue = NativeSyncImportQueue::default();
     let mut block_body_request_limiter = NativeBlockBodyRequestLimiter::default();
     let mut best_announce_cache = NativeBestAnnounceCache::default();
+    let mut best_announce_preparation = None;
     let mut best_announce = interval(NATIVE_SYNC_BEST_ANNOUNCE_INTERVAL);
     best_announce.set_missed_tick_behavior(MissedTickBehavior::Delay);
     let mut pending_rebroadcast = interval(NATIVE_SYNC_PENDING_ACTION_REBROADCAST_INTERVAL);
@@ -4424,7 +4451,11 @@ pub(crate) async fn native_sync_loop(node: Arc<NativeNode>, mut handle: Protocol
         let Some((peer_id, msg)) = (tokio::select! {
             maybe_msg = handle.recv() => maybe_msg,
             _ = best_announce.tick() => {
-                queue_native_best_sync_announce(&node, &sync_tx, &mut best_announce_cache).await;
+                pump_native_best_announce_preparation(
+                    &mut best_announce_preparation,
+                    &mut best_announce_cache,
+                    &node,
+                );
                 pump_native_sync_import_queue(
                     &mut sync_import_queue,
                     &node,
@@ -4464,7 +4495,31 @@ pub(crate) async fn native_sync_loop(node: Arc<NativeNode>, mut handle: Protocol
                     complete_native_block_body_range_origins(&node, aborted_peer, &origins);
                 }
                 for (request_peer, locator) in retry_batch.requests {
-                    send_native_block_body_request(&handle, request_peer, &locator).await;
+                    send_native_block_body_request(&mut block_body_transport, &handle, request_peer, &locator).await;
+                }
+                continue;
+            }
+            completed = async {
+                best_announce_preparation.as_mut().expect("guarded announce preparation").await
+            }, if best_announce_preparation.is_some() => {
+                best_announce_preparation = None;
+                match completed {
+                    Ok((cache, prepared)) => {
+                        best_announce_cache = cache;
+                        match prepared {
+                            Ok(Some(prepared)) => {
+                                queue_prepared_native_best_sync_announce(&node, &sync_tx, prepared);
+                            }
+                            Ok(None) => {}
+                            Err(err) => debug!(error = %err, "failed to prepare native best sync announce"),
+                        }
+                    }
+                    Err(err) => {
+                        // No writer/import owner belongs to this read-only
+                        // worker. Its actual completion releases this slot.
+                        best_announce_cache = NativeBestAnnounceCache::default();
+                        warn!(error = %err, "native best announce preparation worker failed");
+                    }
                 }
                 continue;
             }
@@ -4954,7 +5009,13 @@ pub(crate) async fn native_sync_loop(node: Arc<NativeNode>, mut handle: Protocol
                 }
                 match block_body_transport.start_next(peer_id, Instant::now()) {
                     Ok(Some(locator)) => {
-                        send_native_block_body_request(&handle, peer_id, &locator).await;
+                        send_native_block_body_request(
+                            &mut block_body_transport,
+                            &handle,
+                            peer_id,
+                            &locator,
+                        )
+                        .await;
                     }
                     Ok(None) => {}
                     Err(err) => {
@@ -5139,7 +5200,13 @@ pub(crate) async fn native_sync_loop(node: Arc<NativeNode>, mut handle: Protocol
                 );
                 match block_body_transport.start_next(peer_id, Instant::now()) {
                     Ok(Some(locator)) => {
-                        send_native_block_body_request(&handle, peer_id, &locator).await;
+                        send_native_block_body_request(
+                            &mut block_body_transport,
+                            &handle,
+                            peer_id,
+                            &locator,
+                        )
+                        .await;
                     }
                     Ok(None) => {}
                     Err(err) => {
@@ -6149,7 +6216,7 @@ pub(crate) fn native_sync_response_stale_for_local_tip(
     }
 }
 
-pub(crate) async fn native_best_announce_payload(
+fn native_best_announce_payload_blocking(
     node: &Arc<NativeNode>,
     cache: &mut NativeBestAnnounceCache,
 ) -> Result<(u64, [u8; 32], Vec<u8>)> {
@@ -6173,24 +6240,18 @@ pub(crate) async fn native_best_announce_payload(
     if cache.block_hash == Some(block_hash) {
         return Ok((cache.height, block_hash, cache.payload.clone()));
     }
-    let encode_node = Arc::clone(node);
-    let (encoded_height, encoded_hash, payload) = tokio::task::spawn_blocking(move || {
-        let meta = encode_node
+    let (encoded_height, encoded_hash, payload) = {
+        let meta = node
             .header_by_hash(&block_hash)?
             .ok_or_else(|| anyhow!("canonical best native block body is missing"))?;
         // Warm the exact body cache for a subsequent locator/range request,
         // while keeping the periodic broadcast itself inside one bounded
         // transport frame. Immediate mined-block broadcasts still use the
         // exact locator carrier for oversized bodies.
-        let _encoded = encode_node
-            .block_body_send_cache
-            .lock()
-            .encode_meta(&meta)?;
+        let _encoded = node.block_body_send_cache.lock().encode_meta(&meta)?;
         let (payload, _compact) = encode_native_sync_announce_or_tip(&meta)?;
-        Ok::<_, anyhow::Error>((meta.height, meta.hash, payload))
-    })
-    .await
-    .context("native best announce encoding worker failed")??;
+        (meta.height, meta.hash, payload)
+    };
     let current_hash = node.state.read().best.hash;
     if encoded_hash != current_hash {
         return Err(anyhow!(
@@ -6203,25 +6264,68 @@ pub(crate) async fn native_best_announce_payload(
     Ok((encoded_height, encoded_hash, payload))
 }
 
-pub(crate) async fn queue_native_best_sync_announce(
-    node: &Arc<NativeNode>,
-    sync_tx: &ProtocolSender,
+type NativeBestAnnouncePayload = (u64, [u8; 32], Vec<u8>);
+type NativeBestAnnouncePreparation = (
+    NativeBestAnnounceCache,
+    Result<Option<NativeBestAnnouncePayload>>,
+);
+
+fn pump_native_best_announce_preparation(
+    active: &mut Option<tokio::task::JoinHandle<NativeBestAnnouncePreparation>>,
     cache: &mut NativeBestAnnounceCache,
-) {
-    if let Some((best_height, target_height)) = node.catching_up_to_sync_target() {
-        debug!(
-            best_height,
-            target_height, "skipping native sync announce while catching up"
-        );
-        return;
+    node: &Arc<NativeNode>,
+) -> bool {
+    if active.is_some() {
+        return false;
     }
-    let (height, block_hash, payload) = match native_best_announce_payload(node, cache).await {
-        Ok(payload) => payload,
-        Err(err) => {
-            debug!(error = %err, "failed to build cached native best sync announce");
-            return;
-        }
+    *active = Some(spawn_native_best_announce_preparation(
+        Arc::clone(node),
+        std::mem::take(cache),
+    ));
+    true
+}
+
+fn spawn_native_best_announce_preparation(
+    node: Arc<NativeNode>,
+    mut cache: NativeBestAnnounceCache,
+) -> tokio::task::JoinHandle<NativeBestAnnouncePreparation> {
+    // One cache and one task remain owned by the receive loop until this
+    // actual blocking worker completes. No timer aborts or replaces it.
+    tokio::task::spawn_blocking(move || {
+        let prepared = if let Some((best_height, target_height)) = node.catching_up_to_sync_target()
+        {
+            debug!(
+                best_height,
+                target_height, "skipping native sync announce while catching up"
+            );
+            Ok(None)
+        } else {
+            native_best_announce_payload_blocking(&node, &mut cache).map(Some)
+        };
+        (cache, prepared)
+    })
+}
+
+fn queue_prepared_native_best_sync_announce(
+    node: &NativeNode,
+    sync_tx: &ProtocolSender,
+    (height, block_hash, payload): NativeBestAnnouncePayload,
+) -> bool {
+    // Preparation can outlive its tip or target. Never block the receive
+    // loop waiting for a committing writer merely to publish a rebroadcast.
+    let Some(state) = node.state.try_read() else {
+        return false;
     };
+    if state.best.hash != block_hash
+        || native_sync_catch_up_target(
+            state.best.height,
+            node.sync_target_observed.load(Ordering::SeqCst),
+            node.sync_target_height.load(Ordering::Relaxed),
+        )
+        .is_some()
+    {
+        return false;
+    }
     let message = DirectedProtocolMessage {
         target: None,
         message: ProtocolMessage {
@@ -6229,19 +6333,32 @@ pub(crate) async fn queue_native_best_sync_announce(
             payload,
         },
     };
-    if let Err(err) = sync_tx.try_send(message) {
-        debug!(
-            height,
-            error = %err,
-            "failed to queue native best sync announce"
-        );
-    } else {
-        debug!(
-            height,
-            hash = %hex32(&block_hash),
-            "queued native best sync announce"
-        );
+    match sync_tx.try_send(message) {
+        Err(err) => {
+            debug!(height, error = %err, "failed to queue native best sync announce");
+            false
+        }
+        Ok(()) => {
+            debug!(height, hash = %hex32(&block_hash), "queued native best sync announce");
+            true
+        }
     }
+}
+
+pub(crate) async fn native_best_announce_payload(
+    node: &Arc<NativeNode>,
+    cache: &mut NativeBestAnnounceCache,
+) -> Result<NativeBestAnnouncePayload> {
+    let node = Arc::clone(node);
+    let mut owned_cache = std::mem::take(cache);
+    let (returned_cache, result) = tokio::task::spawn_blocking(move || {
+        let result = native_best_announce_payload_blocking(&node, &mut owned_cache);
+        (owned_cache, result)
+    })
+    .await
+    .context("native best announce encoding worker failed")?;
+    *cache = returned_cache;
+    result
 }
 
 pub(crate) async fn queue_missing_blocks_from_sync_target(
@@ -6356,7 +6473,9 @@ pub(crate) async fn queue_missing_blocks_from_sync_target_avoiding(
         expected_parent_hash,
         target_tip: target_hash.map(|hash| (target, hash)),
     };
-    if !node.begin_outbound_sync_request_with_context(request_peer, range, request_context) {
+    let Some(request_token) =
+        node.begin_outbound_sync_request_with_context_token(request_peer, range, request_context)
+    else {
         if node.outbound_sync_request_is_paced(request_peer, range) {
             debug!(
                 best_height,
@@ -6375,7 +6494,7 @@ pub(crate) async fn queue_missing_blocks_from_sync_target_avoiding(
             );
         }
         return;
-    }
+    };
     let request = NativeSyncMessage::Request {
         from_height: range.from_height,
         to_height: range.to_height,
@@ -6383,7 +6502,7 @@ pub(crate) async fn queue_missing_blocks_from_sync_target_avoiding(
     let payload = match encode_sync_message(&request) {
         Ok(payload) => payload,
         Err(err) => {
-            node.complete_outbound_sync_request_target(request_peer);
+            node.defer_outbound_sync_request_local_capacity_exact(request_peer, request_token);
             warn!(error = %err, "failed to encode native sync target request");
             return;
         }
@@ -6395,8 +6514,10 @@ pub(crate) async fn queue_missing_blocks_from_sync_target_avoiding(
             payload,
         },
     };
-    if let Err(err) = sync_tx.send(message).await {
-        node.complete_outbound_sync_request_target(request_peer);
+    // Queue capacity is local backpressure, not peer misbehavior. Never wait
+    // here: this caller also drives imports, completions, and body retries.
+    if let Err(err) = sync_tx.try_send(message) {
+        node.defer_outbound_sync_request_local_capacity_exact(request_peer, request_token);
         debug!(error = %err, "failed to queue native sync target request");
     } else {
         let target_peer_label = request_peer
@@ -6540,7 +6661,9 @@ pub(crate) async fn request_missing_blocks(
             .and_then(|cursor| cursor.expected_parent_hash),
         target_tip: anchored_target_hash.map(|hash| (announced_height, hash)),
     };
-    if !node.begin_outbound_sync_request_with_context(Some(peer_id), range, request_context) {
+    let Some(request_token) =
+        node.begin_outbound_sync_request_with_context_token(Some(peer_id), range, request_context)
+    else {
         if node.outbound_sync_request_is_paced(Some(peer_id), range) {
             debug!(
                 peer = %hex32(&peer_id),
@@ -6561,7 +6684,7 @@ pub(crate) async fn request_missing_blocks(
             );
         }
         return;
-    }
+    };
     debug!(
         best_height,
         announced_height,
@@ -6575,14 +6698,13 @@ pub(crate) async fn request_missing_blocks(
     };
     let queued = match encode_sync_message(&message) {
         Ok(payload) => sync_tx
-            .send(DirectedProtocolMessage {
+            .try_send(DirectedProtocolMessage {
                 target: Some(peer_id),
                 message: ProtocolMessage {
                     protocol: NATIVE_SYNC_PROTOCOL_ID,
                     payload,
                 },
             })
-            .await
             .is_ok(),
         Err(err) => {
             warn!(error = %err, "failed to encode native sync request");
@@ -6590,13 +6712,10 @@ pub(crate) async fn request_missing_blocks(
         }
     };
     if !queued {
-        node.complete_outbound_sync_request(peer_id);
-        handle_native_sync_terminal_target_failure(
-            node,
-            peer_id,
-            request_context.target_tip,
-            "failed to send native sync request",
-        );
+        // A failed local admission must neither authorize a response nor
+        // evict the peer's unresolved target. Compare the entire admission
+        // token so a newer request keeps its range, context, and timestamp.
+        node.defer_outbound_sync_request_local_capacity_exact(Some(peer_id), request_token);
     }
 }
 

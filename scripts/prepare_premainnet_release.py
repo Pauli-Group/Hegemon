@@ -54,6 +54,10 @@ jobs:
         run: /usr/bin/python3 -I -B scripts/test_materialize_v011_predecessor.py
       - name: ASIC adapter solution-retention regressions
         run: python3 -I -B scripts/test_bitcoin_asic_stratum.py
+      - name: Sync and import successor policy rejection controls
+        run: /usr/bin/python3 -I -B scripts/test_check_v011_sync_import_successor.py
+      - name: Sync and import formatting policy rejection controls
+        run: /usr/bin/python3 -I -B scripts/test_check_sync_import_formatting.py
 
 """
 ASSEMBLE = """
@@ -106,6 +110,66 @@ KNOWN_LOSER_REGRESSIONS = (
 )
 
 
+SYNC_IMPORT_REGRESSIONS = (
+    "native::node_impl::announcement_snapshot_precheck_tests::stored_announcement_returns_without_waiting_for_canonical_state",
+    "native::node_impl::announcement_snapshot_precheck_tests::stored_announcement_wrong_chain_rejects_before_lookup_or_snapshot",
+    "native::node_impl::announcement_snapshot_precheck_tests::stored_announcement_poisoned_storage_rejects_before_lookup_or_snapshot",
+    "native::node_impl::announcement_snapshot_precheck_tests::stored_announcement_malformed_metadata_rejects_without_snapshot",
+    "native::node_impl::announcement_snapshot_precheck_tests::stored_announcement_key_alias_rejects_without_snapshot",
+    "native::node_impl::announcement_snapshot_precheck_tests::stored_announcement_work_hash_alias_rejects_without_snapshot",
+    "native::node_impl::announcement_snapshot_precheck_tests::concurrent_stored_announcement_insertion_keeps_post_snapshot_guard",
+    "native::node_impl::announcement_snapshot_precheck_tests::unknown_and_competing_announcements_retain_validation_and_durable_fork_choice",
+    "native::node_impl::announcement_snapshot_precheck_tests::unknown_announcement_invalid_state_root_is_not_admitted",
+    "native::node_impl::announcement_snapshot_precheck_tests::admitted_sync_request_token_is_the_exact_reserved_request",
+    "native::node_impl::announcement_snapshot_precheck_tests::local_capacity_wait_preserves_exact_request_and_import_ownership",
+    "native::node_impl::announcement_snapshot_precheck_tests::local_capacity_wait_retries_after_existing_pacing_window_with_exact_context",
+    "native::node_impl::announcement_snapshot_precheck_tests::local_capacity_wait_retains_normal_freshness_boundary_and_target_expiry",
+    "native::node_impl::announcement_snapshot_precheck_tests::stale_sync_send_token_cannot_mutate_a_replaced_request",
+    "native::service::sync_control_backpressure_tests::sync_control_saturated_real_sender_blocks_old_send_but_not_body_control",
+    "native::service::sync_control_backpressure_tests::sync_control_full_target_scheduler_preserves_request_context_and_target",
+    "native::service::sync_control_backpressure_tests::sync_control_full_direct_request_preserves_target_without_peer_penalty",
+    "native::service::sync_control_backpressure_tests::sync_control_closed_direct_request_preserves_target_without_peer_penalty",
+    "native::service::sync_control_backpressure_tests::sync_control_full_channel_drains_and_readmits_the_same_recovery_request",
+    "native::service::sync_control_backpressure_tests::sync_control_held_announce_encoder_keeps_runtime_ticks_and_completions_responsive",
+    "native::service::sync_control_backpressure_tests::sync_control_prepared_announce_preserves_eligibility_and_rechecks_tip_without_blocking",
+    "native::service::sync_control_backpressure_tests::sync_control_failed_announce_preparation_releases_slot_for_retry",
+    "native::service::sync_body_backpressure::tests::body_local_full_preserves_range_origin_retry_age_suffix_and_other_reservations",
+    "native::service::sync_body_backpressure::tests::body_local_full_stale_callback_cannot_remove_newer_locator_with_same_hash",
+    "native::service::sync_body_backpressure::tests::body_local_full_cannot_abort_progress_or_another_reservation_epoch",
+    "native::service::sync_body_backpressure::tests::body_local_full_eventually_readmits_after_global_item_and_byte_capacity_frees",
+    "native::service::sync_body_backpressure::tests::body_local_full_moves_existing_slot_at_full_peer_and_global_queue_limits",
+    "native::service::sync_body_backpressure::tests::body_local_full_repeated_deferral_cannot_extend_absolute_lifetime",
+    "native::service::sync_body_backpressure::tests::body_local_full_rollback_leaves_normal_idle_retry_and_expiry_unchanged",
+)
+
+
+def adapt_sync_import_regressions(builds: str) -> str:
+    """Run every exact sync/import repair control on all preparation events."""
+    prefix, security = builds.split("  security-gates:\n", 1)
+    security, suffix = security.split("\n  app-no-ssh-e2e:\n", 1)
+    marker = "      - name: Formal-core checker controls for PR review\n"
+    known = "      - name: Known-loser announcement admission regressions\n"
+    transport = "      - name: Network transport progress regressions\n"
+    rust = '          toolchain: "1.91.1"\n'
+    if (
+        any(security.count(anchor) != 1 for anchor in (rust, transport, known, marker))
+        or not security.index(rust) < security.index(transport) < security.index(known) < security.index(marker)
+    ):
+        raise ValueError("review changed security step order before preparing sync/import checks")
+    step = (
+        "      - name: Native sync and import liveness regressions\n"
+        "        run: |\n"
+        "          set -euo pipefail\n"
+        + "".join(
+            f"          ./scripts/run_exact_cargo_lib_test.sh hegemon-node {name} --no-default-features\n"
+            for name in SYNC_IMPORT_REGRESSIONS
+        )
+        + "\n"
+    )
+    security = security.replace(marker, step + marker, 1)
+    return prefix + "  security-gates:\n" + security + "\n  app-no-ssh-e2e:\n" + suffix
+
+
 def adapt_known_loser_regressions(builds: str) -> str:
     """Require exact known-loser admission checks on every preparation event."""
     prefix, security = builds.split("  security-gates:\n", 1)
@@ -152,6 +216,50 @@ def adapt_transport_regressions(builds: str) -> str:
         + "\n"
     )
     security = security.replace(marker, step + marker, 1)
+    return prefix + "  security-gates:\n" + security + "\n  app-no-ssh-e2e:\n" + suffix
+
+
+def adapt_sync_import_release_binding(builds: str) -> str:
+    """Route only this preparation successor through additive repair gates."""
+    old = "scripts/check_v011_release_successor.py --require-authorized"
+    new = "scripts/check_v011_sync_import_successor.py --require-authorized"
+    if builds.count(old) != 5:
+        raise ValueError("expected one source and four final artifact successor gates")
+    builds = builds.replace(old, new)
+    old_scope = (
+        "scripts/tests/v011_current_successor/test_successor_scope.py "
+        "--checker scripts/check_v011_release_successor.py"
+    )
+    new_scope = (
+        "scripts/test_sync_import_successor_scope.py --source-root . "
+        "--predecessor-root target/v011-predecessor"
+    )
+    if builds.count(old_scope) != 1:
+        raise ValueError("expected one inherited source-scope regression invocation")
+    builds = builds.replace(old_scope, new_scope, 1)
+    prefix, security = builds.split("  security-gates:\n", 1)
+    security, suffix = security.split("\n  app-no-ssh-e2e:\n", 1)
+    rust = '          toolchain: "1.91.1"\n'
+    components = "          components: rust-src\n\n"
+    audit = "      - name: Install cargo-audit\n"
+    if (
+        any(security.count(anchor) != 1 for anchor in (rust, components, audit))
+        or not security.index(rust) < security.index(components) < security.index(audit)
+    ):
+        raise ValueError("review changed Rust setup before preparing additive formatting checks")
+    step = (
+        "      - name: Sync and import successor formatting gates\n"
+        "        run: |\n"
+        "          set -euo pipefail\n"
+        + "".join(
+            f"          python3 -I -B scripts/check_sync_import_formatting.py --manifest {manifest}\n"
+            for manifest in ("workspace", "htlc", "proof-backend")
+        )
+        + "\n"
+    )
+    security = security.replace(
+        components, "          components: rust-src, rustfmt\n\n" + step, 1
+    )
     return prefix + "  security-gates:\n" + security + "\n  app-no-ssh-e2e:\n" + suffix
 
 
@@ -247,9 +355,11 @@ def expected_workflow(release: str) -> str:
     marker = "  transaction-proof-authorization:\n"
     builds = builds.replace(marker, marker + "    needs: preparation-policy\n", 1)
     builds = adapt_version_only_successor(builds)
+    builds = adapt_sync_import_release_binding(builds)
     builds = adapt_pr_formal_scope(builds)
     builds = adapt_transport_regressions(builds)
     builds = adapt_known_loser_regressions(builds)
+    builds = adapt_sync_import_regressions(builds)
     output = HEADER + builds.rstrip() + "\n" + ASSEMBLE
     return "\n".join(line.rstrip() for line in output.splitlines()) + "\n"
 

@@ -38,6 +38,10 @@ jobs:
         run: /usr/bin/python3 -I -B scripts/test_materialize_v011_predecessor.py
       - name: ASIC adapter solution-retention regressions
         run: python3 -I -B scripts/test_bitcoin_asic_stratum.py
+      - name: Sync and import successor policy rejection controls
+        run: /usr/bin/python3 -I -B scripts/test_check_v011_sync_import_successor.py
+      - name: Sync and import formatting policy rejection controls
+        run: /usr/bin/python3 -I -B scripts/test_check_sync_import_formatting.py
 
   transaction-proof-authorization:
     needs: preparation-policy
@@ -59,7 +63,7 @@ jobs:
         run: python3 -I -B scripts/materialize_v011_predecessor.py --destination target/v011-predecessor --reserve-bytes 4294967296
 
       - name: Current successor scope rejection controls
-        run: python3 -I -B scripts/tests/v011_current_successor/test_successor_scope.py --checker scripts/check_v011_release_successor.py
+        run: python3 -I -B scripts/test_sync_import_successor_scope.py --source-root . --predecessor-root target/v011-predecessor
 
       - name: Current successor final-consumer rejection controls
         run: python3 -I -B scripts/tests/v011_current_successor/test_successor_consumer.py --consumer scripts/check_release_crypto_profile.py --receipt-fixture scripts/tests/v011_current_successor/synthetic-final-receipt.json --artifact-manifest scripts/tests/v011_current_successor/synthetic-artifact-manifest.json --registry scripts/tests/v011_current_successor/synthetic-historical-registry.json
@@ -74,7 +78,7 @@ jobs:
         run: python3 -I -B scripts/test_check_v011_current_binary_proofs.py
 
       - name: Transaction-proof successor authorization release gate
-        run: /usr/bin/python3 -I -B scripts/check_v011_release_successor.py --require-authorized --predecessor-root target/v011-predecessor
+        run: /usr/bin/python3 -I -B scripts/check_v011_sync_import_successor.py --require-authorized --predecessor-root target/v011-predecessor
 
       - name: Release workflow policy regression
         run: /usr/bin/python3 -I -B scripts/test_check_ci_release_gate_policy.py
@@ -99,7 +103,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
         with:
           toolchain: "1.91.1"
-          components: rust-src
+          components: rust-src, rustfmt
+
+      - name: Sync and import successor formatting gates
+        run: |
+          set -euo pipefail
+          python3 -I -B scripts/check_sync_import_formatting.py --manifest workspace
+          python3 -I -B scripts/check_sync_import_formatting.py --manifest htlc
+          python3 -I -B scripts/check_sync_import_formatting.py --manifest proof-backend
 
       - name: Install cargo-audit
         run: cargo install cargo-audit --version 0.22.2 --locked
@@ -135,6 +146,39 @@ jobs:
           ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::mining_recovery_qualification_tests::duplicate_stored_loser_compact_hints_never_close_gate_for_retained_asic_solution --no-default-features
           ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::mining_recovery_qualification_tests::unknown_equal_height_and_higher_hints_keep_retained_asic_solution_gated_without_write --no-default-features
           ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::sync_liveness_tests::stored_loser_classification_preserves_a_newer_unknown_target_and_backfill --no-default-features
+
+      - name: Native sync and import liveness regressions
+        run: |
+          set -euo pipefail
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::node_impl::announcement_snapshot_precheck_tests::stored_announcement_returns_without_waiting_for_canonical_state --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::node_impl::announcement_snapshot_precheck_tests::stored_announcement_wrong_chain_rejects_before_lookup_or_snapshot --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::node_impl::announcement_snapshot_precheck_tests::stored_announcement_poisoned_storage_rejects_before_lookup_or_snapshot --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::node_impl::announcement_snapshot_precheck_tests::stored_announcement_malformed_metadata_rejects_without_snapshot --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::node_impl::announcement_snapshot_precheck_tests::stored_announcement_key_alias_rejects_without_snapshot --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::node_impl::announcement_snapshot_precheck_tests::stored_announcement_work_hash_alias_rejects_without_snapshot --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::node_impl::announcement_snapshot_precheck_tests::concurrent_stored_announcement_insertion_keeps_post_snapshot_guard --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::node_impl::announcement_snapshot_precheck_tests::unknown_and_competing_announcements_retain_validation_and_durable_fork_choice --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::node_impl::announcement_snapshot_precheck_tests::unknown_announcement_invalid_state_root_is_not_admitted --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::node_impl::announcement_snapshot_precheck_tests::admitted_sync_request_token_is_the_exact_reserved_request --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::node_impl::announcement_snapshot_precheck_tests::local_capacity_wait_preserves_exact_request_and_import_ownership --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::node_impl::announcement_snapshot_precheck_tests::local_capacity_wait_retries_after_existing_pacing_window_with_exact_context --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::node_impl::announcement_snapshot_precheck_tests::local_capacity_wait_retains_normal_freshness_boundary_and_target_expiry --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::node_impl::announcement_snapshot_precheck_tests::stale_sync_send_token_cannot_mutate_a_replaced_request --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::service::sync_control_backpressure_tests::sync_control_saturated_real_sender_blocks_old_send_but_not_body_control --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::service::sync_control_backpressure_tests::sync_control_full_target_scheduler_preserves_request_context_and_target --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::service::sync_control_backpressure_tests::sync_control_full_direct_request_preserves_target_without_peer_penalty --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::service::sync_control_backpressure_tests::sync_control_closed_direct_request_preserves_target_without_peer_penalty --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::service::sync_control_backpressure_tests::sync_control_full_channel_drains_and_readmits_the_same_recovery_request --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::service::sync_control_backpressure_tests::sync_control_held_announce_encoder_keeps_runtime_ticks_and_completions_responsive --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::service::sync_control_backpressure_tests::sync_control_prepared_announce_preserves_eligibility_and_rechecks_tip_without_blocking --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::service::sync_control_backpressure_tests::sync_control_failed_announce_preparation_releases_slot_for_retry --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::service::sync_body_backpressure::tests::body_local_full_preserves_range_origin_retry_age_suffix_and_other_reservations --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::service::sync_body_backpressure::tests::body_local_full_stale_callback_cannot_remove_newer_locator_with_same_hash --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::service::sync_body_backpressure::tests::body_local_full_cannot_abort_progress_or_another_reservation_epoch --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::service::sync_body_backpressure::tests::body_local_full_eventually_readmits_after_global_item_and_byte_capacity_frees --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::service::sync_body_backpressure::tests::body_local_full_moves_existing_slot_at_full_peer_and_global_queue_limits --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::service::sync_body_backpressure::tests::body_local_full_repeated_deferral_cannot_extend_absolute_lifetime --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::service::sync_body_backpressure::tests::body_local_full_rollback_leaves_normal_idle_retry_and_expiry_unchanged --no-default-features
 
       - name: Formal-core checker controls for PR review
         if: github.event_name == 'pull_request'
@@ -252,7 +296,7 @@ jobs:
         run: python3 -I -B scripts/materialize_v011_predecessor.py --destination target/v011-predecessor --reserve-bytes 4294967296
 
       - name: Validate final common proof authorization and affected lifecycle
-        run: python3 -I -B scripts/check_v011_release_successor.py --require-authorized --predecessor-root target/v011-predecessor --artifact-manifest target/release/hegemon-release-artifacts.json --require-final-artifact
+        run: python3 -I -B scripts/check_v011_sync_import_successor.py --require-authorized --predecessor-root target/v011-predecessor --artifact-manifest target/release/hegemon-release-artifacts.json --require-final-artifact
 
       - name: Release PQ binary audit
         run: ./scripts/security-audit.sh --require-binary --binary-manifest target/release/hegemon-release-artifacts.json --node-bin target/release/hegemon-node --binary target/release/wallet --binary target/release/walletd --binary target/release/private-spend
@@ -294,7 +338,7 @@ jobs:
         run: python3 -I -B scripts/materialize_v011_predecessor.py --destination target/v011-predecessor --reserve-bytes 4294967296
 
       - name: Validate final common proof authorization and affected lifecycle
-        run: python3 -I -B scripts/check_v011_release_successor.py --require-authorized --predecessor-root target/v011-predecessor --artifact-manifest target/x86_64-apple-darwin/release/hegemon-release-artifacts.json --require-final-artifact
+        run: python3 -I -B scripts/check_v011_sync_import_successor.py --require-authorized --predecessor-root target/v011-predecessor --artifact-manifest target/x86_64-apple-darwin/release/hegemon-release-artifacts.json --require-final-artifact
 
       - name: Release PQ binary audit
         run: ./scripts/security-audit.sh --require-binary --binary-manifest target/x86_64-apple-darwin/release/hegemon-release-artifacts.json --node-bin target/x86_64-apple-darwin/release/hegemon-node --binary target/x86_64-apple-darwin/release/wallet --binary target/x86_64-apple-darwin/release/walletd --binary target/x86_64-apple-darwin/release/private-spend
@@ -335,7 +379,7 @@ jobs:
         run: python3 -I -B scripts/materialize_v011_predecessor.py --destination target/v011-predecessor --reserve-bytes 4294967296
 
       - name: Validate final common proof authorization and affected lifecycle
-        run: python3 -I -B scripts/check_v011_release_successor.py --require-authorized --predecessor-root target/v011-predecessor --artifact-manifest target/release/hegemon-release-artifacts.json --require-final-artifact
+        run: python3 -I -B scripts/check_v011_sync_import_successor.py --require-authorized --predecessor-root target/v011-predecessor --artifact-manifest target/release/hegemon-release-artifacts.json --require-final-artifact
 
       - name: Release PQ binary audit
         run: ./scripts/security-audit.sh --require-binary --binary-manifest target/release/hegemon-release-artifacts.json --node-bin target/release/hegemon-node --binary target/release/wallet --binary target/release/walletd --binary target/release/private-spend
@@ -387,7 +431,7 @@ jobs:
 
       - name: Validate final common proof authorization and affected lifecycle
         shell: bash
-        run: python3 -I -B scripts/check_v011_release_successor.py --require-authorized --predecessor-root target/v011-predecessor --artifact-manifest target/release/hegemon-release-artifacts.json --require-final-artifact
+        run: python3 -I -B scripts/check_v011_sync_import_successor.py --require-authorized --predecessor-root target/v011-predecessor --artifact-manifest target/release/hegemon-release-artifacts.json --require-final-artifact
 
       - name: Release PQ binary audit
         shell: bash

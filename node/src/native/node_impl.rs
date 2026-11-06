@@ -3126,6 +3126,16 @@ impl NativeNode {
         range: NativeSyncRange,
         context: NativeOutboundSyncRequestContext,
     ) -> bool {
+        self.begin_outbound_sync_request_with_context_token(peer_id, range, context)
+            .is_some()
+    }
+
+    pub(crate) fn begin_outbound_sync_request_with_context_token(
+        &self,
+        peer_id: Option<PeerId>,
+        range: NativeSyncRange,
+        context: NativeOutboundSyncRequestContext,
+    ) -> Option<NativeOutboundSyncRequest> {
         let now = Instant::now();
         let mut requests = self.outbound_sync_requests.lock();
         requests.retain(|_, request| {
@@ -3137,13 +3147,13 @@ impl NativeNode {
             Some(request) if request.state == NativeOutboundSyncRequestState::Paced => {
                 Some(request.requested_at)
             }
-            Some(_) => return false,
+            Some(_) => return None,
             None => None,
         };
         if requests.iter().any(|(target, request)| {
             *target != peer_id && native_sync_ranges_overlap(request.range, range)
         }) {
-            return false;
+            return None;
         }
         // In steady pagination the fifth request is discovered only after the
         // fourth response completes. The server therefore received page four
@@ -3161,7 +3171,7 @@ impl NativeNode {
                     context,
                 },
             );
-            return false;
+            return None;
         }
         if let Some(peer_id) = peer_id {
             let admitted = {
@@ -3184,18 +3194,38 @@ impl NativeNode {
                         context,
                     },
                 );
-                return false;
+                return None;
             }
         }
-        requests.insert(
-            peer_id,
-            NativeOutboundSyncRequest {
-                range,
-                requested_at: now,
-                state: NativeOutboundSyncRequestState::InFlight,
-                context,
-            },
-        );
+        let admitted = NativeOutboundSyncRequest {
+            range,
+            requested_at: now,
+            state: NativeOutboundSyncRequestState::InFlight,
+            context,
+        };
+        requests.insert(peer_id, admitted);
+        Some(admitted)
+    }
+
+    /// Local capacity waits use the existing nonauthorizing pacing state.
+    /// Keep the exact request's original age and context, and leave any newer
+    /// admission or request-state transition untouched.
+    pub(crate) fn defer_outbound_sync_request_local_capacity_exact(
+        &self,
+        peer_id: Option<PeerId>,
+        expected: NativeOutboundSyncRequest,
+    ) -> bool {
+        if expected.state != NativeOutboundSyncRequestState::InFlight {
+            return false;
+        }
+        let mut requests = self.outbound_sync_requests.lock();
+        let Some(current) = requests.get_mut(&peer_id) else {
+            return false;
+        };
+        if *current != expected {
+            return false;
+        }
+        current.state = NativeOutboundSyncRequestState::Paced;
         true
     }
 
@@ -7277,6 +7307,13 @@ impl NativeNode {
             ));
         }
         self.ensure_native_storage_healthy()?;
+        // Stored duplicates need no canonical-state snapshot. Retain the
+        // post-snapshot lookup below to catch a concurrent insertion.
+        if self.header_by_hash(&meta.hash)?.is_some() {
+            return Ok(false);
+        }
+        #[cfg(test)]
+        announcement_snapshot_precheck_tests::after_stored_row_miss();
         let (snapshot, snapshot_generation) = {
             let state = self.state.read();
             (
@@ -14206,5 +14243,513 @@ impl NativeNode {
             return 0.0;
         }
         self.mining_hashes.load(Ordering::Relaxed) as f64 / elapsed
+    }
+}
+
+#[cfg(test)]
+mod announcement_snapshot_precheck_tests {
+    use super::*;
+    use crate::native::tests::{mine_ordered_empty_native_fork, test_config};
+    use std::cell::RefCell;
+    use std::sync::mpsc;
+
+    const TEST_BITS: u32 = 0x207f_ffff;
+    const WAIT: Duration = Duration::from_secs(5);
+
+    thread_local! {
+        // One test importer can pause after an actual absent sled lookup,
+        // without adding a release-time branch or shared node field.
+        static AFTER_STORED_ROW_MISS: RefCell<Option<Box<dyn FnOnce()>>> =
+            const { RefCell::new(None) };
+    }
+
+    pub(super) fn after_stored_row_miss() {
+        let observer = AFTER_STORED_ROW_MISS.with(|slot| slot.borrow_mut().take());
+        if let Some(observer) = observer {
+            observer();
+        }
+    }
+
+    fn fixture() -> (tempfile::TempDir, Arc<NativeNode>) {
+        let path = tempfile::tempdir().expect("temporary native database");
+        let node = NativeNode::open(test_config(path.path(), TEST_BITS, "unsafe", false))
+            .expect("open temporary native node");
+        (path, node)
+    }
+
+    /// The baseline importer cannot finish while this write lock is held:
+    /// its snapshot starts by acquiring state.read(). Always release and join
+    /// before asserting, so a failed baseline check cannot strand a worker.
+    fn import_before_state_unlock(
+        node: &Arc<NativeNode>,
+        meta: NativeBlockMeta,
+    ) -> std::result::Result<bool, String> {
+        let state = node.state.write();
+        let worker_node = Arc::clone(node);
+        let (started_tx, started_rx) = mpsc::sync_channel(1);
+        let (result_tx, result_rx) = mpsc::sync_channel(1);
+        let worker = std::thread::spawn(move || {
+            started_tx.send(()).expect("test start observer");
+            let result = worker_node
+                .import_announced_block(meta)
+                .map_err(|error| format!("{error:#}"));
+            result_tx.send(result).expect("test result observer");
+        });
+        let started = started_rx.recv_timeout(WAIT);
+        let early = result_rx.recv_timeout(WAIT);
+        drop(state);
+        let joined = worker.join();
+        assert!(started.is_ok(), "import worker did not start: {started:?}");
+        joined.expect("import worker panicked");
+        early.expect("stored-row decision waited for the canonical-state lock")
+    }
+
+    #[test]
+    fn stored_announcement_returns_without_waiting_for_canonical_state() {
+        let (_path, node) = fixture();
+        let known = node.best_meta();
+        node.reset_full_block_body_load_invocations();
+        assert_eq!(import_before_state_unlock(&node, known.clone()), Ok(false));
+        assert_eq!(node.full_block_body_load_invocations(), 1);
+        assert_eq!(node.best_meta(), known);
+    }
+
+    #[test]
+    fn stored_announcement_wrong_chain_rejects_before_lookup_or_snapshot() {
+        let (_path, node) = fixture();
+        let mut wrong_chain = node.best_meta();
+        wrong_chain.chain_id[0] ^= 1;
+        node.block_tree
+            .insert(wrong_chain.hash, &[0xff, 0x00])
+            .unwrap();
+        node.reset_full_block_body_load_invocations();
+        let error = import_before_state_unlock(&node, wrong_chain).unwrap_err();
+        assert!(error.contains("chain id does not match"), "{error}");
+        assert_eq!(node.full_block_body_load_invocations(), 0);
+    }
+
+    #[test]
+    fn stored_announcement_poisoned_storage_rejects_before_lookup_or_snapshot() {
+        let (_path, node) = fixture();
+        let known = node.best_meta();
+        node.block_tree.insert(known.hash, &[0xff, 0x00]).unwrap();
+        node.poison_native_storage();
+        node.reset_full_block_body_load_invocations();
+        let error = import_before_state_unlock(&node, known).unwrap_err();
+        assert!(error.contains("fail-stop poisoned"), "{error}");
+        assert_eq!(node.full_block_body_load_invocations(), 0);
+    }
+
+    #[test]
+    fn stored_announcement_malformed_metadata_rejects_without_snapshot() {
+        let (_path, node) = fixture();
+        let known = node.best_meta();
+        node.block_tree.insert(known.hash, &[0xff, 0x00]).unwrap();
+        node.reset_full_block_body_load_invocations();
+        assert!(import_before_state_unlock(&node, known).is_err());
+        assert_eq!(node.full_block_body_load_invocations(), 1);
+    }
+
+    #[test]
+    fn stored_announcement_key_alias_rejects_without_snapshot() {
+        let (_path, node) = fixture();
+        let known = node.best_meta();
+        let mut aliased = known.clone();
+        aliased.hash[0] ^= 1;
+        node.block_tree
+            .insert(known.hash, bincode::serialize(&aliased).unwrap())
+            .unwrap();
+        let error = import_before_state_unlock(&node, known).unwrap_err();
+        assert!(
+            error.contains("stored native block hash mismatch"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn stored_announcement_work_hash_alias_rejects_without_snapshot() {
+        let (_path, node) = fixture();
+        let known = node.best_meta();
+        let mut aliased = known.clone();
+        aliased.work_hash[0] ^= 1;
+        node.block_tree
+            .insert(known.hash, bincode::serialize(&aliased).unwrap())
+            .unwrap();
+        let error = import_before_state_unlock(&node, known).unwrap_err();
+        assert!(
+            error.contains("stored native block work-hash mismatch"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn concurrent_stored_announcement_insertion_keeps_post_snapshot_guard() {
+        let (_source_path, source) = fixture();
+        let (winner, _) = mine_ordered_empty_native_fork(&source, TEST_BITS, 1);
+        let candidate = winner[1].clone();
+        let (_path, node) = fixture();
+        let before = node.best_meta();
+        assert!(node.header_by_hash(&candidate.hash).unwrap().is_none());
+        let worker_node = Arc::clone(&node);
+        let worker_candidate = candidate.clone();
+        let (miss_tx, miss_rx) = mpsc::sync_channel(1);
+        let (resume_tx, resume_rx) = mpsc::sync_channel(1);
+        let worker = std::thread::spawn(move || {
+            AFTER_STORED_ROW_MISS.with(|slot| {
+                *slot.borrow_mut() = Some(Box::new(move || {
+                    miss_tx.send(()).expect("actual absent-lookup observer");
+                    resume_rx
+                        .recv_timeout(WAIT)
+                        .expect("resume actual importer");
+                }));
+            });
+            worker_node.import_announced_block(worker_candidate)
+        });
+        let observed_miss = miss_rx.recv_timeout(WAIT);
+        let insertion = if observed_miss.is_ok() {
+            node.block_tree
+                .insert(candidate.hash, bincode::serialize(&candidate).unwrap())
+                .and_then(|_| node.block_tree.flush().map(|_| ()))
+        } else {
+            Ok(())
+        };
+        let _ = resume_tx.send(());
+        let result = worker.join().expect("actual importer worker panicked");
+        assert!(
+            observed_miss.is_ok(),
+            "actual absent lookup was not observed"
+        );
+        insertion.expect("persist concurrently inserted exact metadata");
+        assert!(!result.expect("concurrent stored row must short-circuit"));
+        assert_eq!(node.best_meta(), before);
+        assert_eq!(
+            node.header_by_hash(&candidate.hash).unwrap(),
+            Some(candidate)
+        );
+    }
+
+    #[test]
+    fn unknown_and_competing_announcements_retain_validation_and_durable_fork_choice() {
+        let (_source_path, source) = fixture();
+        let (winner, loser) = mine_ordered_empty_native_fork(&source, TEST_BITS, 2);
+        let (path, node) = fixture();
+        let config = node.config.clone();
+        for block in &loser[1..] {
+            assert!(node.import_announced_block(block.clone()).unwrap());
+        }
+        for block in &winner[1..] {
+            node.import_announced_block(block.clone()).unwrap();
+        }
+        assert_eq!(node.best_meta(), *winner.last().unwrap());
+        assert_eq!(
+            import_before_state_unlock(&node, loser.last().unwrap().clone()),
+            Ok(false)
+        );
+        node.db.flush().unwrap();
+        drop(node);
+        let reopened = NativeNode::reopen_after_sled_release_for_test(config).unwrap();
+        assert_eq!(reopened.best_meta(), *winner.last().unwrap());
+        for block in winner.iter().chain(loser.iter()) {
+            assert_eq!(
+                reopened.header_by_hash(&block.hash).unwrap(),
+                Some(block.clone())
+            );
+        }
+        drop(reopened);
+        drop(path);
+    }
+
+    #[test]
+    fn unknown_announcement_invalid_state_root_is_not_admitted() {
+        let (_source_path, source) = fixture();
+        let (winner, _) = mine_ordered_empty_native_fork(&source, TEST_BITS, 1);
+        let mut candidate = winner[1].clone();
+        candidate.state_root[0] ^= 1;
+        let (_path, node) = fixture();
+        let before = node.best_meta();
+        assert!(node.import_announced_block(candidate.clone()).is_err());
+        assert_eq!(node.best_meta(), before);
+        assert!(node.header_by_hash(&candidate.hash).unwrap().is_none());
+    }
+
+    fn request_context(seed: u8) -> NativeOutboundSyncRequestContext {
+        NativeOutboundSyncRequestContext {
+            recovery_page: true,
+            expected_parent_hash: Some([seed; 32]),
+            target_tip: Some((100, [seed.wrapping_add(1); 32])),
+        }
+    }
+
+    #[test]
+    fn admitted_sync_request_token_is_the_exact_reserved_request() {
+        let (_path, node) = fixture();
+        let peer = Some([0xa1; 32]);
+        let range = NativeSyncRange {
+            from_height: 1,
+            to_height: 10,
+        };
+        let context = request_context(0xa2);
+        let admitted = node
+            .begin_outbound_sync_request_with_context_token(peer, range, context)
+            .expect("admit initial request");
+        assert_eq!(
+            node.outbound_sync_requests.lock().get(&peer),
+            Some(&admitted)
+        );
+        assert_eq!(admitted.range, range);
+        assert_eq!(admitted.context, context);
+        assert_eq!(admitted.state, NativeOutboundSyncRequestState::InFlight);
+        assert!(node
+            .begin_outbound_sync_request_with_context_token(peer, range, context)
+            .is_none());
+        assert!(node
+            .begin_outbound_sync_request_with_context_token(Some([0xa3; 32]), range, context)
+            .is_none());
+        assert_eq!(
+            node.outbound_sync_requests.lock().get(&peer),
+            Some(&admitted)
+        );
+        assert!(node.begin_outbound_sync_request_with_context(
+            Some([0xa3; 32]),
+            NativeSyncRange {
+                from_height: 11,
+                to_height: 20,
+            },
+            context,
+        ));
+    }
+
+    #[test]
+    fn local_capacity_wait_preserves_exact_request_and_import_ownership() {
+        let (_path, node) = fixture();
+        let peer_id = [0xb1; 32];
+        let peer = Some(peer_id);
+        let range = NativeSyncRange {
+            from_height: 1,
+            to_height: 10,
+        };
+        let context = request_context(0xb2);
+        node.observe_pending_sync_peer_tip(peer, 100, context.target_tip.map(|tip| tip.1));
+        node.set_sync_recovery_cursor(
+            peer,
+            100,
+            context.target_tip.map(|tip| tip.1),
+            range,
+            context.expected_parent_hash,
+        );
+        let target = node.sync_target_evidence_snapshot();
+        let cursor = *node.sync_recovery_cursor.lock();
+        node.sync_import_in_flight.store(true, Ordering::SeqCst);
+        let permits = node.block_import_semaphore.available_permits();
+        let token = node
+            .begin_outbound_sync_request_with_context_token(peer, range, context)
+            .unwrap();
+        let other_peer = Some([0xb3; 32]);
+        let other = node
+            .begin_outbound_sync_request_with_context_token(
+                other_peer,
+                NativeSyncRange {
+                    from_height: 11,
+                    to_height: 20,
+                },
+                request_context(0xb4),
+            )
+            .unwrap();
+        assert!(node.defer_outbound_sync_request_local_capacity_exact(peer, token));
+        let expected = NativeOutboundSyncRequest {
+            state: NativeOutboundSyncRequestState::Paced,
+            ..token
+        };
+        assert_eq!(
+            node.outbound_sync_requests.lock().get(&peer),
+            Some(&expected)
+        );
+        assert_eq!(
+            node.outbound_sync_requests.lock().get(&other_peer),
+            Some(&other)
+        );
+        assert_eq!(node.sync_target_evidence_snapshot(), target);
+        assert_eq!(*node.sync_recovery_cursor.lock(), cursor);
+        assert!(node.sync_import_in_flight.load(Ordering::SeqCst));
+        assert_eq!(node.block_import_semaphore.available_permits(), permits);
+        assert!(node
+            .complete_outbound_sync_response(peer_id, Some(range))
+            .is_none());
+        assert!(!node.defer_outbound_sync_request_local_capacity_exact(peer, token));
+        node.sync_import_in_flight.store(false, Ordering::SeqCst);
+        assert!(node.native_sync_target_peer_has_fresh_request(peer_id));
+        assert!(!node.has_live_outbound_sync_request_for_peer(peer_id));
+        assert!(!node.expire_unverified_sync_target());
+        assert_eq!(node.sync_target_evidence_snapshot(), target);
+        assert_eq!(*node.sync_recovery_cursor.lock(), cursor);
+    }
+
+    #[test]
+    fn local_capacity_wait_retries_after_existing_pacing_window_with_exact_context() {
+        let (_path, node) = fixture();
+        let peer_id = [0xb5; 32];
+        let peer = Some(peer_id);
+        let range = NativeSyncRange {
+            from_height: 1,
+            to_height: 10,
+        };
+        let context = request_context(0xb6);
+        let token = node
+            .begin_outbound_sync_request_with_context_token(peer, range, context)
+            .unwrap();
+        assert!(node.defer_outbound_sync_request_local_capacity_exact(peer, token));
+        assert!(node
+            .begin_outbound_sync_request_with_context_token(peer, range, context)
+            .is_none());
+        let pending = NativeOutboundSyncRequest {
+            state: NativeOutboundSyncRequestState::Paced,
+            ..token
+        };
+        assert_eq!(
+            node.outbound_sync_requests.lock().get(&peer),
+            Some(&pending)
+        );
+        assert!(node
+            .complete_outbound_sync_response(peer_id, Some(range))
+            .is_none());
+        assert_eq!(
+            node.outbound_sync_requests.lock().get(&peer),
+            Some(&pending)
+        );
+
+        // Advance only this actual request's recorded age, avoiding a ten
+        // second wall-clock sleep while exercising the real admission path.
+        let aged_pending = NativeOutboundSyncRequest {
+            requested_at: Instant::now()
+                - (NATIVE_SYNC_REQUEST_RATE_WINDOW + Duration::from_millis(1)),
+            ..pending
+        };
+        node.outbound_sync_requests
+            .lock()
+            .insert(peer, aged_pending);
+        let retried_at = Instant::now();
+        let retried = node
+            .begin_outbound_sync_request_with_context_token(peer, range, context)
+            .expect("local capacity wait retries after the existing pacing window");
+        assert_eq!(retried.range, range);
+        assert_eq!(retried.context, context);
+        assert_eq!(retried.state, NativeOutboundSyncRequestState::InFlight);
+        assert!(retried.requested_at >= retried_at);
+        let completed = node
+            .complete_outbound_sync_response(peer_id, Some(range))
+            .expect("only the readmitted request authorizes a response");
+        assert_eq!(completed.range, range);
+        assert_eq!(completed.context, context);
+    }
+
+    #[test]
+    fn local_capacity_wait_retains_normal_freshness_boundary_and_target_expiry() {
+        let (_path, node) = fixture();
+        let peer_id = [0xb7; 32];
+        let peer = Some(peer_id);
+        let range = NativeSyncRange {
+            from_height: 1,
+            to_height: 10,
+        };
+        let context = request_context(0xb8);
+        assert!(node.observe_pending_sync_peer_tip(peer, 100, context.target_tip.map(|tip| tip.1)));
+        node.set_sync_recovery_cursor(
+            peer,
+            100,
+            context.target_tip.map(|tip| tip.1),
+            range,
+            context.expected_parent_hash,
+        );
+        let token = node
+            .begin_outbound_sync_request_with_context_token(peer, range, context)
+            .unwrap();
+        let expired_token = NativeOutboundSyncRequest {
+            requested_at: Instant::now()
+                - (NATIVE_SYNC_REQUEST_RETRY_AFTER + Duration::from_millis(1)),
+            ..token
+        };
+        node.outbound_sync_requests
+            .lock()
+            .insert(peer, expired_token);
+        assert!(node.defer_outbound_sync_request_local_capacity_exact(peer, expired_token));
+        let pending = *node.outbound_sync_requests.lock().get(&peer).unwrap();
+        assert_eq!(pending.requested_at, expired_token.requested_at);
+        assert_eq!(pending.range, expired_token.range);
+        assert_eq!(pending.context, expired_token.context);
+        assert_eq!(pending.state, NativeOutboundSyncRequestState::Paced);
+        let boundary = pending.requested_at + NATIVE_SYNC_REQUEST_RETRY_AFTER;
+        assert!(NativeNode::native_sync_outbound_request_is_fresh(
+            &pending, boundary
+        ));
+        assert!(!NativeNode::native_sync_outbound_request_is_fresh(
+            &pending,
+            boundary + Duration::from_nanos(1),
+        ));
+        assert!(node.expire_unverified_sync_target());
+        assert_eq!(
+            node.sync_target_tip_snapshot(),
+            (node.best_height(), None, None)
+        );
+        assert!(!node.outbound_sync_requests.lock().contains_key(&peer));
+        assert!(node.sync_recovery_cursor.lock().is_none());
+        assert!(node.native_sync_peer_has_unverified_target_cooldown(peer_id));
+    }
+
+    #[test]
+    fn stale_sync_send_token_cannot_mutate_a_replaced_request() {
+        let (_path, node) = fixture();
+        let peer = Some([0xc1; 32]);
+        let token = node
+            .begin_outbound_sync_request_with_context_token(
+                peer,
+                NativeSyncRange {
+                    from_height: 1,
+                    to_height: 10,
+                },
+                request_context(0xc2),
+            )
+            .unwrap();
+        let replacements = [
+            NativeOutboundSyncRequest {
+                requested_at: token.requested_at + Duration::from_nanos(1),
+                ..token
+            },
+            NativeOutboundSyncRequest {
+                range: NativeSyncRange {
+                    from_height: 2,
+                    to_height: 10,
+                },
+                ..token
+            },
+            NativeOutboundSyncRequest {
+                context: request_context(0xc3),
+                ..token
+            },
+            NativeOutboundSyncRequest {
+                state: NativeOutboundSyncRequestState::Paced,
+                ..token
+            },
+            NativeOutboundSyncRequest {
+                state: NativeOutboundSyncRequestState::ChunkFallback,
+                ..token
+            },
+            NativeOutboundSyncRequest {
+                state: NativeOutboundSyncRequestState::Cooldown,
+                ..token
+            },
+        ];
+        for replacement in replacements {
+            node.outbound_sync_requests.lock().insert(peer, replacement);
+            let before = node.outbound_sync_requests.lock().clone();
+            assert!(!node.defer_outbound_sync_request_local_capacity_exact(peer, token));
+            assert_eq!(*node.outbound_sync_requests.lock(), before);
+            if replacement.state != NativeOutboundSyncRequestState::InFlight {
+                assert!(!node.defer_outbound_sync_request_local_capacity_exact(peer, replacement));
+                assert_eq!(*node.outbound_sync_requests.lock(), before);
+            }
+        }
+        node.outbound_sync_requests.lock().clear();
+        assert!(!node.defer_outbound_sync_request_local_capacity_exact(peer, token));
+        assert!(node.outbound_sync_requests.lock().is_empty());
     }
 }
