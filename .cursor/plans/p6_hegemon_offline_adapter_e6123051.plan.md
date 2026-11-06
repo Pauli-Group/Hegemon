@@ -94,6 +94,11 @@ Revision from P3 (2026-11-06):
 - The adapter's `verify` result and the guided view must agree on the fields above, because the guided page reuses the engine's decision rules through `config/swap/flow-vectors.json`; if P6 changes the engine's observation schema, regenerate that file with `scripts/swap_engine/ui_vectors.py` and run `swap_engine.test_ui_vectors`.
 - Qualification timing relevant to Hegemon pairing: Ethereum and Cardano legs confirm in about a minute (three confirmations in 40 to 60 seconds on Sepolia, under two minutes on preview), so a Hegemon proving cost of several minutes dominates a pair with either; Bitcoin testnet4 arrivals were irregular and slow at times on 2026-11-06 (see the P4 revision).
 
+Revision from P4 (2026-11-06):
+- The old public Bitcoin swaps funded the Bitcoin leg about 141 blocks (138 for BTC/ETH) ahead of its refund height and would all be rejected by the current policy (`insufficient-gap`, plus `claim-window-too-short` for BTC/ETH). Bitcoin as the long leg against a Hegemon short leg is the case the 30-day horizon and the 14.7 hour to 5 day Bitcoin spans make hardest, so P6's adapter and simulations should use `plan_with_margin` expiries and expect Bitcoin refund heights days out, not the +144 shortcut.
+- Observed Bitcoin testnet4 spacing so far: 11 blocks (158786 to 158797) took about 6,070 s of header time on 2026-11-04 and 20 blocks (159444 to 159464) took about 108 minutes of wall-clock time on 2026-11-06; both are faster than the measured mean of 1,069 s per block, so the existing table stays the conservative basis and no config change is needed from P4 alone. Header times are not a reliable clock.
+- A Hegemon verifier should be built like `scripts/verify_public_btc_cases.py`: take the terms from the swap record, re-derive what the chain must hold (the escrow commitment for the recorded hashlock, parties and expiry), check that the claim's revealed preimage hashes to the hashlock, and report claim order against both deadlines, so a finished Hegemon pair can be re-verified without trusting the scripts that ran it.
+
 ## Last step: revise later plans
 
 Update the master ExecPlan and edit P7:

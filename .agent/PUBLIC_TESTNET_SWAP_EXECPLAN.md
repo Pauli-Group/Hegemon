@@ -19,10 +19,10 @@ This living plan follows `.agent/PLANS.md`. The aim is to repeat the Bitcoin, Et
 - [x] (2026-11-03) Completed the ERC-1155/Cardano native-token swap and the Sepolia ERC-721 refund; verified recipients and recorded the public transaction identifiers.
 - [x] Finish the Cardano preview NFT refund and check Bitcoin testnet4 funding.
 - [x] Confirm the BTC/ETH escrow and complete the swap.
-- [ ] Complete the resumed Bitcoin/Cardano, Bitcoin/ERC-20, Bitcoin/Cardano token and Bitcoin refund cases.
+- [x] (2026-11-06) Complete the resumed Bitcoin/Cardano, Bitcoin/ERC-20, Bitcoin/Cardano token and Bitcoin refund cases. They had already completed on chain by 2026-11-04 (height 158797); the series plan P4 verified each independently from raw transactions and public chain data (`scripts/verify_public_btc_cases.py`, 5 pairs and refund, 2 Sepolia fixtures, all checks pass) and recorded the result in `PUBLIC_TESTNET_RESULTS.md`.
 - [ ] Add independently checked remote public-testnet adapters and safe transaction building and submission, without weakening local companion safeguards.
-- [ ] Exercise BTC/ETH, BTC/Cardano, ETH/Cardano and both Ethereum and Cardano same-chain paths, including applicable fungible and NFT fixtures, claims, refunds and failure cases, subject to testnet funds, network confirmation times and service availability.
-- [ ] Record public transaction identifiers and observations, run regression tests, update architecture documentation and commit the work.
+- [x] (2026-11-06) Exercise BTC/ETH, BTC/Cardano, ETH/Cardano and both Ethereum and Cardano same-chain paths, including applicable fungible and NFT fixtures, claims, refunds and failure cases. Every pair in the matrix has a recorded, independently re-read public completion; the Bitcoin pairs would fail the P1 timelock policy today (see `PUBLIC_TESTNET_RESULTS.md`).
+- [ ] Record public transaction identifiers and observations, run regression tests, update architecture documentation and commit the work. (Recorded, tested and documented through P4 on 2026-11-06; the work is still uncommitted and is for plan P7.)
 
 ## Surprises & Discoveries
 

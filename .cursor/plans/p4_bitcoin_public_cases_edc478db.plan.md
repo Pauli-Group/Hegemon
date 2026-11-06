@@ -4,31 +4,31 @@ overview: Plan 4 of 8. Finish the remaining public Bitcoin testnet4 swap and ref
 todos:
   - id: p4-status
     content: Determine status of each open case and check against P1 margins
-    status: pending
+    status: completed
   - id: p4-pending
     content: Confirm pending Bitcoin claim and refund transactions
-    status: pending
+    status: completed
   - id: p4-btc-ada
     content: Finish BTC/Cardano claim
-    status: pending
+    status: completed
   - id: p4-btc-tokens
     content: Finish BTC/ERC-20 and BTC/Cardano-token swaps
-    status: pending
+    status: completed
   - id: p4-sepolia-refund
     content: Refund Sepolia fixture escrow and record it
-    status: pending
+    status: completed
   - id: p4-verify
     content: Independent verification and PUBLIC_TESTNET_RESULTS.md entries
-    status: pending
+    status: completed
   - id: p4-sweep
     content: Recover remaining testnet funds and confirm no live escrows
-    status: pending
+    status: completed
   - id: p4-docs
     content: Regression tests and DESIGN.md/METHODS.md updates
-    status: pending
+    status: completed
   - id: p4-revise
     content: Revise plans P5..P7 based on what was learned
-    status: pending
+    status: completed
 isProject: false
 ---
 

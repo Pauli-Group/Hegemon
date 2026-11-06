@@ -7,6 +7,9 @@
  *   CHROMIUM_PATH=/snap/bin/chromium PYTHONPATH=$HOME/.local/opt/hegemon-swap-python \
  *   node swap-service/qualify/hosted-ui.mjs [--out results.json] [--only sepolia,cardano,bitcoin]
  *
+ * `--sweep-cardano TXID#INDEX` instead refunds one leftover Cardano escrow of the pinned validator that belongs to Alice,
+ * through the page, reading its terms from the on-chain datum (clean-up after aborted runs).
+ *
  * What is real: the hosted Worker (swap-service/cloudflare/worker.mjs, hosted in Node with an in-memory D1 and
  * an identity HTMLRewriter), the page's own modules in Chromium, the public providers behind the Worker, and the
  * chains. What stands in for a wallet product: an EIP-1193 provider backed by eth_account (Python), a CIP-30
@@ -186,7 +189,7 @@ async function sepolia(browser) {
     page.on('dialog', dialog => dialog.accept());
     await page.goto(host.base);
     await page.evaluate(() => { for (const id of ['sepolia-action-section', 'observer-section']) document.getElementById(id).hidden = false; });
-    const hashlock = await createBackup(page);
+    const hashlock = await createBackup(page); out.hashlock = hashlock; save();
     const connect = async () => { await clearStatus(page, 'wallet-status'); await page.getByRole('button', {name: 'Connect Ethereum wallet'}).click(); await waitStatus(page, 'wallet-status', /Ethereum connected/, 30_000); };
     await connect();
     const fill = async terms => { for (const [k, v] of Object.entries(terms)) await page.locator(`#sepolia-action-form [name="${k}"]`).fill(v); };
@@ -332,7 +335,7 @@ async function cardano(browser) {
     const page = await context.newPage();
     await page.goto(host.base);
     await page.evaluate(() => { for (const id of ['cardano-wallet-section', 'observer-section']) document.getElementById(id).hidden = false; });
-    const hashlock = await createBackup(page);
+    const hashlock = await createBackup(page); out.hashlock = hashlock; save();
     const connect = async () => {
       await clearStatus(page, 'wallet-status');
       await page.locator('#cardano-wallet').selectOption('qualify'); await page.locator('#connect-cardano').click();
@@ -433,7 +436,7 @@ async function bitcoin(browser) {
     const page = await context.newPage();
     await page.goto(host.base);
     await page.evaluate(() => { for (const id of ['bitcoin-wallet-section', 'observer-section']) document.getElementById(id).hidden = false; });
-    const hashlock = await createBackup(page);
+    const hashlock = await createBackup(page); out.hashlock = hashlock; save();
     const form = async fields => { for (const [k, v] of Object.entries(fields)) await page.locator(`#bitcoin-wallet-form [name="${k}"]`).fill(String(v)); };
     const clickStatus = async selector => { await clearStatus(page, 'bitcoin-wallet-status'); await page.locator(selector).click(); await page.waitForFunction(() => { const t = document.getElementById('bitcoin-wallet-status').textContent; return t !== '' && !/^(Checking|Re-checking)/.test(t); }, null, {timeout: 120_000}); return {text: await statusOf(page, 'bitcoin-wallet-status'), error: (await page.locator('#bitcoin-wallet-status').getAttribute('class')) === 'error'}; };
     const lagging = /unavailable|inconsistent|fetch failed/i;
@@ -514,12 +517,69 @@ async function bitcoin(browser) {
   } finally { host.close(); save(); }
 }
 
+// ---- Sweep: refund a leftover Cardano escrow from an aborted run through the page (terms are read from the on-chain datum)
+async function cardanoSweep(browser, outref) {
+  const chain = 'cardano-sweep', out = results.cardano, host = await startHost();
+  try {
+    const [row] = await koios('/utxo_info', {_utxo_refs: [outref], _extended: true});
+    expect(chain, row && !row.is_spent, 'escrow output exists and is unspent');
+    const datum = row.inline_datum?.value?.fields?.map(f => f.bytes ?? f.int);
+    expect(chain, datum?.length === 4 && !(row.asset_list ?? []).length, 'inline datum has the four expected fields and the escrow holds only lovelace');
+    const [hashlock, claimant, refundee, expiryMs] = datum;
+    const alice = cardanoPerson('alice');
+    expect(chain, refundee === alice.hash, 'the refundee in the datum is the Alice key');
+    const [tip] = await koios('/tip');
+    expect(chain, 1666656000 + tip.abs_slot > Number(expiryMs) / 1000 + 60, 'ledger time is past the escrow expiry');
+    const state = {lastTxid: null, submitted: []};
+    const context = await browser.newContext();
+    await context.exposeFunction('__cardano', async (method, callArgs) => {
+      const utxos = await adaUtxos(alice.address);
+      const collateral = utxos.filter(u => u.lovelace >= 5_000_000).sort((a, b) => a.lovelace - b.lovelace)[0];
+      const wallet = softwareWallet({seed: alice.seed, address: alice.address, utxos, collateral: collateral ? [collateral.ref] : [], networkId: 0});
+      if (method === 'submitTx') {
+        const response = await fetch(KOIOS + '/submittx', {method: 'POST', headers: {'content-type': 'application/cbor', 'user-agent': 'Mozilla/5.0'}, body: Buffer.from(callArgs[0], 'hex')});
+        if (!response.ok) throw Error('submit rejected: ' + (await response.text()).slice(0, 200));
+        state.lastTxid = (await response.json()).toString(); state.submitted.push(state.lastTxid);
+        return state.lastTxid;
+      }
+      return wallet[method](...callArgs);
+    });
+    await context.addInitScript(() => {
+      const call = method => (...a) => window.__cardano(method, a).catch(error => { throw Object.assign(new Error(String(error.message).replace(/^.*Error: /, '')), /declined/.test(error.message) ? {code: 2} : {}); });
+      window.cardano = {qualify: {name: 'Software CIP-30 (ed25519 key file)', enable: async () => Object.fromEntries(['getNetworkId', 'getUtxos', 'getCollateral', 'getUsedAddresses', 'getUnusedAddresses', 'getChangeAddress', 'signTx', 'submitTx'].map(m => [m, call(m)]))}};
+    });
+    const page = await context.newPage();
+    await page.goto(host.base);
+    await page.evaluate(() => { for (const id of ['cardano-wallet-section']) document.getElementById(id).hidden = false; });
+    await clearStatus(page, 'wallet-status');
+    await page.locator('#cardano-wallet').selectOption('qualify'); await page.locator('#connect-cardano').click();
+    await page.waitForFunction(() => document.getElementById('wallet-status').textContent !== '');
+    const fields = {lovelace: String(row.value), assets: '', hashlock, claimant, refundee, expiry_ms: String(expiryMs), outref};
+    for (const [k, v] of Object.entries(fields)) await page.locator(`#cardano-wallet-form [name="${k}"]`).fill(v);
+    await clearStatus(page, 'cardano-wallet-status');
+    await page.locator('#cardano-refund').click();
+    await page.waitForFunction(() => !document.getElementById('cardano-confirm').hidden || document.getElementById('cardano-wallet-status').className === 'error', null, {timeout: 120_000});
+    expect(chain, await page.locator('#cardano-confirm').isVisible(), 'the page reviewed the refund: ' + await statusOf(page, 'cardano-wallet-status'));
+    const review = await statusOf(page, 'cardano-confirm-text');
+    expect(chain, new RegExp(`Refund ${row.value} lovelace`).test(review), 'review names the refund and amount');
+    await page.locator('#cardano-confirm-yes').click();
+    await settled(page, 'cardano-wallet-status', /Transaction submitted/);
+    out.sweep = {escrow: outref, refund_tx: state.lastTxid}; save();
+    await until('refund confirmation', async () => (await cardanoConfirmations(state.lastTxid)) >= 2, {everyMs: 15_000, timeoutMs: 900_000});
+    out.result = 'passed';
+  } finally { host.close(); save(); }
+}
+
 // ---- run
 const browser = await chromium.launch({executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium', headless: true, args: ['--no-sandbox']});
 const versions = {chromium: browser.version(), node: process.version};
 results.wallets = {versions, sepolia: 'EIP-1193 provider backed by eth_account (scripts/qualification_signer.py); not a browser-extension wallet',
   cardano: 'CIP-30 software wallet, ed25519 key file (swap-service/tools/cardano-bridge.mjs); not a browser-extension wallet', bitcoin: 'embit PSBT signer (scripts/qualification_signer.py)'};
 save();
+if (option('--sweep-cardano')) {
+  await cardanoSweep(browser, option('--sweep-cardano')).catch(error => { results.cardano.result = 'failed'; results.cardano.error = String(error.message).slice(0, 400); save(); console.error(error.message); process.exitCode = 1; });
+  await browser.close(); console.log(JSON.stringify(results.cardano, null, 2)); process.exit(process.exitCode ?? 0);
+}
 const jobs = {sepolia, cardano, bitcoin};
 const settledJobs = await Promise.allSettled([...ONLY].map((name, index) => sleep(20_000 * index).then(() => jobs[name](browser)).catch(error => { results[name].result = 'failed'; results[name].error = String(error.message).slice(0, 400); save(); throw error; })));
 await browser.close();

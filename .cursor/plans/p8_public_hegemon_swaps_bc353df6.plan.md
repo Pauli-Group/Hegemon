@@ -107,6 +107,11 @@ Revision from P3 (2026-11-06):
 - The hosted UI step (`p8-ui`) is small: the guided view already labels the Hegemon leg "unavailable on public testnet" and reports a leg with no reader as not readable. To make the Hegemon leg observable in the page, add `readers.hegemon` in `swap-ui/app.js` backed by a Worker route or the loopback companion and remove the label; the Worker's CSP forbids direct node access. The observer section needs a Hegemon option only if the page should find a Hegemon preimage; the existing Python observers (`public_hegemon_preimage_observer.py`) remain the reference.
 - Public-testnet pairs through the page exist for Sepolia, Cardano preview and Bitcoin testnet4 (qualified 2026-11-06 with stand-in wallets), so HGN/ETH, HGN/ADA and HGN/BTC swaps can have their non-Hegemon leg verified, claimed and refunded from the hosted page while the Hegemon leg runs through the engine and companion.
 
+Revision from P4 (2026-11-06):
+- A Bitcoin leg paired with a Hegemon leg needs a refund height at least 145 blocks (about two days) out and, as the long leg, further; the old Bitcoin pairs were funded about 141 blocks out and would be rejected today, so do not reuse their margins. Use `plan_with_margin` through the engine and expect waits of days for Bitcoin refunds.
+- Record the full terms and hashlock of every escrow before funding it, in the engine store and in the run's results file; P4 found two Bitcoin escrows from earlier qualification runs that can never be spent because the hashlock was lost with the browser session.
+- After each public Hegemon swap, re-verify it from public data in the style of `scripts/verify_public_btc_cases.py` (terms from the record, hashlock match, claim order against both deadlines, the retroactive policy verdict), and record `observedAt` and the chain head with every observation because testnet4 header times cannot reconstruct the order later.
+
 ## Last step: revise later plans
 
 Update the master ExecPlan and edit the plans that remain:
