@@ -22,7 +22,7 @@ NOW = 1_800_000_000
 HASHLOCK = 'ab' * 32
 SEED = 20261106
 PER_SIGNATURE = 4
-PAIRS = [('ethereum', 'cardano'), ('bitcoin', 'ethereum'), ('cardano', 'bitcoin'), ('hegemon', 'ethereum')]
+PAIRS = [('ethereum', 'cardano'), ('bitcoin', 'ethereum'), ('cardano', 'bitcoin'), ('hegemon', 'ethereum'), ('bitcoin', 'hegemon')]
 STATES = {
     'initiator': ['terms_saved', 'long_fund_submitted', 'long_funded', 'short_verified', 'short_claim_submitted', 'refund_submitted', 'done', 'aborted'],
     'responder': ['terms_saved', 'long_verified', 'short_fund_submitted', 'short_funded', 'preimage_known', 'long_claim_submitted', 'refund_submitted', 'failed'],

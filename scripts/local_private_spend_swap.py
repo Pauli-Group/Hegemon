@@ -32,7 +32,7 @@ def stop(proc):
         os.killpg(proc.pid, signal.SIGKILL); proc.wait()
 
 
-def wallet(binary, args, secrets, directory, label, expected=True):
+def wallet(binary, args, secrets, directory, label, expected=True, timeout=600):
     """PTY secrets with echo disabled; wait4 records the actual child high-water RSS."""
     master, slave = pty.openpty()
     attrs = termios.tcgetattr(slave); attrs[3] &= ~termios.ECHO
@@ -40,7 +40,7 @@ def wallet(binary, args, secrets, directory, label, expected=True):
     def ctty():
         os.setsid(); fcntl.ioctl(0, termios.TIOCSCTTY, 0)
     env = {k:v for k,v in os.environ.items() if not k.startswith('HEGEMON_')}
-    env['RAYON_NUM_THREADS'] = '2'
+    env['RAYON_NUM_THREADS'] = os.environ.get('SWAP_PROVE_THREADS', '2')  # 2 is the conservative default
     proc = subprocess.Popen([str(binary), *map(str,args)], stdin=slave, stdout=slave,
                             stderr=slave, preexec_fn=ctty, env=env)
     os.close(slave); output = bytearray(); sent = 0; start = time.monotonic()
@@ -61,13 +61,14 @@ def wallet(binary, args, secrets, directory, label, expected=True):
                         output.extend(data)
                     except OSError: break
                 break
-            require(time.monotonic()-start < 600, 'wallet command exceeded 600 seconds')
+            require(time.monotonic()-start < timeout, f'wallet command exceeded {timeout} seconds')
             require(len(output)<4*1024*1024, 'wallet output exceeded bound')
         text = output.decode(errors='replace')
         (directory / (label+'.log')).write_text(text)
         metrics = {'seconds':round(time.monotonic()-start,3), 'peak_rss_kib':usage.ru_maxrss,
                    'exit_code':proc.returncode}
-        if expected: require(proc.returncode==0 and sent==len(secrets), f'{label} failed; see {directory / (label+".log")}')
+        if expected is None: pass
+        elif expected: require(proc.returncode==0 and sent==len(secrets), f'{label} failed; see {directory / (label+".log")}')
         else: require(proc.returncode!=0, label+' unexpectedly succeeded')
         return text, metrics
     finally:

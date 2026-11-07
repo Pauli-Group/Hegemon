@@ -211,6 +211,42 @@ class ResponderDecisions(unittest.TestCase):
         self.assertEqual((step['kind'], step['to']), ('move', 'failed'))
 
 
+class LockWindow(unittest.TestCase):
+    """A swap that waited too long to fund is refused by policy, not left for the wallet to refuse."""
+
+    def setUp(self):
+        heads = {'long': head('ethereum'), 'short': head('hegemon')}
+        plan = policy.plan_timeouts(CONFIG, 'ethereum', 'hegemon', heads, NOW)
+        self.t = terms('ethereum', 'hegemon', plan['long']['expiry'], plan['short']['expiry'])
+        self.tight = copy.deepcopy(CONFIG)
+        # Make the chain's lock minimum wider than the window this plan left, as if time had passed.
+        self.tight['chains']['hegemon']['minLockBlocks'] = plan['short']['expiry'] - 1000
+        self.assertTrue(plan['verdict']['ok'])
+
+    def decide(self, config, role, state, **kwargs):
+        rec_args = {k: kwargs.pop(k) for k in ('long_ref', 'short_ref') if k in kwargs}
+        return engine.decide(record(role, state, **rec_args), self.t, observation(self.t, **kwargs), config, NOW)
+
+    def test_a_planned_swap_is_funded_in_time(self):
+        step = self.decide(CONFIG, 'initiator', 'terms_saved', long_ref=False, short_ref=False)
+        self.assertEqual((step['kind'], step['action']), ('act', 'fund'))
+        step = self.decide(CONFIG, 'responder', 'long_verified', long=ready(), short_ref=False)
+        self.assertEqual((step['kind'], step['action'], step['leg']), ('act', 'fund', 'short'))
+
+    def test_initiator_does_not_fund_when_the_short_lock_can_no_longer_be_made(self):
+        step = self.decide(self.tight, 'initiator', 'terms_saved', long_ref=False, short_ref=False)
+        self.assertEqual(step['kind'], 'abort')
+        self.assertEqual(step['codes'], ['lock-window-short'])
+
+    def test_responder_does_not_fund_a_lock_the_wallet_would_refuse(self):
+        step = self.decide(self.tight, 'responder', 'long_verified', long=ready(), short_ref=False)
+        self.assertEqual((step['kind'], step['codes']), ('abort', ['lock-window-short']))
+
+    def test_a_funded_leg_is_not_judged_by_the_lock_minimum(self):
+        step = self.decide(self.tight, 'initiator', 'long_fund_submitted', long=ready(2))
+        self.assertEqual(step['kind'], 'move')
+
+
 class CommonDecisions(unittest.TestCase):
     def test_needs_human_blocks_everything(self):
         for role, state in (('initiator', 'terms_saved'), ('responder', 'long_verified')):

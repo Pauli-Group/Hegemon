@@ -49,6 +49,19 @@ test('statements for another offer, another chain or the wrong role are refused;
  assert.throws(()=>checkIdentities(offer,give,receive,chain),/different give chain/);
 });
 
+test('a local Hegemon leg must name the local identities and is still unverified',async()=>{
+ const ids=await identities(),{receive}=legs(ids);
+ const swapped=structuredClone(ids);
+ for(const who of [swapped.owner,swapped.taker])who.statement.legs.give.chain='hegemon';
+ swapped.owner.addresses.give='local:'+'aa'.repeat(16);swapped.taker.addresses.give='local:'+'bb'.repeat(16);
+ const hgnOffer={...offer,give:{chain:'hegemon',kind:'hgn',id:'',amount:'1000'}};
+ const leg=(claimant,refundee)=>({chain:'hegemon',terms:{amount:'1000',locked:'x',timeout:5,hashlock,claimant,refundee}});
+ const result=checkIdentities(hgnOffer,leg('bb'.repeat(16),'aa'.repeat(16)),receive,swapped);
+ assert.deepEqual(result.unverified,['give']);assert.deepEqual(result.localOnly,['give']);assert.deepEqual(result.matched,['receive']);
+ assert.throws(()=>checkIdentities(hgnOffer,leg('ee'.repeat(16),'aa'.repeat(16)),receive,swapped),/local Hegemon identities/);
+ assert.throws(()=>checkIdentities(hgnOffer,leg('bb'.repeat(16),'ee'.repeat(16)),receive,swapped),/local Hegemon identities/);
+});
+
 test('a Hegemon leg is reported unverified and never matched',async()=>{
  const ids=await identities(),{receive}=legs(ids);
  const swapped=structuredClone(ids);

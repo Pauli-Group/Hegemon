@@ -44,9 +44,18 @@ def project(config, chain_name, head, seconds, fraction):
     return {'observedAt': head['observedAt'] + seconds, 'timestamp': head['timestamp'] + seconds}
 
 
-def default_margin(config, long_chain):
-    """Time for the long leg to confirm and the responder to react."""
-    return policy.confirm_seconds(config['chains'][long_chain]) + config['policy']['reactionSeconds']
+def default_margin(config, long_chain, short_chain=None):
+    """Time for the long leg to confirm, the responder to react, and, when the short leg's chain needs a proof
+    (`proveSeconds`, Hegemon), for the responder to prove and confirm the short leg before the initiator can claim.
+
+    The first two alone were the whole margin until a local Bitcoin/Hegemon swap found the initiator unable to claim:
+    the proof and two Hegemon blocks of confirmation ate the gap the plan had left."""
+    margin = policy.confirm_seconds(config['chains'][long_chain]) + config['policy']['reactionSeconds']
+    if short_chain is not None:
+        short = config['chains'][short_chain]
+        if short.get('proveSeconds'):
+            margin += short['proveSeconds'] + policy.confirm_seconds(short)
+    return margin
 
 
 def sample_times(config, chain_names, margin):
@@ -94,8 +103,12 @@ def verdicts(config, long, short, heads, now, margin):
 def _bump(config, leg, amount_seconds):
     chain = config['chains'][leg['chain']]
     if chain['kind'] == 'height':
-        mean = int((chain.get('measurement') or {}).get('mean_seconds') or 600)
-        return leg['expiry'] + max(1, amount_seconds // max(1, mean))
+        mean = int((chain.get('measurement') or {}).get('mean_seconds') or 0)
+        if mean:
+            return leg['expiry'] + max(1, amount_seconds // max(1, mean))
+        # No measured mean (a local fixture): the most blocks the fastest windows allow in that time, which cannot
+        # overshoot. A 600 second guess advanced a 3 second regtest chain one block per round and ran out of rounds.
+        return leg['expiry'] + max(1, max_blocks_in(chain, amount_seconds))
     return leg['expiry'] + max(60, amount_seconds)
 
 
@@ -105,7 +118,7 @@ def plan_with_margin(config, long_chain, short_chain, heads, now, margin_seconds
     `heads` is {'long': head, 'short': head}. Raises ValueError if the pair cannot be planned,
     for example when the safe horizon exceeds the policy limit.
     """
-    margin = default_margin(config, long_chain) if margin_seconds is None else margin_seconds
+    margin = default_margin(config, long_chain, short_chain) if margin_seconds is None else margin_seconds
     base = policy.plan_timeouts(config, long_chain, short_chain, heads, now)
     long = dict(base['long'])
     short = dict(base['short'])

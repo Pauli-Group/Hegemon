@@ -1,0 +1,236 @@
+{
+ "recorded": "2026-11-06",
+ "note": "Local Hegemon chain (private, peerless, 60 s target). swap_ok absent on runs made before the field existed; their outcome is states plus balance_problems. Superseded or erroneous runs are named *-excursion, *-keyerror, *-initiator-online.",
+ "runs": [
+  {
+   "run": "both_refund-eth-hgn",
+   "scenario": "both_refund",
+   "long": "ethereum",
+   "short": "hegemon",
+   "states": {
+    "initiator": "refunded",
+    "responder": "refunded"
+   },
+   "seconds": 8990,
+   "hegemon_blocks": 119,
+   "hegemon_peers": 0,
+   "balance_problems": [],
+   "ok": false,
+   "swap_ok": null,
+   "late_claim_refused": null,
+   "window_excursions": 92,
+   "first_excursions": [
+    "1 blocks from 189 took 483s, outside [0, 415]",
+    "1 blocks from 192 took 632s, outside [0, 415]",
+    "2 blocks from 189 took 800s, outside [2, 555]"
+   ]
+  },
+  {
+   "run": "happy-bitcoin-hegemon",
+   "scenario": "happy",
+   "long": "bitcoin",
+   "short": "hegemon",
+   "states": {
+    "initiator": "done",
+    "responder": "done"
+   },
+   "seconds": 558,
+   "hegemon_blocks": 11,
+   "hegemon_peers": 0,
+   "balance_problems": [],
+   "ok": true,
+   "swap_ok": null,
+   "late_claim_refused": null,
+   "window_excursions": 0,
+   "first_excursions": []
+  },
+  {
+   "run": "happy-cardano-hegemon",
+   "scenario": "happy",
+   "long": "cardano",
+   "short": "hegemon",
+   "states": {
+    "initiator": "done",
+    "responder": "done"
+   },
+   "seconds": 524,
+   "hegemon_blocks": 7,
+   "hegemon_peers": 0,
+   "balance_problems": [],
+   "ok": true,
+   "swap_ok": null,
+   "late_claim_refused": null,
+   "window_excursions": 0,
+   "first_excursions": []
+  },
+  {
+   "run": "happy-ethereum-hegemon",
+   "scenario": "happy",
+   "long": "ethereum",
+   "short": "hegemon",
+   "states": {
+    "initiator": "done",
+    "responder": "done"
+   },
+   "seconds": 651,
+   "hegemon_blocks": 14,
+   "hegemon_peers": 0,
+   "balance_problems": [],
+   "ok": true,
+   "swap_ok": null,
+   "late_claim_refused": null,
+   "window_excursions": 0,
+   "first_excursions": []
+  },
+  {
+   "run": "happy-hegemon-bitcoin",
+   "scenario": "happy",
+   "long": "hegemon",
+   "short": "bitcoin",
+   "states": {
+    "initiator": "done",
+    "responder": "done"
+   },
+   "seconds": 543,
+   "hegemon_blocks": 9,
+   "hegemon_peers": 0,
+   "balance_problems": [],
+   "ok": true,
+   "swap_ok": null,
+   "late_claim_refused": null,
+   "window_excursions": 0,
+   "first_excursions": []
+  },
+  {
+   "run": "happy-hegemon-cardano-excursion",
+   "scenario": "happy",
+   "long": "hegemon",
+   "short": "cardano",
+   "states": {
+    "initiator": "done",
+    "responder": "done"
+   },
+   "seconds": 868,
+   "hegemon_blocks": 18,
+   "hegemon_peers": 0,
+   "balance_problems": [],
+   "ok": false,
+   "swap_ok": null,
+   "late_claim_refused": null,
+   "window_excursions": 4,
+   "first_excursions": [
+    "6 blocks from 159 took 49s, outside [66, 988]",
+    "6 blocks from 160 took 44s, outside [66, 988]",
+    "6 blocks from 161 took 49s, outside [66, 988]"
+   ]
+  },
+  {
+   "run": "happy-hegemon-cardano",
+   "scenario": "happy",
+   "long": "hegemon",
+   "short": "cardano",
+   "states": {
+    "initiator": "done",
+    "responder": "done"
+   },
+   "seconds": 277,
+   "hegemon_blocks": 11,
+   "hegemon_peers": 0,
+   "balance_problems": [],
+   "ok": true,
+   "swap_ok": true,
+   "late_claim_refused": null,
+   "window_excursions": 0,
+   "first_excursions": []
+  },
+  {
+   "run": "happy-hgn-eth",
+   "scenario": "happy",
+   "long": "hegemon",
+   "short": "ethereum",
+   "states": {
+    "initiator": "done",
+    "responder": "done"
+   },
+   "seconds": 358,
+   "hegemon_blocks": 7,
+   "hegemon_peers": 0,
+   "balance_problems": [],
+   "ok": true,
+   "swap_ok": null,
+   "late_claim_refused": null,
+   "window_excursions": 0,
+   "first_excursions": []
+  },
+  {
+   "run": "late_claim-eth-hgn-initiator-online",
+   "scenario": "late_claim",
+   "long": "ethereum",
+   "short": "hegemon",
+   "states": {
+    "initiator": "done",
+    "responder": "done"
+   },
+   "seconds": 643,
+   "hegemon_blocks": 4,
+   "hegemon_peers": 0,
+   "balance_problems": [
+    "('alice', 'ethereum'): balance moved -100752012578125000, expected 0 within fees",
+    "('alice', 'hegemon'): balance moved 49999999, expected 0 within fees",
+    "('bob', 'ethereum'): balance moved 99946645999626522, expected 0 within fees",
+    "('bob', 'hegemon'): balance moved -50000001, expected 0 within fees"
+   ],
+   "ok": false,
+   "swap_ok": false,
+   "late_claim_refused": true,
+   "window_excursions": 0,
+   "first_excursions": []
+  },
+  {
+   "run": "late_claim-eth-hgn",
+   "scenario": "late_claim",
+   "long": "ethereum",
+   "short": "hegemon",
+   "states": {
+    "initiator": "refunded",
+    "responder": "refunded"
+   },
+   "seconds": 9873,
+   "hegemon_blocks": 136,
+   "hegemon_peers": 0,
+   "balance_problems": [],
+   "ok": false,
+   "swap_ok": true,
+   "late_claim_refused": true,
+   "window_excursions": 41,
+   "first_excursions": [
+    "1 blocks from 235 took 537s, outside [0, 415]",
+    "1 blocks from 262 took 527s, outside [0, 415]",
+    "1 blocks from 286 took 520s, outside [0, 415]"
+   ]
+  },
+  {
+   "run": "no_cp-hgn-eth",
+   "scenario": "no_counterparty",
+   "long": "hegemon",
+   "short": "ethereum",
+   "states": {
+    "initiator": "refunded",
+    "responder": "terms_saved"
+   },
+   "seconds": 8258,
+   "hegemon_blocks": 121,
+   "hegemon_peers": 0,
+   "balance_problems": [],
+   "ok": false,
+   "swap_ok": null,
+   "late_claim_refused": null,
+   "window_excursions": 18,
+   "first_excursions": [
+    "3 blocks from 269 took 735s, outside [11, 674]",
+    "6 blocks from 162 took 64s, outside [66, 988]",
+    "6 blocks from 163 took 45s, outside [66, 988]"
+   ]
+  }
+ ]
+}

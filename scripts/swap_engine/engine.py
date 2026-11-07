@@ -121,6 +121,23 @@ def _policy_gate(terms, obs, config, now):
     return {'kind': 'abort', 'why': 'timelock policy rejects these terms: ' + ', '.join(codes), 'codes': codes, 'reasons': verdict['reasons']}
 
 
+def _lock_window_gate(terms, obs, config, names):
+    """An abort decision when a lock that is about to be funded could no longer be made, else None.
+
+    Only Hegemon-style chains with a minimum lock window are affected. A window that is too short never
+    recovers (the chain only advances), so this aborts instead of waiting; nothing has been funded yet.
+    """
+    for name in names:
+        head = obs['heads'][name]
+        if head is None:
+            continue
+        problem = policy.lock_window_shortfall(config, terms['legs'][name], head)
+        if problem is not None:
+            return {'kind': 'abort', 'why': 'timelock policy rejects these terms: ' + problem['code'] + ': ' + problem['message'],
+                    'codes': [problem['code']], 'reasons': [problem]}
+    return None
+
+
 def _leg_ready(observation, need):
     return observation is not None and observation['found'] and observation['verified'] and observation['confirmations'] >= need
 
@@ -181,7 +198,7 @@ def decide(record, terms, obs, config, now):
 
     if role == 'initiator':
         if state == 'terms_saved':
-            gate = _policy_gate(terms, obs, config, now)
+            gate = _policy_gate(terms, obs, config, now) or _lock_window_gate(terms, obs, config, (LONG, SHORT))
             if gate is None:
                 return _act('fund', LONG, 'long_fund_submitted', 'policy allows funding the long leg')
             return gate
@@ -246,6 +263,9 @@ def decide(record, terms, obs, config, now):
                 return _wait('long leg not yet confirmed, verified and unspent', have=other_obs['confirmations'], need=need_other)
             if state == 'terms_saved':
                 return _move('long_verified', 'long leg verified; policy ok')
+            gate = _lock_window_gate(terms, obs, config, (SHORT,))
+            if gate is not None:
+                return gate
             return _act('fund', SHORT, 'short_fund_submitted', 'long leg verified and policy ok: fund the short leg')
         if state == 'short_fund_submitted':
             return own_funding_confirmed('short_fund_submitted', 'short_funded')

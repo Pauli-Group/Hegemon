@@ -38,11 +38,16 @@ def _bitcoin_key(value):
         return False
 
 
+# A Hegemon address a local fixture names. The statement is signed by the other chain's key, so the address is bound to the
+# signer, but nothing proves the signer controls it (the wallet has no message signature), so it is never `proven` and the
+# hosted client refuses it.
+LOCAL_HEGEMON = 'local:[0-9A-Za-z_-]{16,512}'
+
 ADDRESS = {
     'ethereum': lambda v: isinstance(v, str) and re.fullmatch('0x[0-9a-f]{40}', v) is not None,
     'cardano': lambda v: _hex(v, 56),
     'bitcoin': _bitcoin_key,
-    'hegemon': lambda v: v == 'pending',
+    'hegemon': lambda v: v == 'pending' or (isinstance(v, str) and re.fullmatch(LOCAL_HEGEMON, v) is not None),
 }
 
 
@@ -264,11 +269,12 @@ def parse_identity(blob):
     return value
 
 
-def verify_identity(blob, expected, now):
+def verify_identity(blob, expected, now, allow_local=False):
     """Verify a stored identity blob against what this process independently knows.
 
     `expected` is `{offer, role, reservation, inbox, give:{chain}, receive:{chain}}`; `now` is whole seconds. Returns
-    `{statement, code, role, addresses, proven, unverified, proofs}` exactly as the JavaScript verifier does."""
+    `{statement, code, role, addresses, proven, unverified, local_only, proofs}` exactly as the JavaScript verifier does. A
+    `local:` Hegemon address is refused unless `allow_local` is set; it is for same-machine fixture swaps only."""
     if not isinstance(now, int) or isinstance(now, bool):
         raise IdentityError('The current time is required.')
     parsed = parse_identity(blob)
@@ -284,6 +290,9 @@ def verify_identity(blob, expected, now):
     for side in ('give', 'receive'):
         if statement['legs'][side]['chain'] != expected[side]['chain']:
             raise IdentityError(f'The identity statement is for a different {side} chain.')
+    local_only = [side for side in ('give', 'receive') if _is_local(leg_address(statement, side))]
+    if local_only and not allow_local:
+        raise IdentityError('A local-only Hegemon address is not accepted here.')
     if statement['expires'] <= now:
         raise IdentityError('The identity statement has expired.')
     if statement['issued'] > now + CLOCK_SKEW_SECONDS:
@@ -304,7 +313,11 @@ def verify_identity(blob, expected, now):
     proven = {side: any(p['chain'] == statement['legs'][side]['chain'] and p['signer'] == addresses[side] for p in verified) for side in ('give', 'receive')}
     unverified = [side for side in ('give', 'receive') if statement['legs'][side]['chain'] == 'hegemon']
     return {'statement': statement, 'code': identity_code(statement), 'role': statement['role'], 'addresses': addresses,
-            'proven': proven, 'unverified': unverified, 'proofs': verified}
+            'proven': proven, 'unverified': unverified, 'local_only': local_only, 'proofs': verified}
+
+
+def _is_local(address):
+    return isinstance(address, str) and address.startswith('local:')
 
 
 def _same(chain, a, b):
@@ -321,7 +334,7 @@ def check_terms(terms, owner, taker, give_leg):
     receive_leg = 'short' if give_leg == 'long' else 'long'
     plan = {give_leg: ('give', taker['addresses']['give'], owner['addresses']['give']),
             receive_leg: ('receive', owner['addresses']['receive'], taker['addresses']['receive'])}
-    unverified = []
+    unverified, local_only = [], []
     for name, (side, claimant, refundee) in plan.items():
         leg = terms['legs'][name]
         chain = owner['statement']['legs'][side]['chain']
@@ -329,9 +342,14 @@ def check_terms(terms, owner, taker, give_leg):
             raise IdentityError(f'The {name} leg is on a different chain than the identities.')
         if chain == 'hegemon':
             unverified.append(name)
+            if _is_local(claimant) and _is_local(refundee):
+                # Fixture identities name the wallets; a different wallet in the escrow is still refused.
+                if leg['claimant'] != claimant[len('local:'):] or leg['refundee'] != refundee[len('local:'):]:
+                    raise IdentityError(f'The {name} leg does not name the local Hegemon identities.')
+                local_only.append(name)
             continue
         if not _same(chain, leg['claimant'], claimant):
             raise IdentityError(f'The {name} leg claimant is not the signed identity.')
         if not _same(chain, leg['refundee'], refundee):
             raise IdentityError(f'The {name} leg refundee is not the signed identity.')
-    return {'unverified': unverified}
+    return {'unverified': unverified, 'local_only': local_only}

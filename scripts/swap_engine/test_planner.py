@@ -46,6 +46,34 @@ class PlannerTests(unittest.TestCase):
                 verdict = policy.check_ordered(CONFIG, plan['long'], plan['short'], projected, NOW + seconds)
                 self.assertTrue(verdict['ok'], (long_chain, short_chain, seconds, verdict['reasons']))
 
+    def test_margin_covers_proving_and_confirming_a_short_hegemon_leg(self):
+        """A local Bitcoin/Hegemon swap refused to claim because the responder's proof and two Hegemon blocks had
+        used the gap the plan left; the default margin now includes them whenever the short chain needs a proof."""
+        hegemon = CONFIG['chains']['hegemon']
+        extra = hegemon['proveSeconds'] + policy.confirm_seconds(hegemon)
+        for long_chain in ('bitcoin', 'ethereum', 'cardano'):
+            plain = planner.default_margin(CONFIG, long_chain)
+            self.assertEqual(planner.default_margin(CONFIG, long_chain, 'hegemon'), plain + extra)
+            self.assertEqual(planner.default_margin(CONFIG, long_chain, 'bitcoin' if long_chain != 'bitcoin' else 'ethereum'), plain)
+            heads = {'long': head(long_chain), 'short': head('hegemon')}
+            plan = planner.plan_with_margin(CONFIG, long_chain, 'hegemon', heads, NOW)
+            self.assertEqual(plan['marginSeconds'], plain + extra)
+            # the slowest the responder can be: a full margin of real time with the fastest blocks on the long leg
+            projected = {'long': planner.project(CONFIG, long_chain, heads['long'], plan['marginSeconds'], 1.0),
+                         'short': planner.project(CONFIG, 'hegemon', heads['short'], plan['marginSeconds'], 0.0)}
+            self.assertTrue(policy.check_ordered(CONFIG, plan['long'], plan['short'], projected, NOW + plan['marginSeconds'])['ok'])
+
+    def test_bump_without_a_measured_mean_uses_the_fastest_windows(self):
+        """A local fixture has no `measurement`; guessing 600 s per block moved a 3 second chain one block per round."""
+        chain = {'kind': 'height', 'slowFactor': 1.0, 'fastFactor': 1.0, 'windows': {'1': {'min': 3, 'max': 9}, '96': {'min': 280, 'max': 320}}}
+        leg = {'chain': 'fixture', 'expiry': 1000}
+        config = {'chains': {'fixture': chain}}
+        bumped = planner._bump(config, leg, 900)
+        self.assertGreater(bumped - 1000, 100)
+        self.assertLessEqual(policy.fast_seconds(chain, bumped - 1000), 900)
+        measured = {'chains': {'fixture': {**chain, 'measurement': {'mean_seconds': 600}}}}
+        self.assertEqual(planner._bump(measured, leg, 1800), 1003)
+
     def test_plain_plan_can_fail_inside_the_margin(self):
         """The reason the planner exists: plan_timeouts alone is valid only at one instant."""
         heads = {'long': head('bitcoin'), 'short': head('ethereum')}

@@ -88,6 +88,48 @@ def fast_seconds(chain, n):
     return math.floor(best * chain['fastFactor'])
 
 
+def blocks_during(chain, seconds):
+    """Most blocks a height chain can add within `seconds`, from the fast side of the measured windows."""
+    if not _is_height(chain) or seconds <= 0:
+        return 0
+    lo, hi = 0, 1_000_000
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if fast_seconds(chain, mid) <= seconds:
+            lo = mid
+        else:
+            hi = mid - 1
+    return lo
+
+
+def prove_blocks(chain):
+    """Blocks that can pass while the wallet proves an action (zero for chains without proving)."""
+    return blocks_during(chain, chain.get('proveSeconds', 0))
+
+
+def lock_floor(chain, head_height):
+    """Smallest expiry height a new lock may carry: the chain's minimum lock window, the provider lag and
+    the blocks that can pass while the lock is proved, so the lock still has its window when it lands."""
+    return head_height + chain['minLockBlocks'] + chain['providerLagBlocks'] + prove_blocks(chain) + 1
+
+
+def lock_window_shortfall(config, leg, head):
+    """None when a lock for `leg` can still be made; otherwise a reason the engine must not fund it.
+
+    The private-spend wallet refuses a timeout below its tip plus the minimum lock window. The check here
+    adds the provider lag and the proving time, using the same margins the planner used, so a swap that sat
+    too long between planning and funding is refused by policy rather than by the wallet.
+    """
+    chain = _chain(config, leg['chain'])
+    if not _is_height(chain) or not chain.get('minLockBlocks'):
+        return None
+    need = lock_floor(chain, head['height'])
+    if leg['expiry'] >= need:
+        return None
+    return _reason('lock-window-short', f"The {leg['chain']} lock must expire at height {need} or later; this one expires at {leg['expiry']}.",
+                   haveExpiry=leg['expiry'], needExpiry=need)
+
+
 def inclusion_seconds(chain):
     return slow_seconds(chain, 1) if _is_height(chain) else chain['inclusionSeconds']
 
@@ -267,7 +309,7 @@ def plan_timeouts(config, long_chain, short_chain, heads, now):
 
     def floor_of(chain, head):
         if _is_height(chain) and chain.get('minLockBlocks'):
-            return head['height'] + chain['minLockBlocks'] + chain['providerLagBlocks'] + 1
+            return lock_floor(chain, head['height'])
         return 0
 
     short_expiry = _smallest_expiry(

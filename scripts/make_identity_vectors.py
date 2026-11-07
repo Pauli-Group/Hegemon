@@ -25,6 +25,7 @@ from nacl.signing import SigningKey
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "config" / "swap" / "identity-vectors.json"
 PREFIX = "hegemon.swap.identity.v1\n"
+LOCAL_HEGEMON_ADDRESS = "local:" + "ab12" * 8
 NOW = 1_800_000_000
 OFFER = "11" * 32
 RESERVATION = "22" * 32
@@ -147,6 +148,13 @@ def statement(role: str, legs: dict, reservation: str, inbox: str, nonce: str) -
 
 
 def case(name: str, role: str, st: dict, proofs: list[dict], reservation: str, inbox: str) -> dict:
+    out = case_core(name, role, st, proofs, reservation, inbox)
+    if any(v.startswith("local:") for v in out["addresses"].values()):
+        out["allow_local"] = True
+    return out
+
+
+def case_core(name: str, role: str, st: dict, proofs: list[dict], reservation: str, inbox: str) -> dict:
     return {
         "name": name,
         "expected": {"offer": OFFER, "role": role, "reservation": reservation, "inbox": inbox,
@@ -182,6 +190,10 @@ def main() -> None:
     st = statement("owner", {"give": ("hegemon", "pending"), "receive": ("cardano", ada)}, "", OWNER_INBOX, "d4" * 16)
     text = statement_text(st)
     cases.append(case("owner-hegemon-pending-ada", "owner", st, [cardano_proof(text)], "", OWNER_INBOX))
+    # A local-only Hegemon address: bound by the Cardano signature, never proven, accepted only with allow_local.
+    st = statement("owner", {"give": ("hegemon", LOCAL_HEGEMON_ADDRESS), "receive": ("cardano", ada)}, "", OWNER_INBOX, "d5" * 16)
+    text = statement_text(st)
+    cases.append(case("owner-hegemon-local-ada", "owner", st, [cardano_proof(text)], "", OWNER_INBOX))
 
     # A matched pair: the owner gives BTC and receives ETH; the taker (a different BTC key) claims the BTC and refunds ETH.
     taker_btc = ec.PrivateKey(BTC_KEY2).get_public_key().sec().hex()

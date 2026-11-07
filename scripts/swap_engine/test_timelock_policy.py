@@ -164,7 +164,28 @@ class MutationTests(unittest.TestCase):
         ('requirement blocks ignore provider lag', "mid + chain['refundOffsetBlocks'] - chain['providerLagBlocks']", "mid + chain['refundOffsetBlocks']"),
         ('requirement window ignores reaction time', "window = _scale(config, action_seconds(chain) + config['policy']['reactionSeconds'])", 'window = _scale(config, action_seconds(chain))'),
         ('plan skips lock minimum', "if _is_height(chain) and chain.get('minLockBlocks'):", "if False and chain.get('minLockBlocks'):"),
+        ('lock floor ignores proving blocks', "chain['providerLagBlocks'] + prove_blocks(chain) + 1", "chain['providerLagBlocks'] + 1"),
+        ('proving blocks use the slow bound', "if fast_seconds(chain, mid) <= seconds:", "if slow_seconds(chain, mid) <= seconds:"),
     ]
+
+    def test_lock_window_shortfall_matches_the_plan_floor(self):
+        chain = VECTORS['config']['chains']['proving']
+        config = VECTORS['config']
+        head = {'observedAt': 1_000_000, 'height': 1000}
+        floor = 1000 + 200 + 1 + policy.prove_blocks(chain) + 1
+        self.assertEqual(policy.prove_blocks(chain), 5)
+        self.assertEqual(policy.lock_floor(chain, 1000), floor)
+        self.assertIsNone(policy.lock_window_shortfall(config, {'chain': 'proving', 'expiry': floor}, head))
+        short = policy.lock_window_shortfall(config, {'chain': 'proving', 'expiry': floor - 1}, head)
+        self.assertEqual(short['code'], 'lock-window-short')
+        # A chain without a lock minimum, or a time chain, is never refused by this rule.
+        self.assertIsNone(policy.lock_window_shortfall(config, {'chain': 'slow', 'expiry': 1001}, head))
+        self.assertIsNone(policy.lock_window_shortfall(config, {'chain': 'fast', 'expiry': 5}, {'observedAt': 1_000_000, 'timestamp': 999_995}))
+
+    def test_the_real_hegemon_floor_is_wider_than_the_bare_minimum(self):
+        chain = REAL['chains']['hegemon']
+        self.assertGreater(policy.prove_blocks(chain), 4)  # a 300 s proof can span many blocks in a burst
+        self.assertEqual(policy.lock_floor(chain, 100), 100 + 14 + 2 + policy.prove_blocks(chain) + 1)
 
     def test_every_rule_is_pinned_by_a_shared_vector(self):
         survivors = []

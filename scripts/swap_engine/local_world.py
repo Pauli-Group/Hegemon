@@ -10,6 +10,7 @@ Run directly for a smoke swap:  python3 -m swap_engine.local_world ethereum card
 """
 import hashlib
 import json
+import math
 import os
 import shutil
 import sys
@@ -22,12 +23,55 @@ from swap_engine import engine, planner
 from swap_engine import timelock_policy as policy
 from swap_engine.store import Store
 
-AMOUNTS = {'bitcoin': 50_000, 'ethereum': 10**17, 'cardano': 20_000_000}
-FEE_TOLERANCE = {'bitcoin': 2_000, 'ethereum': 5 * 10**15, 'cardano': 3_000_000}
+AMOUNTS = {'bitcoin': 50_000, 'ethereum': 10**17, 'cardano': 20_000_000, 'hegemon': 50_000_000}
+FEE_TOLERANCE = {'bitcoin': 2_000, 'ethereum': 5 * 10**15, 'cardano': 3_000_000, 'hegemon': 1_000}
 BLOCK_SECONDS = {'bitcoin': 3, 'ethereum': 2}
 
 
-def local_timing():
+HEGEMON_MEAN_SECONDS = 60
+HEGEMON_TAIL = 1e-3
+
+
+def _erlang_cdf(n, seconds, mean):
+    x, term = seconds / mean, math.exp(-seconds / mean)
+    total = term
+    for i in range(1, n):
+        term *= x / i
+        total += term
+    return 1 - total
+
+
+def erlang_window(n, tail=HEGEMON_TAIL, mean=HEGEMON_MEAN_SECONDS):
+    """{'min','max'} seconds for `n` consecutive blocks when blocks arrive as a Poisson process of mean `mean`:
+    fewer than `min` or more than `max` seconds each have probability `tail`."""
+    def solve(upper):
+        lo, hi = 0.0, mean * n * 40
+        for _ in range(120):
+            mid = (lo + hi) / 2
+            below = _erlang_cdf(n, mid, mean)
+            if (1 - below > tail) if upper else (below <= tail):
+                lo = mid
+            else:
+                hi = mid
+        return (lo + hi) / 2
+    return {'min': int(solve(False)), 'max': math.ceil(solve(True))}
+
+
+def hegemon_timing():
+    """Timing entry of the local Hegemon chain (kind of chain-timing.json's `hegemon`, measured by model instead of by history).
+
+    A private chain mined by one thread of ours has a Poisson block process at the retarget's 60 second target and cannot
+    stall for hours as the public testnet did, so the windows are Erlang quantiles with a 1e-3 tail per window and a 120 second
+    allowance for a stalled miner. That is thinner than the public tail (1e-6 plus a two hour outage allowance), which would make a
+    local refund wait most of a day; `LocalHegemonProfile.spans_within_windows` checks after a run that the observed blocks stayed
+    inside these windows, so a run that left them is reported as an invalid fixture, not as a pass."""
+    return {'kind': 'height', 'network': 'local hegemon (1e-3 Erlang windows, 60 s mean)', 'confirmations': 2, 'clockSkewSeconds': 0,
+            'slowFactor': 1.0, 'fastFactor': 0.75, 'outageAllowanceSeconds': 120, 'providerLagBlocks': 0, 'refundOffsetBlocks': 1,
+            'minLockBlocks': 14, 'proveSeconds': 240,
+            'windows': {str(n): erlang_window(n) for n in (1, 2, 3, 6, 12, 24, 48, 96, 144, 288)}}
+
+
+def local_timing(chains=()):
     windows = {str(n): {'min': max(0, n * 3 - 3), 'max': n * 3 + 8} for n in (1, 2, 3, 6, 12, 24, 48, 96)}
     config = {
         'version': 1, 'status': 'local fixture timing; scaled to regtest, Anvil and a 1-second-slot private Cardano cluster',
@@ -41,6 +85,10 @@ def local_timing():
             'cardano': {'kind': 'time', 'network': 'local-cluster', 'confirmations': 2, 'clockSkewSeconds': 3, 'inclusionSeconds': 12,
                         'slowBlockSeconds': 8, 'maxHeadAgeSeconds': 30},
         }}
+    if 'hegemon' in chains:
+        config['chains']['hegemon'] = hegemon_timing()
+        config['policy']['maxHorizonSeconds'] = 12 * 3600
+        config['status'] += '; Hegemon on a private chain at its real 60 second block time'
     return policy.validate_timing(config)
 
 
@@ -71,6 +119,9 @@ class LocalWorld:
         elif name == 'ethereum':
             from swap_engine.adapters.local_ethereum import LocalAnvilProfile
             self.profiles[name] = LocalAnvilProfile(self.tmp / 'eth', BLOCK_SECONDS['ethereum'])
+        elif name == 'hegemon':
+            from swap_engine.adapters.hegemon_local import LocalHegemonProfile
+            self.profiles[name] = LocalHegemonProfile(self.tmp / 'hgn')
         elif name == 'cardano':
             from swap_engine.adapters.local_cardano import LocalCardanoProfile
             profile = LocalCardanoProfile(self.tmp / 'ada')
@@ -102,7 +153,10 @@ class LocalWorld:
             return self.adapter_cache[key]
         profile = self.profiles[chain]
         label = f'{person}-{tag}'
-        if chain == 'bitcoin':
+        if chain == 'hegemon':
+            from swap_engine.adapters.hegemon_local import HegemonAdapter
+            adapter = HegemonAdapter(profile, person)
+        elif chain == 'bitcoin':
             from swap_engine.adapters.bitcoin import BitcoinAdapter
             path, _ = profile.new_key_file(label)
             adapter = BitcoinAdapter(profile, path)
@@ -123,7 +177,7 @@ class LocalSwap:
     TERMINAL = ('done', 'refunded', 'aborted', 'failed')
 
     def __init__(self, world, long_chain, short_chain, tag, config=None, preimage=None, margin_seconds=None):
-        self.world, self.config = world, config or local_timing()
+        self.world, self.config = world, config or local_timing(tuple(world.profiles))
         self.tag = tag
         self.preimage = preimage or os.urandom(32)
         self.chains = {'long': long_chain, 'short': short_chain}
@@ -154,8 +208,12 @@ class LocalSwap:
         with self.stores[role].locked(self.swap_id) as swap:
             result = engine.advance(swap, self.adapters[role], self.config, self.now())
         entry = (round(time.time() - self.started, 1), role, result['status'], result.get('state'))
-        if getattr(self, 'verbose', False) and (not self.log or self.log[-1][1:] != entry[1:]):
-            print(*entry, str({k: v for k, v in result.items() if k not in ('status', 'state')})[:160], flush=True)
+        if getattr(self, 'verbose', False):
+            shown = (entry[1:], str({k: v for k, v in result.items() if k not in ('status', 'state', 'info')})[:160])
+            last = self.__dict__.setdefault('_shown', {})
+            if last.get(role) != shown:
+                last[role] = shown
+                print(*entry, shown[1], flush=True)
         self.log.append(entry)
         return result
 
@@ -221,6 +279,8 @@ class LocalSwap:
 
     def _balance(self, chain, adapter):
         profile = self.world.profiles[chain]
+        if chain == 'hegemon':
+            return profile.balance(adapter.person)
         if chain == 'ethereum':
             return int(profile.rpc('eth_getBalance', [adapter.identity(), 'latest']), 16)
         if chain == 'bitcoin':

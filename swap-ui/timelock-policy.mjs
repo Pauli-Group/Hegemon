@@ -76,6 +76,22 @@ export function fastSeconds(c, n) {
   return Math.floor(best * c.fastFactor);
 }
 
+/** Most blocks a height chain can add within `seconds`, from the fast side of the measured windows. */
+export function blocksDuring(c, seconds) {
+  if (!isHeight(c) || seconds <= 0) return 0;
+  let lo = 0, hi = 1_000_000;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi + 1) / 2);
+    if (fastSeconds(c, mid) <= seconds) lo = mid; else hi = mid - 1;
+  }
+  return lo;
+}
+
+/** Blocks that can pass while the wallet proves an action (zero for chains without proving). */
+export function proveBlocks(c) {
+  return blocksDuring(c, c.proveSeconds || 0);
+}
+
 /** Seconds for a submitted transaction to be included in a block. */
 export function inclusionSeconds(c) {
   return isHeight(c) ? slowSeconds(c, 1) : c.inclusionSeconds;
@@ -231,7 +247,7 @@ export function planTimeouts(config, { longChain, shortChain, heads, now }) {
   const shortNeed = Math.max(config.policy.minShortWindowSeconds,
     confirmSeconds(cl) + config.policy.reactionSeconds + confirmSeconds(cs)
       + scale(config, actionSeconds(cs) + config.policy.reactionSeconds));
-  const floorOf = (c, head) => (isHeight(c) && c.minLockBlocks ? head.height + c.minLockBlocks + c.providerLagBlocks + 1 : 0);
+  const floorOf = (c, head) => (isHeight(c) && c.minLockBlocks ? head.height + c.minLockBlocks + c.providerLagBlocks + proveBlocks(c) + 1 : 0);
   const shortProbe = { chain: shortChain };
   let shortExpiry = smallestExpiry(config, shortProbe, shortHead, now,
     e => legWindow(config, { chain: shortChain, expiry: e }, shortHead, now).firstRefund >= shortNeed);

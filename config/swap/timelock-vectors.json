@@ -1,5 +1,5 @@
 {
- "comment": "Shared by swap-ui/timelock-policy.test.mjs and scripts/swap_engine/test_timelock_policy.py. Cases 1-5 are hand-derived; see .agent/SWAP_TIMELOCK_POLICY_EXECPLAN.md.",
+ "comment": "Shared by swap-ui/timelock-policy.test.mjs and scripts/swap_engine/test_timelock_policy.py. Plans 1-5 are hand-derived; plan 6 pins the proving-time term of the lock floor; see .agent/SWAP_TIMELOCK_POLICY_EXECPLAN.md.",
  "config": {
   "policy": {
    "reactionSeconds": 600,
@@ -80,6 +80,28 @@
      }
     },
     "minLockBlocks": 500
+   },
+   "proving": {
+    "kind": "height",
+    "confirmations": 2,
+    "clockSkewSeconds": 0,
+    "slowFactor": 1.25,
+    "fastFactor": 0.5,
+    "outageAllowanceSeconds": 0,
+    "providerLagBlocks": 1,
+    "refundOffsetBlocks": 1,
+    "windows": {
+     "1": {
+      "min": 60,
+      "max": 1200
+     },
+     "6": {
+      "min": 600,
+      "max": 4800
+     }
+    },
+    "minLockBlocks": 200,
+    "proveSeconds": 200
    }
   }
  },
@@ -587,6 +609,26 @@
    "now": 1000000,
    "expect": {
     "long": 1501,
+    "short": 1005020
+   }
+  },
+  {
+   "name": "lock floor includes blocks that pass while proving",
+   "longChain": "proving",
+   "shortChain": "fast",
+   "heads": {
+    "long": {
+     "observedAt": 1000000,
+     "height": 1000
+    },
+    "short": {
+     "observedAt": 1000000,
+     "timestamp": 999995
+    }
+   },
+   "now": 1000000,
+   "expect": {
+    "long": 1207,
     "short": 1005020
    }
   }

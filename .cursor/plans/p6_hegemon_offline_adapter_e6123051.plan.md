@@ -4,31 +4,31 @@ overview: "Plan 6 of 8. Make the engine ready for Hegemon without the public tes
 todos:
   - id: p6-execplan
     content: Write .agent/SWAP_HEGEMON_ADAPTER_EXECPLAN.md
-    status: pending
+    status: completed
   - id: p6-adapter
     content: Implement hegemon_local adapter with inflight/timeout/resume handling
-    status: pending
+    status: completed
   - id: p6-timing
     content: Feed proof time and lock minimum into the P1 policy
-    status: pending
+    status: completed
   - id: p6-e2e
     content: Local engine swaps for all HGN pairs plus refund, missing-counterparty and late-claim scenarios
-    status: pending
+    status: completed
   - id: p6-identity
     content: Hegemon identity field, local-only
-    status: pending
+    status: completed
   - id: p6-gateway
     content: Document scoped remote gateway design and interface check, no deployment
-    status: pending
+    status: completed
   - id: p6-proving
     content: Proving-cost harness and profile on a separate branch from main
-    status: pending
+    status: completed
   - id: p6-docs
     content: DESIGN.md and METHODS.md updates
-    status: pending
+    status: completed
   - id: p6-revise
     content: Revise plan P7 and define the follow-up for when public Hegemon testnet returns
-    status: pending
+    status: completed
 isProject: false
 ---
 

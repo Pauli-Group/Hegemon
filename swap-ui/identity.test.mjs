@@ -20,7 +20,7 @@ test('official BIP-322 vectors verify',()=>{
 });
 
 for(const c of vectors.cases)test('independently signed vector: '+c.name,async()=>{
- const result=await verifyIdentity(c.blob,c.expected,c.now);
+ const result=await verifyIdentity(c.blob,c.expected,c.now,{allowLocal:!!c.allow_local});
  assert.deepEqual(result.proven,c.proven);assert.deepEqual(result.addresses,c.addresses);
  assert.equal(statementText(result.statement),c.statement_text);
  assert.match(result.code,/^[0-9a-f]{16}$/);
@@ -47,6 +47,17 @@ test('negative: wrong chain, wrong offer, wrong role, wrong inbox, replay on ano
  await rejects(c.blob,c.expected,'now',/current time/);
 });
 
+test('a local-only Hegemon address is refused unless allowed and is never proven',async()=>{
+ const c=byName('owner-hegemon-local-ada');
+ await assert.rejects(()=>verifyIdentity(c.blob,c.expected,c.now),/local-only/);
+ const result=await verifyIdentity(c.blob,c.expected,c.now,{allowLocal:true});
+ assert.deepEqual(result.localOnly,['give']);assert.deepEqual(result.unverified,['give']);assert.equal(result.proven.give,false);assert.equal(result.proven.receive,true);
+ const value=JSON.parse(c.blob);value.statement.legs.give.refund='local:short';
+ await assert.rejects(()=>verifyIdentity(JSON.stringify(value),c.expected,c.now,{allowLocal:true}),/Invalid/);
+ const none=await verifyIdentity(byName('owner-hegemon-pending-ada').blob,byName('owner-hegemon-pending-ada').expected,byName('owner-hegemon-pending-ada').now);
+ assert.deepEqual(none.localOnly,[]);
+});
+
 test('negative: any edit to the signed statement invalidates every proof',async()=>{
  for(const c of vectors.cases){
   const value=JSON.parse(c.blob);
@@ -57,7 +68,7 @@ test('negative: any edit to the signed statement invalidates every proof',async(
    v=>{const side=v.statement.legs.give;const field=Object.keys(side).find(k=>k!=='chain');if(side.chain==='ethereum')side[field]='0x'+'ee'.repeat(20);else if(side.chain==='bitcoin')side[field]='03'+'79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798';else if(side.chain==='cardano')side[field]='ee'.repeat(28);else return false;}
   ]){
    const copy=clone(value);if(edit(copy)===false)continue;
-   await assert.rejects(()=>verifyIdentity(JSON.stringify(copy),c.expected,c.now),/./,c.name);
+   await assert.rejects(()=>verifyIdentity(JSON.stringify(copy),c.expected,c.now,{allowLocal:!!c.allow_local}),/./,c.name);
   }
  }
 });

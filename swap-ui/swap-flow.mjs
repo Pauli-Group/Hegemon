@@ -339,8 +339,13 @@ function project(config, chainName, head, seconds, fraction) {
   return {observedAt: head.observedAt + seconds, timestamp: head.timestamp + seconds};
 }
 
-function defaultMargin(config, longChain) {
-  return confirmSeconds(config.chains[longChain]) + config.policy.reactionSeconds;
+function defaultMargin(config, longChain, shortChain = null) {
+  // Long-leg confirmation plus a reaction, plus (when the short leg's chain needs a proof) the responder's proof and
+  // confirmation of the short leg. Mirrors scripts/swap_engine/planner.py `default_margin`.
+  let margin = confirmSeconds(config.chains[longChain]) + config.policy.reactionSeconds;
+  const short = shortChain === null ? null : config.chains[shortChain];
+  if (short && short.proveSeconds) margin += short.proveSeconds + confirmSeconds(short);
+  return margin;
 }
 
 function sampleTimes(config, chainNames, margin) {
@@ -380,7 +385,7 @@ function bump(config, leg, amountSeconds) {
 /** Expiries that stay compliant for `marginSeconds` (default: confirm the long leg plus a reaction).
  * `heads` is {long, short}. Throws when the pair cannot be planned. */
 export function planWithMargin(config, longChain, shortChain, heads, now, marginSeconds = null) {
-  const margin = marginSeconds === null ? defaultMargin(config, longChain) : marginSeconds;
+  const margin = marginSeconds === null ? defaultMargin(config, longChain, shortChain) : marginSeconds;
   const base = planTimeouts(config, {longChain, shortChain, heads, now});
   const long = {...base.long}, short = {...base.short};
   for (let round = 0; round < MAX_ROUNDS; round++) {

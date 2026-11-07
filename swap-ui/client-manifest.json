@@ -6,12 +6,12 @@
   "local": "index.html"
  },
  "import_map": {
-  "source": "sha256-k6tA6B0Jef7lZwNhMJqeUcZtJtGk0X+rsW516G13+q8=",
+  "source": "sha256-VulSjTnZpz6cZt/biwz7UbYEvjkJ8ihaHokKttWjyuQ=",
   "modules": 35
  },
  "csp": {
-  "hosted": "default-src 'self'; script-src 'self' 'sha256-k6tA6B0Jef7lZwNhMJqeUcZtJtGk0X+rsW516G13+q8='; style-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
-  "local": "default-src 'self'; script-src 'self' 'sha256-k6tA6B0Jef7lZwNhMJqeUcZtJtGk0X+rsW516G13+q8='; style-src 'self'; connect-src 'self' http://127.0.0.1:8788; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+  "hosted": "default-src 'self'; script-src 'self' 'sha256-VulSjTnZpz6cZt/biwz7UbYEvjkJ8ihaHokKttWjyuQ='; style-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+  "local": "default-src 'self'; script-src 'self' 'sha256-VulSjTnZpz6cZt/biwz7UbYEvjkJ8ihaHokKttWjyuQ='; style-src 'self'; connect-src 'self' http://127.0.0.1:8788; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
  },
  "headers": {
   "x-content-type-options": "nosniff",
@@ -101,7 +101,7 @@
    "bytes": 16260
   },
   "hosted.html": {
-   "sha256": "1fd36d7f2ad01125106bdfa27e6fc0bd85596e563065514d313013eb8b87af10",
+   "sha256": "9a5f505dd25ac1d2f1267b37cee25297bb854e2fe89ff1546c7bf3b63478d638",
    "bytes": 52305
   },
   "identity-flow.mjs": {
@@ -117,15 +117,15 @@
    "bytes": 13016
   },
   "identity.mjs": {
-   "sha256": "c103cd7deb84bd564b4336873c7ed3d55d28340d3ce4548ac484c7607d71d9eb",
-   "bytes": 8434
+   "sha256": "8b53496a1bbe4fbd0efc220a9f512c008ee2e71df7ec946a4b9c1189f85b8833",
+   "bytes": 9140
   },
   "inbox-backup.mjs": {
    "sha256": "c30696b1b48e9fa46bb25f085f86542481a2a1f6c4f451b266ac571cd1691f62",
    "bytes": 3697
   },
   "index.html": {
-   "sha256": "7522e8bbe8ad45e587fe10d111be22a12a1c84369812098534a4b7215cd960e6",
+   "sha256": "6606aaf934fb04b5e2d090b3532cdf3a0fa6863e3080afa7e9953ea25f7e1f6e",
    "bytes": 52604
   },
   "observer-ui.mjs": {
@@ -137,8 +137,8 @@
    "bytes": 9468
   },
   "pair-check.mjs": {
-   "sha256": "533bcf166e2407ee3e372f270afcb13a8511eff9dfb49039f3ce7652eae6559f",
-   "bytes": 7501
+   "sha256": "28417338c70abc9e47b481df9dc86feb99d99f2b20540f34c58220361b17738a",
+   "bytes": 7996
   },
   "public-inbox.mjs": {
    "sha256": "e1803c619d29f6398749271a2ca6720320320d8150b26e2751b6b1f0dd26294e",
@@ -165,12 +165,12 @@
    "bytes": 2624
   },
   "swap-flow.mjs": {
-   "sha256": "7bda82e920f1311b3d81103068822ab02899665591e0196d97f3cbf2aabff707",
-   "bytes": 23553
+   "sha256": "1ae2394b9235bb945ae0ec5b30e1505c8e58eb7bdc7c18dd345fdc32de143ead",
+   "bytes": 23979
   },
   "timelock-policy.mjs": {
-   "sha256": "4f81f1796ebfe590fa888b93776f049bc07e1f24d5c91a9204be3f93e681f7e2",
-   "bytes": 13836
+   "sha256": "e66e05816a0ccd177d5212f5542f72d056d250ca849c4e560d22ee997bf3aa28",
+   "bytes": 14412
   },
   "token-escrow-template.json": {
    "sha256": "3c3da32a49315dd7524d9e1e6475f812356ae5a1bf3725b43f844d09576830a0",

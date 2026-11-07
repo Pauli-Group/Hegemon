@@ -136,7 +136,7 @@ test('property: planTimeouts is compliant and minimal on every chain combination
     assert.deepEqual(plan.verdict.reasons.filter(r => r.code !== 'horizon-too-long'), [], `${longChain}/${shortChain}`);
     // Minimality of the long expiry (unless pinned by the Hegemon lock minimum).
     const lc = realConfig.chains[longChain];
-    const floor = lc.minLockBlocks ? heads.long.height + lc.minLockBlocks + lc.providerLagBlocks + 1 : 0;
+    const floor = lc.minLockBlocks ? heads.long.height + lc.minLockBlocks + lc.providerLagBlocks + policy.proveBlocks(lc) + 1 : 0;
     if (plan.long.expiry > floor) {
       const lower = policy.checkOrdered(realConfig, {long: {chain: longChain, expiry: plan.long.expiry - 1}, short: plan.short, heads, now});
       assert.ok(lower.reasons.some(r => r.code === 'insufficient-gap'), `${longChain}/${shortChain}: long expiry not minimal`);
@@ -188,6 +188,8 @@ const mutations = [
   ['requirement blocks ignore provider lag', 'fastSeconds(c, d + c.refundOffsetBlocks - c.providerLagBlocks)', 'fastSeconds(c, d + c.refundOffsetBlocks)'],
   ['requirement window ignores reaction time', 'scale(config, actionSeconds(c) + config.policy.reactionSeconds);\n  const out', 'scale(config, actionSeconds(c));\n  const out'],
   ['plan skips lock minimum', 'floorOf = (c, head) => (isHeight(c) && c.minLockBlocks ?', 'floorOf = (c, head) => (false && c.minLockBlocks ?'],
+  ['lock floor ignores proving blocks', 'c.providerLagBlocks + proveBlocks(c) + 1', 'c.providerLagBlocks + 1'],
+  ['proving blocks use the slow bound', 'if (fastSeconds(c, mid) <= seconds) lo = mid;', 'if (slowSeconds(c, mid) <= seconds) lo = mid;'],
 ];
 
 test('mutation: every rule in the policy is pinned by a shared vector or property', async () => {

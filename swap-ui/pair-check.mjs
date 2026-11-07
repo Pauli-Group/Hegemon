@@ -1,4 +1,6 @@
 import {checkPair} from './timelock-policy.mjs';
+
+const isLocalAddress=v=>typeof v==='string'&&v.startsWith('local:');
 /** Match two independently checked local escrow terms to one offer. Without a
  * `timing` argument this is a point-in-time comparison only. With one, the two
  * deadlines are also judged by the cross-chain timelock policy (timelock-policy.mjs).
@@ -70,20 +72,28 @@ export function checkIdentities(offer,give,receive,identities){
  const owner=identities?.owner,taker=identities?.taker;
  if(!owner||!taker||owner.role!=='owner'||taker.role!=='taker')throw Error('Signed identity statements from both participants are required.');
  if(owner.statement.offer!==offer?.id||taker.statement.offer!==offer?.id)throw Error('Identity statements are for a different offer.');
- const legs={give,receive},unverified=[],matched=[];
+ const legs={give,receive},unverified=[],matched=[],localOnly=[];
  for(const side of ['give','receive']){
   const leg=legs[side],chain=leg?.chain;
   if(owner.statement.legs[side].chain!==chain||taker.statement.legs[side].chain!==chain)throw Error('Identity statements are for a different '+side+' chain.');
   const want=side==='give'?{claimant:taker.addresses.give,refundee:owner.addresses.give}:{claimant:owner.addresses.receive,refundee:taker.addresses.receive};
   const have=legParticipants(leg);
-  if(!have){unverified.push(side);continue;}
+  if(!have){
+   unverified.push(side);
+   // Fixture identities name the wallets; a different wallet in the escrow is still refused.
+   if(chain==='hegemon'&&isLocalAddress(want.claimant)&&isLocalAddress(want.refundee)){
+    if(leg.terms?.claimant!==want.claimant.slice(6)||leg.terms?.refundee!==want.refundee.slice(6))throw Error('The '+side+' escrow does not name the local Hegemon identities.');
+    localOnly.push(side);
+   }
+   continue;
+  }
   if(have.claimant!==want.claimant.toLowerCase())throw Error('The '+side+' escrow claimant is not the signed identity.');
   if(have.refundee!==want.refundee.toLowerCase())throw Error('The '+side+' escrow refund address is not the signed identity.');
   matched.push(side);
  }
  const unproven=[];
  for(const side of ['give','receive']){if(!owner.proven[side])unproven.push('owner.'+side);if(!taker.proven[side])unproven.push('taker.'+side);}
- return {matched,unverified,unproven,owner:{code:owner.code},taker:{code:taker.code}};
+ return {matched,unverified,localOnly,unproven,owner:{code:owner.code},taker:{code:taker.code}};
 }
 export function comparePair(offer,give,receive,timing,identities){
  if(!offer||!matchesOfferAsset(offer.give,give)||!matchesOfferAsset(offer.receive,receive))throw Error('Escrow assets or amounts do not match the selected offer.');

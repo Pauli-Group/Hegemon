@@ -18,11 +18,15 @@ export const CLOCK_SKEW_SECONDS=300;
 export const MAX_IDENTITY_BLOB=8192;
 const hex=(value,length)=>typeof value==='string'&&new RegExp('^[0-9a-f]{'+length+'}$').test(value);
 const fail=message=>{throw Error(message);};
+// A Hegemon address a local fixture names: bound to the signer by the other chain's signature but never proven, and refused by
+// the hosted client (see verifyIdentity's allowLocal).
+const LOCAL_HEGEMON=/^local:[0-9A-Za-z_-]{16,512}$/;
+export const isLocalAddress=v=>typeof v==='string'&&v.startsWith('local:');
 const ADDRESS={
  ethereum:v=>typeof v==='string'&&/^0x[0-9a-f]{40}$/.test(v),
  cardano:v=>hex(v,56),
  bitcoin:v=>{if(typeof v!=='string'||!/^0[23][0-9a-f]{64}$/.test(v))return false;try{compressedKey(v);return true;}catch{return false;}},
- hegemon:v=>v==='pending'
+ hegemon:v=>v==='pending'||(typeof v==='string'&&LOCAL_HEGEMON.test(v))
 };
 const FIELDS={owner:{give:'refund',receive:'claim'},taker:{give:'claim',receive:'refund'}};
 
@@ -83,8 +87,9 @@ export function parseIdentity(blob){
  * `expected`: `{offer, role, reservation, inbox, give:{chain}, receive:{chain}}`; `now` is whole seconds.
  * Throws on any mismatch. Returns `{statement, code, role, addresses:{give,receive}, proven:{give,receive}, unverified, proofs}`:
  * a leg is `proven` only when a verified proof's signer equals that leg's address on the leg's chain; Hegemon legs are
- * listed in `unverified` and are never proven. */
-export async function verifyIdentity(blob,expected,now){
+ * listed in `unverified` and are never proven. A `local:` Hegemon address (same-machine fixtures) is refused unless
+ * `allowLocal` is set and is then listed in `localOnly`. */
+export async function verifyIdentity(blob,expected,now,{allowLocal=false}={}){
  if(!Number.isSafeInteger(now))fail('The current time is required.');
  const {statement,proofs}=parseIdentity(blob);
  if(statement.role!==expected.role)fail('The identity statement is for a different role.');
@@ -92,6 +97,8 @@ export async function verifyIdentity(blob,expected,now){
  if(statement.reservation!==(expected.reservation??''))fail('The identity statement is for a different reservation.');
  if(statement.inbox!==expected.inbox)fail('The identity statement names a different inbox key.');
  for(const side of ['give','receive'])if(statement.legs[side].chain!==expected[side]?.chain)fail('The identity statement is for a different '+side+' chain.');
+ const localOnly=['give','receive'].filter(side=>isLocalAddress(legAddress(statement,side)));
+ if(localOnly.length&&!allowLocal)fail('A local-only Hegemon address is not accepted here.');
  if(statement.expires<=now)fail('The identity statement has expired.');
  if(statement.issued>now+CLOCK_SKEW_SECONDS)fail('The identity statement is dated in the future.');
  if(!proofs.length)fail('The identity statement has no signature.');
@@ -107,7 +114,7 @@ export async function verifyIdentity(blob,expected,now){
  const proven={};
  for(const side of ['give','receive'])proven[side]=verified.some(p=>p.chain===statement.legs[side].chain&&p.signer===addresses[side]);
  const unverified=['give','receive'].filter(side=>statement.legs[side].chain==='hegemon');
- return {statement,code:await identityCode(statement),role:statement.role,addresses,proven,unverified,proofs:verified};
+ return {statement,code:await identityCode(statement),role:statement.role,addresses,proven,unverified,localOnly,proofs:verified};
 }
 /** The address each escrow must name, from the two verified identities (`owner` and `taker`). `give` and `receive` are the
  * owner's legs, as in the offer. Returns `{give:{claimant,refundee}, receive:{claimant,refundee}}` in engine format. */

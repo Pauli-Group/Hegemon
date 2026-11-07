@@ -17,7 +17,7 @@ PAIR = VECTORS['pairs'][0]
 
 def verify(case, **override):
     expected = {**case['expected'], **override.pop('expected', {})}
-    return verify_identity(override.pop('blob', case['blob']), expected, override.pop('now', case['now']))
+    return verify_identity(override.pop('blob', case['blob']), expected, override.pop('now', case['now']), case.get('allow_local', False))
 
 
 class IdentityVectorTests(unittest.TestCase):
@@ -39,6 +39,18 @@ class IdentityVectorTests(unittest.TestCase):
         result = verify(CASES['owner-hegemon-pending-ada'])
         self.assertEqual(result['unverified'], ['give'])
         self.assertFalse(result['proven']['give'])
+
+    def test_local_only_hegemon_address_is_refused_unless_allowed(self):
+        case = CASES['owner-hegemon-local-ada']
+        with self.assertRaisesRegex(IdentityError, 'local-only'):
+            verify_identity(case['blob'], case['expected'], case['now'])
+        result = verify(case)
+        self.assertEqual((result['local_only'], result['unverified'], result['proven']['give']), (['give'], ['give'], False))
+        self.assertEqual(verify(CASES['owner-hegemon-pending-ada'])['local_only'], [])
+        value = json.loads(case['blob'])
+        value['statement']['legs']['give']['refund'] = 'local:short'
+        with self.assertRaises(IdentityError):
+            verify(case, blob=json.dumps(value))
 
     def test_binding_failures(self):
         case = CASES['taker-btc-ada-cip8-enterprise']
@@ -135,6 +147,27 @@ class AttachIdentitiesTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'already recorded'):
                 self.attach(swap, owner=CASES['owner-btc-eth-eip191-bip322']['blob'])
 
+    def test_local_hegemon_leg_must_name_the_local_identities(self):
+        terms = self.terms()
+        owner = verify_identity(PAIR['owner']['blob'], PAIR['owner']['expected'], PAIR['owner']['now'])
+        taker = verify_identity(PAIR['taker']['blob'], PAIR['taker']['expected'], PAIR['taker']['now'])
+        for who, side, address in ((owner, 'give', 'local:' + 'aa' * 16), (taker, 'give', 'local:' + 'bb' * 16)):
+            who['statement']['legs'][side]['chain'] = 'hegemon'
+            who['addresses'][side] = address
+        for who in (owner, taker):
+            who['statement']['legs']['receive']['chain'] = 'hegemon'
+        owner['addresses']['receive'] = 'local:' + 'cc' * 16
+        taker['addresses']['receive'] = 'local:' + 'dd' * 16
+        for name in ('long', 'short'):
+            terms['legs'][name]['chain'] = 'hegemon'
+        # give leg (long): claimant is the taker's give address, refundee the owner's give address
+        terms['legs']['long'].update(claimant='bb' * 16, refundee='aa' * 16)
+        terms['legs']['short'].update(claimant='cc' * 16, refundee='dd' * 16)
+        self.assertEqual(identity.check_terms(terms, owner, taker, 'long'), {'unverified': ['long', 'short'], 'local_only': ['long', 'short']})
+        terms['legs']['short']['claimant'] = 'ee' * 16
+        with self.assertRaisesRegex(IdentityError, 'local Hegemon identities'):
+            identity.check_terms(terms, owner, taker, 'long')
+
     def test_hegemon_leg_is_reported_unverified(self):
         terms = self.terms()
         owner = verify_identity(PAIR['owner']['blob'], PAIR['owner']['expected'], PAIR['owner']['now'])
@@ -146,7 +179,8 @@ class AttachIdentitiesTests(unittest.TestCase):
             terms['legs'][name]['chain'] = 'hegemon'
             terms['legs'][name]['claimant'] = 'anything'
             terms['legs'][name]['refundee'] = 'something'
-        self.assertEqual(identity.check_terms(terms, owner, taker, 'long')['unverified'], ['long', 'short'])
+        checked = identity.check_terms(terms, owner, taker, 'long')
+        self.assertEqual((checked['unverified'], checked['local_only']), (['long', 'short'], []))
 
 
 if __name__ == '__main__':

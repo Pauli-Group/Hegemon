@@ -19,7 +19,10 @@ Every command prints one JSON document so scripts and people can both read it.
 Wallet config (default ~/.config/hegemon/swap-wallets.json, or --wallets / HEGEMON_SWAP_WALLETS):
   {"bitcoin":  {"key_file": "/path/bitcoin-testnet4.key"},
    "ethereum": {"wallet_file": "/path/ethereum-sepolia.key"},
-   "cardano":  {"skey": "/path/cardano.skey", "keyhash": "<56 hex>", "address": "addr_test1..."}}
+   "cardano":  {"skey": "/path/cardano.skey", "keyhash": "<56 hex>", "address": "addr_test1..."},
+   "hegemon":  {"rpc": "http://127.0.0.1:PORT", "manifest": "/path/manifest.json", "wallet": "/path/wallet.store",
+                "wallet_binary": "/path/private-spend", "address": "shca1...", "passphrase_file": "/path/0600-file",
+                "handoff_passphrase_file": "/path/0600-file"}}   (local Development chain only; see DESIGN.md)
 Run `make setup` first; operators of shared Hegemon mining hosts must also set HEGEMON_SEEDS and keep NTP/chrony on.
 """
 import argparse
@@ -53,7 +56,7 @@ def load_wallets(path):
     config = json.loads(path.read_text())
     for chain, item in config.items():
         for key, value in item.items():
-            if key in ('key_file', 'wallet_file', 'skey') and not Path(value).is_file():
+            if key in ('key_file', 'wallet_file', 'skey', 'manifest', 'passphrase_file', 'handoff_passphrase_file', 'wallet_binary') and not Path(value).is_file():
                 fail(f'{chain}: {key} does not exist')
     return config
 
@@ -70,8 +73,15 @@ def build_adapter(chain, wallets):
         from swap_engine.adapters.cardano import CardanoAdapter, PreviewProfile
         return CardanoAdapter(PreviewProfile(), wallets['cardano'])
     if chain == 'hegemon':
-        from swap_engine.adapters.hegemon_stub import HegemonStubAdapter
-        return HegemonStubAdapter()
+        # Local Development chain only. The public Hegemon testnet has no profile until P8; a config without a
+        # `hegemon` entry is refused here rather than falling back to anything that could act.
+        if 'hegemon' not in wallets:
+            fail('No hegemon entry in the wallet config. The adapter works against a local Development chain only; see DESIGN.md "Hegemon adapter".')
+        from swap_engine.adapters.hegemon_local import AttachedHegemonProfile, HegemonAdapter
+        try:
+            return HegemonAdapter(AttachedHegemonProfile(wallets['hegemon']), 'self')
+        except (ValueError, OSError, RuntimeError) as error:
+            fail(f'hegemon: {error}')
     fail(f'Unknown chain {chain}')
 
 
