@@ -5,7 +5,11 @@ use std::{fs, io::Read, path::Path};
 use transaction_circuit::private_spend::{self, PrivateSpendPublic};
 
 #[derive(Parser)]
-#[command(name = "hegemon-node", args_conflicts_with_subcommands = true)]
+#[command(
+    name = "hegemon-node",
+    version = protocol_versioning::RELEASE_VERSION,
+    args_conflicts_with_subcommands = true
+)]
 struct Cli {
     #[command(subcommand)]
     command: Option<OfflineCommand>,

@@ -123,24 +123,41 @@ pub(super) async fn run_with_config(config: NativeConfig) -> Result<()> {
         .with_context(|| format!("bind native JSON-RPC {}", config.rpc_addr))?;
     #[cfg(all(test, feature = "poseidon2-v8-retained-test-support"))]
     poseidon2_v8_verifier::retained_carrier_rpc_bound(listener.local_addr()?);
+    let app = native_rpc_router(Arc::clone(&node));
+
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal(Arc::clone(&node)))
+    .await
+    .context("native JSON-RPC server failed")?;
+
+    Ok(())
+}
+
+/// Production router shared by service startup and isolated socket tests.
+pub(crate) fn native_rpc_router(node: Arc<NativeNode>) -> Router {
+    let public = node.rpc_policy().ok() == Some(RpcMethodPolicy::PublicSubmit);
     let app = Router::new()
         .route(
             "/",
-            post(rpc_handler).get(root_handler).options(options_handler),
+            post(rpc_handler)
+                .get(root_transport_handler)
+                .options(options_handler),
         )
-        .route("/health", get(health_handler))
-        .layer(DefaultBodyLimit::max(MAX_NATIVE_RPC_BODY_BYTES))
-        .layer(ConcurrencyLimitLayer::new(
+        .route("/health", get(health_transport_handler))
+        .layer(DefaultBodyLimit::max(MAX_NATIVE_RPC_BODY_BYTES));
+    // Public admission uses immediate rejection and worker-owned reservations.
+    // Do not put its requests in tower's waiting readiness queue.
+    let app = if public {
+        app
+    } else {
+        app.layer(ConcurrencyLimitLayer::new(
             MAX_NATIVE_RPC_CONCURRENT_REQUESTS,
         ))
-        .with_state(Arc::clone(&node));
-
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal(Arc::clone(&node)))
-        .await
-        .context("native JSON-RPC server failed")?;
-
-    Ok(())
+    };
+    app.with_state(node)
 }
 
 pub(crate) fn start_native_p2p(node: Arc<NativeNode>, config: &NativeConfig) -> Result<()> {
@@ -3090,6 +3107,7 @@ mod launch_peer_source_tests {
             rpc_methods: "safe".into(),
             rpc_external: false,
             rpc_cors: None,
+            public_rpc_limits: Default::default(),
             seeds: Vec::new(),
             max_peers: 0,
             mine: false,

@@ -484,6 +484,65 @@ Affected policy tests and genuine wallet/RPC/PQ relay/mempool/mining/block/reorg
 lifecycle evidence remain pending for this approved integration. The production
 registries are empty.
 
+### Public-submit RPC admission (v0.11.3 candidate)
+
+Advance `protocol_versioning::RELEASE_VERSION` to `0.11.3` without changing
+internal Cargo package versions or regenerating Cargo.lock. PrivateSpend includes
+the lock bytes in its relation digest, so the candidate helper requires SHA-256
+`1c243bf3858f4ee22fa4441c7a2ee6d49b16d264147b0f3a2de845e760821719`
+and the historical internal package versions before inventorying artifacts.
+This preserves the proof identity rather than treating a lockfile update as
+software-only metadata.
+
+Select `--rpc-methods=public-submit` explicitly to expose the available safe
+surface plus the existing `hegemon_submitAction` PrivateSpend route. Add
+`--rpc-external` only when deliberately exposing it beyond loopback. Existing
+safe/default/auto, unsafe and pool behavior is preserved, including rejecting
+external unsafe/pool. The policy permits the common family 1/action 15 proof with
+all of its supported hidden spending rules and unchanged checks; it excludes
+other explicit action families. `rpc_methods` reflects registered and available
+dispatch permissions, including feature and source-capability restrictions.
+Disabled compatibility stubs are omitted from discovery while their existing
+direct-call refusal payloads remain unchanged.
+
+Before collecting a public HTTP body, charge the transport-IP general request
+window (60/minute) and reserve one public request slot (default four, no permit
+waiting queue). Malformed, oversized and timed-out bodies count, as do GET
+requests. Each additional JSON-RPC batch item consumes another general charge;
+a single item is not double charged. Separately charge every identified
+submission against its submission window (6/minute). A public batch has at most eight
+items and retained response data is capped at 8 MiB. Normalize IPv4-mapped IPv6;
+ignore all forwarded-address headers. The client table retains at most 1,024
+entries and expires idle entries after 600 seconds before insertion. A full
+active table fails closed instead of evicting rate history. These values are
+configurable through the documented node options; fixed 60-second windows can
+permit a burst across a window boundary.
+
+Public submission reserves its separate verification lane (default one, no
+permit waiting queue) and passes the unchanged inline action/proof into existing production
+admission. It never takes a reserved local verifier permit. Worker-owned
+reservations outlive HTTP cancellation and release when the blocking work
+actually returns or unwinds. Request reservations also cover the response body
+until consumption or drop; frames are at most 16 KiB. Socket counts, OS buffers
+and remote acknowledgement are outside that accounting. Admitted work may await
+Tokio scheduling or locks while holding bounded reservations. The existing three shared peer/local/mining
+verification slots and public one allow at most four reservations at defaults;
+this does not imply operating-system scheduling fairness or a hard CPU deadline.
+Existing canonical decoding, network/source authorization, proof checks, state,
+duplicate/cache and mempool limits still apply. Reads share public request
+capacity and retain their existing row/page/decoded-byte bounds.
+
+Qualification must compare Lean-generated policy/resource vectors with
+production helpers and check denial/capacity ordering before heavy work. Actual
+local HTTP tests must cover the valid authorized inline path, action/proof
+identity, denied families, malformed inputs, batch accounting, proxy-header
+forgery, CORS, saturation/local capacity and cancellation ownership. A genuine
+backend proof fixture by itself does not establish state-authorized HTTP
+admission. Socket/proxy correctness, OS scheduling, actual wall-clock/RSS limits,
+universal DoS resistance and network privacy remain outside the formal model.
+Record measured work before changing conservative limits. See [wallet integration](docs/PUBLIC_SUBMIT_WALLET_INTEGRATION.md)
+and the [v0.11.3 release checklist](docs/releases/v0.11.3.md).
+
 ### Independent transaction proofs and proof sidecars (product block path)
 
 The selected source tuple is the circuit-12, 86-word PrivateSpend SMZL/q38

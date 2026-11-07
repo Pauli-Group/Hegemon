@@ -174,7 +174,7 @@ const REQUIRED_MECHANIZED_ASSUMPTION_TRACKS: &[(&str, &[&str])] = &[
 const EXPECTED_MECHANIZED_ASSUMPTION_PROPOSITION_BLAKE3: &str =
     "51512c473f20c40c3a88b9f2a1ba0d2e81b9a25a6591c025967b306121801657";
 const EXPECTED_FORMAL_SOURCE_TREE_BLAKE3: &str =
-    "759d2c9a886f820fd1d39f63c243671829adf13f0a910e722c1c0ad05d11e50c";
+    "7180fcbcea6842cc32ad8db188293a923ea19614f6360c8f7178990c85c1f71c";
 const PROGRESS_PERCENT_EPSILON: f64 = 0.0001;
 const CLAIMS_SCHEMA_VERSION: u32 = 2;
 const BLUEPRINT_SCHEMA_VERSION: u32 = 2;
@@ -5799,6 +5799,30 @@ fn validate_rust_implementation_binding(
                 rust_body_has_use_shadow(body, &binding.callee),
                 rust_body_has_closure_parameter_shadow(body, &binding.callee),
             );
+            if result_obligation == ResultObligation::MustReturnRpcAdmissionError {
+                ensure!(
+                    !rust_function_parameter_binds_callee(&sanitized, function, "rpc_error")
+                        && !rust_body_has_local_shadow_of_callee(body, "rpc_error"),
+                    "{} RPC admission error mapper is locally shadowed in {}",
+                    claim_id,
+                    caller
+                );
+            }
+            if result_obligation == ResultObligation::MustGuardPublicSubmissionRoute {
+                ensure!(
+                    binding.callee == "public_submit_action_route_allowed"
+                        && rust_public_submission_permit_parameter_is_bound(&sanitized, function)
+                        && !rust_body_has_local_shadow_of_callee(body, "public_permit")
+                        && find_rust_token(body, "use", 0).is_none()
+                        && find_rust_token(body, "mod", 0).is_none()
+                        && find_rust_token(body, "macro_rules", 0).is_none()
+                        && !rust_function_parameter_binds_callee(&sanitized, function, "Err")
+                        && !rust_body_has_local_shadow_of_callee(body, "Err"),
+                    "{} public submission route guard lacks its exact unshadowed permit/error binding in {}",
+                    claim_id,
+                    caller
+                );
+            }
             let call_sites = rust_bound_callee_call_sites(
                 body,
                 &binding.callee,
@@ -5918,9 +5942,11 @@ fn validate_rust_implementation_order(
         )
         .into_iter()
         .filter(|call| {
-            if constraint_result_obligation
-                == ResultObligation::MustPropagateSharedSledTransactionResult
-            {
+            if matches!(
+                constraint_result_obligation,
+                ResultObligation::MustPropagateSharedSledTransactionResult
+                    | ResultObligation::MustGuardPublicSubmissionRoute
+            ) {
                 rust_call_is_direct_binding_evidence(
                     body,
                     raw_body,
@@ -6037,6 +6063,10 @@ fn validate_rust_implementation_order(
 enum ResultObligation {
     None,
     MustPropagateResult,
+    MustReturnResultIsOk,
+    MustReturnMatchErrPayload,
+    MustReturnRpcAdmissionError,
+    MustGuardPublicSubmissionRoute,
     MustPropagateSharedSledTransactionResult,
     MustCheckResultFailClosed,
     MustReturnSubmitActionRejection,
@@ -6058,6 +6088,14 @@ fn parse_result_obligation(
     match raw {
         None => Ok(ResultObligation::None),
         Some("must_propagate_result") => Ok(ResultObligation::MustPropagateResult),
+        Some("must_return_result_is_ok") => Ok(ResultObligation::MustReturnResultIsOk),
+        Some("must_return_match_err_payload") => Ok(ResultObligation::MustReturnMatchErrPayload),
+        Some("must_return_rpc_admission_error") => {
+            Ok(ResultObligation::MustReturnRpcAdmissionError)
+        }
+        Some("must_guard_public_submission_route") => {
+            Ok(ResultObligation::MustGuardPublicSubmissionRoute)
+        }
         Some("must_propagate_shared_sled_transaction_result") => {
             Ok(ResultObligation::MustPropagateSharedSledTransactionResult)
         }
@@ -6096,6 +6134,12 @@ fn result_obligation_error_suffix(obligation: ResultObligation) -> &'static str 
     match obligation {
         ResultObligation::None => "",
         ResultObligation::MustPropagateResult => " with propagated result",
+        ResultObligation::MustReturnResultIsOk => " with exactly returned Result::is_ok predicate",
+        ResultObligation::MustReturnMatchErrPayload => " with exactly returned Err match payload",
+        ResultObligation::MustReturnRpcAdmissionError => " with exact RPC admission error dataflow",
+        ResultObligation::MustGuardPublicSubmissionRoute => {
+            " with exact conditional public submission route rejection"
+        }
         ResultObligation::MustPropagateSharedSledTransactionResult => {
             " with propagated shared sled transaction result"
         }
@@ -7048,9 +7092,143 @@ fn rust_bound_callee_call_sites(
             },
         ));
     }
+    if rust_public_admission_receiver_is_bound(
+        body,
+        ident,
+        caller,
+        full_source,
+        test_module_spans,
+        functions,
+    ) {
+        calls.extend(rust_qualified_call_sites(
+            body,
+            &RustCallSelector {
+                segments: vec![
+                    "node".to_owned(),
+                    "public_rpc_admission".to_owned(),
+                    ident.to_owned(),
+                ],
+                separators: vec![
+                    RustCallSelectorSeparator::Member,
+                    RustCallSelectorSeparator::Member,
+                ],
+            },
+        ));
+    }
     calls.sort_by_key(|call| (call.start, call.close_paren));
     calls.dedup_by_key(|call| (call.start, call.close_paren));
     calls
+}
+
+/// Resolve only the concrete production public-admission field chain. A method
+/// with the same name on an arbitrary parameter or rebound local is not evidence.
+fn rust_public_admission_receiver_is_bound(
+    body: &str,
+    ident: &str,
+    caller: &RustFunctionSpan,
+    source: &str,
+    test_module_spans: &[(usize, usize)],
+    functions: &[RustFunctionSpan],
+) -> bool {
+    if !matches!(
+        ident,
+        "try_request" | "try_submit" | "charge_request" | "charge_submission"
+    ) || rust_body_has_local_shadow_of_callee(body, "node")
+        || !functions.iter().any(|f| {
+            f.name == ident
+                && f.impl_type.as_deref() == Some("PublicRpcAdmission")
+                && !f.is_test_only(source, test_module_spans)
+        })
+    {
+        return false;
+    }
+    let params = &source[caller.parameters_start..caller.parameters_end];
+    let Ok(signature) = syn::parse_str::<syn::ItemFn>(&format!("fn receiver({params}) {{}}"))
+    else {
+        return false;
+    };
+    let parameter_matches = signature.sig.inputs.iter().any(|arg| {
+        let syn::FnArg::Typed(arg) = arg else {
+            return false;
+        };
+        if !arg.attrs.is_empty() || !syn_plain_pat_ident_is(&arg.pat, "node") {
+            return false;
+        }
+        let syn::Type::Reference(reference) = arg.ty.as_ref() else {
+            return false;
+        };
+        if reference.mutability.is_some() {
+            return false;
+        }
+        let syn::Type::Path(ty) = reference.elem.as_ref() else {
+            return false;
+        };
+        if ty.qself.is_some() || ty.path.leading_colon.is_some() || ty.path.segments.len() != 1 {
+            return false;
+        }
+        let segment = &ty.path.segments[0];
+        if segment.ident == "NativeNode" && matches!(segment.arguments, syn::PathArguments::None) {
+            return true;
+        }
+        let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
+            return false;
+        };
+        segment.ident == "Arc"
+            && args.colon2_token.is_none()
+            && args.args.len() == 1
+            && matches!(&args.args[0], syn::GenericArgument::Type(syn::Type::Path(inner))
+                if inner.qself.is_none() && inner.path.is_ident("NativeNode"))
+    });
+    if !parameter_matches {
+        return false;
+    }
+    let mut cursor = 0;
+    let mut matches = 0;
+    while let Some(start) = find_rust_token(source, "struct", cursor) {
+        cursor = start + "struct".len();
+        let name = skip_ascii_whitespace(source, cursor);
+        let Some(after_name) = rust_token_at(source, "NativeNode", name) else {
+            continue;
+        };
+        if test_module_spans
+            .iter()
+            .any(|(from, to)| *from <= start && start < *to)
+            || preceding_rust_attrs_contain_non_production_cfg(source, start)
+            || rust_position_is_inside_spans(start, &rust_macro_body_spans(source))
+        {
+            continue;
+        }
+        let open = skip_ascii_whitespace(source, after_name);
+        if source.as_bytes().get(open) != Some(&b'{') {
+            return false;
+        }
+        let Ok(close) = match_rust_brace(source, open) else {
+            return false;
+        };
+        let Ok(node) = syn::parse_str::<syn::ItemStruct>(&source[start..=close]) else {
+            return false;
+        };
+        let fields = node
+            .fields
+            .iter()
+            .filter(|field| {
+                field
+                    .ident
+                    .as_ref()
+                    .is_some_and(|id| id == "public_rpc_admission")
+            })
+            .collect::<Vec<_>>();
+        if fields.len() != 1
+            || !fields[0].attrs.is_empty()
+            || !matches!(&fields[0].ty, syn::Type::Path(ty)
+                if ty.qself.is_none() && ty.path.is_ident("PublicRpcAdmission"))
+        {
+            return false;
+        }
+        matches += 1;
+        cursor = close + 1;
+    }
+    matches == 1
 }
 
 fn rust_same_impl_method_exists(
@@ -7289,6 +7467,16 @@ fn call_satisfies_result_obligation(
     match obligation {
         ResultObligation::None => true,
         ResultObligation::MustPropagateResult => call_result_is_propagated(source, call),
+        ResultObligation::MustReturnResultIsOk => call_result_is_exact_returned_is_ok(source, call),
+        ResultObligation::MustReturnMatchErrPayload => {
+            call_result_match_returns_exact_err_payload(source, call)
+        }
+        ResultObligation::MustReturnRpcAdmissionError => {
+            call_result_returns_rpc_admission_error(source, raw_source, call)
+        }
+        ResultObligation::MustGuardPublicSubmissionRoute => {
+            call_bool_guards_public_submission_route(source, raw_source, call)
+        }
         ResultObligation::MustPropagateSharedSledTransactionResult => {
             call_result_is_propagated(source, call)
         }
@@ -7321,6 +7509,408 @@ fn call_satisfies_result_obligation(
             call_option_matches_some_and_compares_supply_claim(source, call)
         }
     }
+}
+
+/// Deliberately narrow: the entire caller body must return exactly the direct
+/// bound Result call's is_ok() value. No rebinding, boolean operators, method
+/// adapters, early returns, or unrelated statements receive this obligation.
+fn call_result_is_exact_returned_is_ok(source: &str, call: &RustCallSite) -> bool {
+    let context = rust_statement_context(source, call.start);
+    if context.block_path.len() != 1 {
+        return false;
+    }
+    let Some(block_start) = context.block_path.first().copied() else {
+        return false;
+    };
+    let expression_start = rust_call_expression_start(source, call.start);
+    let prefix = source[block_start + 1..expression_start].trim();
+    if !matches!(prefix, "" | "return") {
+        return false;
+    }
+    let dot = skip_ascii_whitespace(source, call.close_paren + 1);
+    if source.as_bytes().get(dot) != Some(&b'.') {
+        return false;
+    }
+    let method = skip_ascii_whitespace(source, dot + 1);
+    let Some(method_end) = rust_token_at(source, "is_ok", method) else {
+        return false;
+    };
+    let open = skip_ascii_whitespace(source, method_end);
+    if source.as_bytes().get(open) != Some(&b'(') {
+        return false;
+    }
+    let Ok(close) = match_rust_paren(source, open) else {
+        return false;
+    };
+    if !source[open + 1..close].trim().is_empty() {
+        return false;
+    }
+    let Ok(block_end) = match_rust_brace(source, block_start) else {
+        return false;
+    };
+    let suffix = source[close + 1..block_end].trim();
+    if prefix == "return" {
+        matches!(suffix, "" | ";")
+    } else {
+        suffix.is_empty()
+    }
+}
+
+/// Returning the exact payload of the bound Result's Err arm is distinct from
+/// inventing a fail-closed literal. This supports HTTP denial-response handoff
+/// without accepting arbitrary returned values as evidence of rejection.
+fn call_result_match_returns_exact_err_payload(source: &str, call: &RustCallSite) -> bool {
+    let context = rust_statement_context(source, call.start);
+    let expression_start = rust_call_expression_start(source, call.start);
+    let prefix = source[context.current_statement_start()..expression_start].trim();
+    if prefix != "match" && !prefix.ends_with("= match") {
+        return false;
+    }
+    let open = skip_ascii_whitespace(source, call.close_paren + 1);
+    if source.as_bytes().get(open) != Some(&b'{') {
+        return false;
+    }
+    let Ok(close) = match_rust_brace(source, open) else {
+        return false;
+    };
+    let Ok(matched) =
+        syn::parse_str::<syn::ExprMatch>(&format!("match bound_result {}", &source[open..=close]))
+    else {
+        return false;
+    };
+    let mut error_arms = 0;
+    for arm in &matched.arms {
+        if !arm.attrs.is_empty() || arm.guard.is_some() {
+            return false;
+        }
+        let syn::Pat::TupleStruct(pattern) = &arm.pat else {
+            return false;
+        };
+        if !pattern.attrs.is_empty()
+            || pattern.qself.is_some()
+            || pattern.path.leading_colon.is_some()
+            || pattern.path.segments.len() != 1
+            || pattern.elems.len() != 1
+        {
+            return false;
+        }
+        let segment = &pattern.path.segments[0];
+        if !matches!(segment.arguments, syn::PathArguments::None) {
+            return false;
+        }
+        if segment.ident == "Ok" {
+            continue;
+        }
+        if segment.ident != "Err" {
+            return false;
+        }
+        error_arms += 1;
+        let syn::Pat::Ident(payload) = &pattern.elems[0] else {
+            return false;
+        };
+        if !payload.attrs.is_empty()
+            || payload.by_ref.is_some()
+            || payload.mutability.is_some()
+            || payload.subpat.is_some()
+        {
+            return false;
+        }
+        let returned = match arm.body.as_ref() {
+            syn::Expr::Return(returned) => returned,
+            syn::Expr::Block(block)
+                if block.attrs.is_empty()
+                    && block.label.is_none()
+                    && block.block.stmts.len() == 1 =>
+            {
+                let syn::Stmt::Expr(syn::Expr::Return(returned), _) = &block.block.stmts[0] else {
+                    return false;
+                };
+                returned
+            }
+            _ => return false,
+        };
+        if !returned.attrs.is_empty()
+            || !returned
+                .expr
+                .as_deref()
+                .is_some_and(|value| syn_plain_path_is(value, &payload.ident.to_string()))
+        {
+            return false;
+        }
+    }
+    error_arms == 1
+}
+
+fn syn_single_plain_identifier(pattern: &syn::Pat) -> Option<String> {
+    let syn::Pat::Ident(ident) = pattern else {
+        return None;
+    };
+    (ident.attrs.is_empty()
+        && ident.by_ref.is_none()
+        && ident.mutability.is_none()
+        && ident.subpat.is_none())
+    .then(|| ident.ident.to_string())
+}
+
+fn syn_exact_rpc_error_return(expression: &syn::Expr, payload: &str) -> bool {
+    let returned = match expression {
+        syn::Expr::Return(returned) => returned,
+        syn::Expr::Block(block)
+            if block.attrs.is_empty() && block.label.is_none() && block.block.stmts.len() == 1 =>
+        {
+            let syn::Stmt::Expr(syn::Expr::Return(returned), _) = &block.block.stmts[0] else {
+                return false;
+            };
+            returned
+        }
+        _ => return false,
+    };
+    if !returned.attrs.is_empty() {
+        return false;
+    }
+    let Some(value) = returned.expr.as_deref() else {
+        return false;
+    };
+    let Some(error) = syn_call_path_is(value, &["rpc_error"]) else {
+        return false;
+    };
+    if !error.attrs.is_empty() || error.args.len() != 3 || !syn_plain_path_is(&error.args[0], "id")
+    {
+        return false;
+    }
+    [(&error.args[1], "code"), (&error.args[2], "message")]
+        .iter()
+        .all(|(value, method)| {
+            matches!(value, syn::Expr::MethodCall(call) if call.attrs.is_empty()
+            && call.method == *method && call.turbofish.is_none() && call.args.is_empty()
+            && syn_plain_path_is(&call.receiver, payload))
+        })
+}
+
+fn syn_exact_result_err_pattern(pattern: &syn::Pat) -> Option<String> {
+    let syn::Pat::TupleStruct(pattern) = pattern else {
+        return None;
+    };
+    if !pattern.attrs.is_empty()
+        || pattern.qself.is_some()
+        || !pattern.path.is_ident("Err")
+        || pattern.elems.len() != 1
+    {
+        return None;
+    }
+    syn_single_plain_identifier(&pattern.elems[0])
+}
+
+fn syn_exact_rpc_error_match(matched: &syn::ExprMatch) -> bool {
+    if !matched.attrs.is_empty() {
+        return false;
+    }
+    let mut errors = 0;
+    for arm in &matched.arms {
+        if !arm.attrs.is_empty() || arm.guard.is_some() {
+            return false;
+        }
+        if let Some(payload) = syn_exact_result_err_pattern(&arm.pat) {
+            errors += 1;
+            if !syn_exact_rpc_error_return(&arm.body, &payload) {
+                return false;
+            }
+        } else if !matches!(&arm.pat, syn::Pat::TupleStruct(pattern)
+            if pattern.attrs.is_empty() && pattern.qself.is_none()
+                && pattern.path.is_ident("Ok") && pattern.elems.len() == 1)
+        {
+            return false;
+        }
+    }
+    errors == 1
+}
+
+fn syn_exact_rpc_error_if_let(expression: &syn::Expr) -> Option<String> {
+    let syn::Expr::If(guard) = expression else {
+        return None;
+    };
+    if !guard.attrs.is_empty() || guard.else_branch.is_some() || guard.then_branch.stmts.len() != 1
+    {
+        return None;
+    }
+    let syn::Expr::Let(condition) = guard.cond.as_ref() else {
+        return None;
+    };
+    if !condition.attrs.is_empty() {
+        return None;
+    }
+    let payload = syn_exact_result_err_pattern(&condition.pat)?;
+    let syn::Expr::Path(result) = condition.expr.as_ref() else {
+        return None;
+    };
+    if !result.attrs.is_empty()
+        || result.qself.is_some()
+        || result.path.segments.len() != 1
+        || result.path.leading_colon.is_some()
+    {
+        return None;
+    }
+    let segment = &result.path.segments[0];
+    if !matches!(segment.arguments, syn::PathArguments::None) {
+        return None;
+    }
+    let syn::Stmt::Expr(returned, _) = &guard.then_branch.stmts[0] else {
+        return None;
+    };
+    syn_exact_rpc_error_return(returned, &payload).then(|| segment.ident.to_string())
+}
+
+/// Only the existing optional per-item accounting shape is accepted. Its else
+/// branch is literal Ok(()); its then branch is exactly one admission call.
+fn syn_conditional_rpc_charge(local: &syn::Local) -> Option<(String, &syn::Expr)> {
+    if !local.attrs.is_empty() {
+        return None;
+    }
+    let name = syn_single_plain_identifier(&local.pat)?;
+    let init = local.init.as_ref()?;
+    if init.diverge.is_some() {
+        return None;
+    }
+    let syn::Expr::If(branch) = init.expr.as_ref() else {
+        return None;
+    };
+    if !branch.attrs.is_empty()
+        || branch.then_branch.stmts.len() != 1
+        || !(syn_plain_path_is(&branch.cond, "submission")
+            || syn_plain_path_is(&branch.cond, "charge_additional_request"))
+    {
+        return None;
+    }
+    let syn::Stmt::Expr(charged, None) = &branch.then_branch.stmts[0] else {
+        return None;
+    };
+    let syn::Expr::MethodCall(call) = charged else {
+        return None;
+    };
+    if !call.attrs.is_empty()
+        || call.turbofish.is_some()
+        || call.args.len() != 1
+        || !syn_plain_path_is(&call.args[0], "peer")
+        || !matches!(
+            call.method.to_string().as_str(),
+            "charge_request" | "charge_submission"
+        )
+        || call.receiver.to_token_stream().to_string() != "node . public_rpc_admission"
+    {
+        return None;
+    }
+    let expected_condition = match call.method.to_string().as_str() {
+        "charge_request" => "charge_additional_request",
+        "charge_submission" => "submission",
+        _ => return None,
+    };
+    if !syn_plain_path_is(&branch.cond, expected_condition) {
+        return None;
+    }
+    let (_, otherwise) = branch.else_branch.as_ref()?;
+    let syn::Expr::Block(otherwise) = otherwise.as_ref() else {
+        return None;
+    };
+    if !otherwise.attrs.is_empty() || otherwise.label.is_some() || otherwise.block.stmts.len() != 1
+    {
+        return None;
+    }
+    let syn::Stmt::Expr(ok, None) = &otherwise.block.stmts[0] else {
+        return None;
+    };
+    let ok = syn_call_path_is(ok, &["Ok"])?;
+    if !ok.attrs.is_empty()
+        || ok.args.len() != 1
+        || !matches!(&ok.args[0], syn::Expr::Tuple(unit) if unit.attrs.is_empty() && unit.elems.is_empty())
+    {
+        return None;
+    }
+    Some((name, charged))
+}
+
+/// Exact production RPC denial dataflow. A direct match must return rpc_error
+/// with the bound error's code/message; optional accounting may interleave only
+/// the other bounded charge and exact error guards before checking its result.
+fn call_result_returns_rpc_admission_error(
+    source: &str,
+    raw_source: &str,
+    call: &RustCallSite,
+) -> bool {
+    let context = rust_statement_context(source, call.start);
+    let (Some(&outer_start), Some(&block_start)) =
+        (context.statement_starts.first(), context.block_path.first())
+    else {
+        return false;
+    };
+    let Ok(block_end) = match_rust_brace(source, block_start) else {
+        return false;
+    };
+    let Some((statement_end, true)) = top_level_statement_end_after(source, outer_start, block_end)
+    else {
+        return false;
+    };
+    if call.close_paren >= statement_end {
+        return false;
+    }
+    let Ok(syn::Stmt::Local(local)) =
+        syn::parse_str::<syn::Stmt>(&raw_source[outer_start..=statement_end])
+    else {
+        return false;
+    };
+    if !local.attrs.is_empty() || syn_single_plain_identifier(&local.pat).is_none() {
+        return false;
+    }
+    let Some(init) = &local.init else {
+        return false;
+    };
+    if init.diverge.is_some() {
+        return false;
+    }
+    let expression_start = rust_call_expression_start(source, call.start);
+    let Ok(bound_call) =
+        syn::parse_str::<syn::Expr>(&raw_source[expression_start..=call.close_paren])
+    else {
+        return false;
+    };
+    let bound_tokens = bound_call.to_token_stream().to_string();
+    if let syn::Expr::Match(matched) = init.expr.as_ref() {
+        return matched.expr.to_token_stream().to_string() == bound_tokens
+            && syn_exact_rpc_error_match(matched);
+    }
+    let Some((result_name, charged)) = syn_conditional_rpc_charge(&local) else {
+        return false;
+    };
+    if charged.to_token_stream().to_string() != bound_tokens {
+        return false;
+    }
+    let Ok(remaining) = syn::parse_str::<syn::Block>(&format!(
+        "{{ {} }}",
+        &raw_source[statement_end + 1..block_end]
+    )) else {
+        return false;
+    };
+    for statement in &remaining.stmts {
+        match statement {
+            syn::Stmt::Local(other) => {
+                let Some((other_name, _)) = syn_conditional_rpc_charge(other) else {
+                    return false;
+                };
+                if other_name == result_name {
+                    return false;
+                }
+            }
+            syn::Stmt::Expr(expression, _) => {
+                let Some(checked_name) = syn_exact_rpc_error_if_let(expression) else {
+                    return false;
+                };
+                if checked_name == result_name {
+                    return true;
+                }
+            }
+            _ => return false,
+        }
+    }
+    false
 }
 
 fn call_result_is_propagated(source: &str, call: &RustCallSite) -> bool {
@@ -7490,6 +8080,86 @@ fn call_bool_false_guard_is_fail_closed(source: &str, call: &RustCallSite) -> bo
         return false;
     }
     fail_closed_branch_after(source, call.close_paren + 1)
+}
+
+fn rust_public_submission_permit_parameter_is_bound(
+    source: &str,
+    function: &RustFunctionSpan,
+) -> bool {
+    let params = &source[function.parameters_start..function.parameters_end];
+    let Ok(signature) = syn::parse_str::<syn::ItemFn>(&format!("fn guard({params}) {{}}")) else {
+        return false;
+    };
+    signature.sig.inputs.iter().any(|argument| {
+        matches!(argument, syn::FnArg::Typed(argument)
+            if argument.attrs.is_empty()
+                && syn_single_plain_identifier(&argument.pat).as_deref() == Some("public_permit")
+                && argument.ty.to_token_stream().to_string()
+                    == "Option < & PublicSubmissionPermit >")
+    })
+}
+
+/// This obligation is restricted to the production public-permit gate. The
+/// bound predicate must be the negated right operand of the exact permit test,
+/// and denial must directly return Err before later route/decoding operations.
+fn call_bool_guards_public_submission_route(
+    source: &str,
+    raw_source: &str,
+    call: &RustCallSite,
+) -> bool {
+    let context = rust_statement_context(source, call.start);
+    if context.block_path.len() != 1 {
+        return false;
+    }
+    let start = context.current_statement_start();
+    let open = skip_ascii_whitespace(source, call.close_paren + 1);
+    let Ok(end) = match_rust_brace(source, open) else {
+        return false;
+    };
+    let after = skip_ascii_whitespace(source, end + 1);
+    if rust_token_at(source, "else", after).is_some() {
+        return false;
+    }
+    let Ok(guard) = syn::parse_str::<syn::ExprIf>(&raw_source[start..=end]) else {
+        return false;
+    };
+    if !guard.attrs.is_empty()
+        || guard.else_branch.is_some()
+        || guard.then_branch.stmts.len() != 1
+        || guard.cond.to_token_stream().to_string()
+            != "public_permit . is_some () && ! public_submit_action_route_allowed (request . family_id , request . action_id)"
+    {
+        return false;
+    }
+    let syn::Stmt::Expr(returned, _) = &guard.then_branch.stmts[0] else {
+        return false;
+    };
+    let syn::Expr::Return(returned) = returned else {
+        return false;
+    };
+    let Some(err) = returned
+        .expr
+        .as_deref()
+        .and_then(|expression| syn_call_path_is(expression, &["Err"]))
+    else {
+        return false;
+    };
+    if !returned.attrs.is_empty() || !err.attrs.is_empty() || err.args.len() != 1 {
+        return false;
+    }
+    // The error payload itself must not execute a nested return, break, call,
+    // or unchecked macro. Production uses only anyhow!("literal"); the inert
+    // unit payload is also admitted for the checker's Result<(), ()> fixtures.
+    match &err.args[0] {
+        syn::Expr::Tuple(unit) => unit.attrs.is_empty() && unit.elems.is_empty(),
+        syn::Expr::Macro(error) => {
+            error.attrs.is_empty()
+                && error.mac.path.is_ident("anyhow")
+                && matches!(error.mac.delimiter, syn::MacroDelimiter::Paren(_))
+                && syn::parse2::<syn::LitStr>(error.mac.tokens.clone()).is_ok()
+        }
+        _ => false,
+    }
 }
 
 fn call_result_is_err_branch_return(source: &str, call: &RustCallSite) -> bool {
@@ -14760,6 +15430,590 @@ mod tests {
                 "{name}: {err:#}"
             );
         }
+    }
+
+    fn check_exact_rpc_error_fixture(
+        name: &str,
+        body: &str,
+        callee: &str,
+    ) -> Result<BlueprintReport> {
+        check_exact_rpc_error_fixture_rewrite(name, body, callee, None)
+    }
+
+    fn check_exact_rpc_error_fixture_rewrite(
+        name: &str,
+        body: &str,
+        callee: &str,
+        rewrite: Option<(&str, &str)>,
+    ) -> Result<BlueprintReport> {
+        let root = test_root(&format!("exact-rpc-error-{name}"));
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        let declarations = r#"
+            struct PublicRpcAdmission;
+            struct AdmissionError;
+            struct NativeNode { public_rpc_admission: PublicRpcAdmission }
+            impl PublicRpcAdmission {
+                fn charge_submission(&self, peer: u8) -> Result<(), AdmissionError> { Ok(()) }
+                fn charge_request(&self, peer: u8) -> Result<(), AdmissionError> { Ok(()) }
+                fn try_submit(&self) -> Result<(), AdmissionError> { Ok(()) }
+            }
+            impl AdmissionError {
+                fn code(&self) -> i64 { -32070 }
+                fn message(&self) -> &'static str { "denied" }
+            }
+            fn rpc_error(id: usize, code: i64, message: &str) -> usize { id }
+            fn mutate() {}
+        "#;
+        let mut source = format!(
+            "{declarations}\nfn check(node: &NativeNode, peer: u8, submission: bool, charge_additional_request: bool, id: usize) -> usize {{ {body} }}\n");
+        if let Some((old, new)) = rewrite {
+            source = source.replace(old, new);
+        }
+        write_repo_file(&root, "src/native.rs", &source);
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                callee,
+                &["check"],
+                "must_return_rpc_admission_error",
+            ),
+        );
+        check_blueprint_file(&blueprint_path, &claims_path)
+    }
+
+    #[test]
+    fn blueprint_exact_rpc_error_accepts_production_admission_shapes() {
+        for (name, body, callee) in [
+            ("direct", "let permit = match node.public_rpc_admission.try_submit() { Ok(permit) => permit, Err(err) => return rpc_error(id, err.code(), err.message()) }; 0", "try_submit"),
+            ("conditional", "let submission_admission = if submission { node.public_rpc_admission.charge_submission(peer) } else { Ok(()) }; if let Err(err) = submission_admission { return rpc_error(id, err.code(), err.message()); } 0", "charge_submission"),
+            ("interleaved-submission", "let request_admission = if charge_additional_request { node.public_rpc_admission.charge_request(peer) } else { Ok(()) }; let submission_admission = if submission { node.public_rpc_admission.charge_submission(peer) } else { Ok(()) }; if let Err(err) = request_admission { return rpc_error(id, err.code(), err.message()); } if let Err(err) = submission_admission { return rpc_error(id, err.code(), err.message()); } 0", "charge_submission"),
+            ("interleaved-request", "let request_admission = if charge_additional_request { node.public_rpc_admission.charge_request(peer) } else { Ok(()) }; let submission_admission = if submission { node.public_rpc_admission.charge_submission(peer) } else { Ok(()) }; if let Err(err) = request_admission { return rpc_error(id, err.code(), err.message()); } if let Err(err) = submission_admission { return rpc_error(id, err.code(), err.message()); } 0", "charge_request"),
+        ] {
+            check_exact_rpc_error_fixture(name, body, callee).unwrap_or_else(|err|
+                panic!("{name}: {err:#}"));
+        }
+    }
+
+    #[test]
+    fn blueprint_exact_rpc_error_rejects_denial_dataflow_mutations() {
+        let direct = "let permit = match node.public_rpc_admission.try_submit() { Ok(permit) => permit, Err(err) => return rpc_error(id, err.code(), err.message()) }; 0";
+        for (name, old, new) in [
+            ("fixed-code", "err.code()", "0"),
+            ("wrong-error-code", "err.code()", "other.code()"),
+            ("fixed-message", "err.message()", "\"accepted\""),
+            ("wrong-error-message", "err.message()", "other.message()"),
+            ("wrong-id", "rpc_error(id,", "rpc_error(0,"),
+            ("wrong-constructor", "rpc_error(id,", "rpc_success(id,"),
+            (
+                "swallowed",
+                "return rpc_error(id, err.code(), err.message())",
+                "()",
+            ),
+            (
+                "rebound-error",
+                "return rpc_error(id, err.code(), err.message())",
+                "{ let err = other; return rpc_error(id, err.code(), err.message()); }",
+            ),
+            ("guarded-error", "Err(err) =>", "Err(err) if false =>"),
+            ("catch-all", "Err(err) =>", "_ =>"),
+            ("transformed-code", "err.code()", "err.code() + 1"),
+            ("unreturned", "return rpc_error", "rpc_error"),
+        ] {
+            let body = direct.replace(old, new);
+            assert!(
+                check_exact_rpc_error_fixture(name, &body, "try_submit").is_err(),
+                "{name}"
+            );
+        }
+        let charged = "let submission_admission = if submission { node.public_rpc_admission.charge_submission(peer) } else { Ok(()) }; if let Err(err) = submission_admission { return rpc_error(id, err.code(), err.message()); } 0";
+        for (name, old, new) in [
+            (
+                "wrong-result",
+                "Err(err) = submission_admission",
+                "Err(err) = other_result",
+            ),
+            (
+                "rebound-result",
+                "if let Err(err)",
+                "let submission_admission = Ok(()); if let Err(err)",
+            ),
+            (
+                "assignment-before-check",
+                "if let Err(err)",
+                "submission_admission = Ok(()); if let Err(err)",
+            ),
+            (
+                "mutation-before-check",
+                "if let Err(err)",
+                "mutate(); if let Err(err)",
+            ),
+            (
+                "discarded-then",
+                "charge_submission(peer) }",
+                "charge_submission(peer); Ok(()) }",
+            ),
+            (
+                "adapter",
+                "charge_submission(peer) }",
+                "charge_submission(peer).or(Ok(())) }",
+            ),
+            ("wrong-condition", "if submission {", "if false {"),
+            (
+                "request-condition-used-for-submission",
+                "if submission {",
+                "if charge_additional_request {",
+            ),
+            ("wrong-else", "else { Ok(()) }", "else { mutate(); Ok(()) }"),
+            (
+                "guard-swallowed",
+                "return rpc_error(id, err.code(), err.message());",
+                "let _ = rpc_error(id, err.code(), err.message());",
+            ),
+            (
+                "mapper-shadow",
+                "let submission_admission",
+                "let rpc_error = |id, code, message| 0; let submission_admission",
+            ),
+        ] {
+            let body = charged.replace(old, new);
+            assert!(
+                check_exact_rpc_error_fixture(name, &body, "charge_submission").is_err(),
+                "{name}"
+            );
+        }
+        let unchecked_duplicate =
+            format!("let ignored = node.public_rpc_admission.try_submit(); {direct}");
+        assert!(check_exact_rpc_error_fixture(
+            "unchecked-duplicate",
+            &unchecked_duplicate,
+            "try_submit"
+        )
+        .is_err());
+        let wrongly_conditioned_request =
+            charged.replace("charge_submission(peer)", "charge_request(peer)");
+        assert!(check_exact_rpc_error_fixture(
+            "submission-condition-used-for-request",
+            &wrongly_conditioned_request,
+            "charge_request"
+        )
+        .is_err());
+    }
+
+    fn check_public_route_guard_fixture(
+        name: &str,
+        body: &str,
+        permit_parameter: &str,
+    ) -> Result<BlueprintReport> {
+        check_public_route_guard_fixture_with_dominance(name, body, permit_parameter, false)
+    }
+
+    fn check_public_route_guard_fixture_with_dominance(
+        name: &str,
+        body: &str,
+        permit_parameter: &str,
+        must_dominate_successors: bool,
+    ) -> Result<BlueprintReport> {
+        let root = test_root(&format!("public-route-guard-{name}"));
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            &format!(
+                "struct PublicSubmissionPermit; struct Request {{ family_id: u16, action_id: u16 }}\n\
+                 fn public_submit_action_route_allowed(family: u16, action: u16) -> bool {{ true }}\n\
+                 fn admit_after_route() {{}}\n\
+                 fn check(request: Request, {permit_parameter}) -> Result<(), ()> {{ {body} admit_after_route(); Ok(()) }}\n"
+            ),
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        let mut blueprint = blueprint_fixture_with_ordered_binding(
+            "public_submit_action_route_allowed",
+            &["check"],
+            "check",
+            &["admit_after_route"],
+        );
+        blueprint["nodes"][1]["implementation_bindings"][0]["result_obligation"] =
+            json!("must_guard_public_submission_route");
+        blueprint["nodes"][1]["implementation_bindings"][0]["call_order_constraints"][0]
+            ["must_dominate_successors"] = json!(must_dominate_successors);
+        write_json(&blueprint_path, blueprint);
+        check_blueprint_file(&blueprint_path, &claims_path)
+    }
+
+    #[test]
+    fn blueprint_public_route_guard_accepts_exact_production_shape() {
+        check_public_route_guard_fixture(
+            "production",
+            "if public_permit.is_some() && !public_submit_action_route_allowed(request.family_id, request.action_id) { return Err(anyhow!(\"route refused\")); }",
+            "public_permit: Option<&PublicSubmissionPermit>",
+        ).expect("exact typed public route guard");
+        check_public_route_guard_fixture(
+            "comments",
+            "if public_permit.is_some() /* selected transport */ &&\n !public_submit_action_route_allowed(request.family_id, request.action_id) { return Err(()); }",
+            "public_permit: Option<&PublicSubmissionPermit>",
+        ).expect("comments do not change the exact guard");
+    }
+
+    #[test]
+    fn blueprint_public_route_guard_does_not_claim_unconditional_dominance() {
+        assert!(check_public_route_guard_fixture_with_dominance(
+            "conditional-is-not-unconditional-dominance",
+            "if public_permit.is_some() && !public_submit_action_route_allowed(request.family_id, request.action_id) { return Err(()); }",
+            "public_permit: Option<&PublicSubmissionPermit>",
+            true,
+        ).is_err());
+    }
+
+    #[test]
+    fn blueprint_public_route_guard_rejects_predicate_permit_and_return_mutations() {
+        let body = "if public_permit.is_some() && !public_submit_action_route_allowed(request.family_id, request.action_id) { return Err(()); }";
+        let parameter = "public_permit: Option<&PublicSubmissionPermit>";
+        assert!(check_public_route_guard_fixture(
+            "discarded-predicate",
+            "let _ = public_submit_action_route_allowed(request.family_id, request.action_id);",
+            parameter,
+        )
+        .is_err());
+        for (name, old, new) in [
+            ("inverted-permit", "is_some()", "is_none()"),
+            ("or-condition", "&&", "||"),
+            (
+                "positive-route",
+                "!public_submit_action_route_allowed",
+                "public_submit_action_route_allowed",
+            ),
+            (
+                "extra-condition",
+                "public_permit.is_some()",
+                "false && public_permit.is_some()",
+            ),
+            (
+                "swapped-fields",
+                "request.family_id, request.action_id",
+                "request.action_id, request.family_id",
+            ),
+            (
+                "constant-fields",
+                "request.family_id, request.action_id",
+                "1, 15",
+            ),
+            ("other-request", "request.family_id", "other.family_id"),
+            ("success-return", "return Err(())", "return Ok(())"),
+            (
+                "nested-success-return",
+                "return Err(())",
+                "return Err({ return Ok(()); () })",
+            ),
+            (
+                "call-in-error-payload",
+                "return Err(())",
+                "return Err(forged_error())",
+            ),
+            (
+                "expression-in-error-macro",
+                "return Err(())",
+                "return Err(anyhow!(forged_error()))",
+            ),
+            (
+                "format-argument-in-error-macro",
+                "return Err(())",
+                "return Err(anyhow!(\"{}\", { return Ok(()); \"forged\" }))",
+            ),
+            ("discarded-return", "return Err(())", "let _ = Err(())"),
+            (
+                "extra-branch-work",
+                "return Err(())",
+                "mutate(); return Err(())",
+            ),
+            (
+                "else-branch",
+                "return Err(()); }",
+                "return Err(()); } else { mutate(); }",
+            ),
+        ] {
+            assert!(
+                check_public_route_guard_fixture(name, &body.replace(old, new), parameter).is_err(),
+                "{name}"
+            );
+        }
+        for (name, prefix) in [
+            ("successor-before-route", "admit_after_route();"),
+            ("permit-shadow", "let public_permit = None;"),
+            ("err-shadow", "let Err = |value| Ok(value);"),
+            ("macro-shadow", "macro_rules! anyhow { ($($tt:tt)*) => { return Ok(()) }; }"),
+            ("function-import", "use forged::public_submit_action_route_allowed;"),
+            ("local-module", "mod public_admission { fn public_submit_action_route_allowed(f: u16, a: u16) -> bool { true } }"),
+        ] {
+            assert!(check_public_route_guard_fixture(name, &format!("{prefix} {body}"), parameter).is_err(), "{name}");
+        }
+        for (name, wrapped) in [
+            ("nested-condition", format!("if false {{ {body} }}")),
+            ("closure", format!("let deferred = || {{ {body} }};")),
+            ("async", format!("let deferred = async {{ {body} }};")),
+            (
+                "cfg",
+                format!("#[cfg(feature = \"development-candidate\")] {body}"),
+            ),
+        ] {
+            assert!(
+                check_public_route_guard_fixture(name, &wrapped, parameter).is_err(),
+                "{name}"
+            );
+        }
+        for (name, mutated_parameter) in [
+            ("wrong-type", "public_permit: ForgedPermit"),
+            (
+                "mutable-parameter",
+                "mut public_permit: Option<&PublicSubmissionPermit>",
+            ),
+            (
+                "mutable-reference",
+                "public_permit: Option<&mut PublicSubmissionPermit>",
+            ),
+            (
+                "renamed-parameter",
+                "other: Option<&PublicSubmissionPermit>",
+            ),
+        ] {
+            assert!(
+                check_public_route_guard_fixture(name, body, mutated_parameter).is_err(),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn blueprint_exact_rpc_error_resolves_only_the_production_receiver() {
+        let direct = "let permit = match node.public_rpc_admission.try_submit() { Ok(permit) => permit, Err(err) => return rpc_error(id, err.code(), err.message()) }; 0";
+        check_exact_rpc_error_fixture_rewrite(
+            "arc-node",
+            direct,
+            "try_submit",
+            Some(("node: &NativeNode", "node: &Arc<NativeNode>")),
+        )
+        .unwrap();
+        for (name, old, new) in [
+            ("wrong-parameter", "node: &NativeNode", "node: &OtherNode"),
+            ("wrong-field-type", "public_rpc_admission: PublicRpcAdmission", "public_rpc_admission: OtherAdmission"),
+            ("wrong-owner", "impl PublicRpcAdmission", "impl OtherAdmission"),
+            ("conditional-node", "struct NativeNode", "#[cfg(test)] struct NativeNode"),
+            ("conditional-field", "public_rpc_admission: PublicRpcAdmission", "#[cfg(test)] public_rpc_admission: PublicRpcAdmission"),
+            ("macro-node", "struct NativeNode { public_rpc_admission: PublicRpcAdmission }", "macro_rules! fake { () => { struct NativeNode { public_rpc_admission: PublicRpcAdmission } } }"),
+        ] {
+            assert!(check_exact_rpc_error_fixture_rewrite(name, direct, "try_submit",
+                Some((old, new))).is_err(), "{name}");
+        }
+        let rebound = format!("let node = impostor; {direct}");
+        assert!(check_exact_rpc_error_fixture("rebound-receiver", &rebound, "try_submit").is_err());
+    }
+
+    #[test]
+    fn blueprint_exact_result_is_ok_accepts_direct_returns() {
+        for (name, body) in [
+            ("tail", "verified_helper().is_ok()"),
+            ("return", "return verified_helper().is_ok();"),
+            ("spacing", "verified_helper ( ) . is_ok ( )"),
+        ] {
+            let root = test_root(&format!("exact-result-is-ok-{name}"));
+            write_repo_file(&root, "evidence/support.txt", "support");
+            write_repo_file(&root, "evidence/target.txt", "target");
+            write_repo_file(&root, "src/native.rs", &format!(
+                "fn verified_helper() -> Result<(), ()> {{ Ok(()) }}\nfn check() -> bool {{ {body} }}\n"));
+            let claims_path = root.join("claims.json");
+            let blueprint_path = root.join("blueprint.json");
+            write_json(&claims_path, claims_fixture());
+            write_json(
+                &blueprint_path,
+                blueprint_fixture_with_result_binding(
+                    "verified_helper",
+                    &["check"],
+                    "must_return_result_is_ok",
+                ),
+            );
+            check_blueprint_file(&blueprint_path, &claims_path)
+                .unwrap_or_else(|err| panic!("{name}: {err:#}"));
+        }
+    }
+
+    #[test]
+    fn blueprint_exact_result_is_ok_rejects_mutations() {
+        for (name, body) in [
+            ("discarded", "let _ = verified_helper().is_ok(); true"),
+            ("negated", "!verified_helper().is_ok()"),
+            ("unrelated-true", "verified_helper().is_ok(); true"),
+            (
+                "rebound",
+                "let allowed = verified_helper().is_ok(); allowed",
+            ),
+            (
+                "reassigned",
+                "let mut allowed = verified_helper().is_ok(); allowed = true; allowed",
+            ),
+            ("or-true", "verified_helper().is_ok() || true"),
+            ("comparison", "verified_helper().is_ok() == false"),
+            ("adapter", "verified_helper().map(|_| ()).is_ok()"),
+            ("wrong-predicate", "verified_helper().is_err()"),
+            (
+                "early-return",
+                "if true { return true; } verified_helper().is_ok()",
+            ),
+            ("closure", "let unused = || verified_helper().is_ok(); true"),
+            (
+                "return-block",
+                "return { verified_helper().is_ok(); true };",
+            ),
+        ] {
+            let root = test_root(&format!("exact-result-is-ok-mutation-{name}"));
+            write_repo_file(&root, "evidence/support.txt", "support");
+            write_repo_file(&root, "evidence/target.txt", "target");
+            write_repo_file(&root, "src/native.rs", &format!(
+                "fn verified_helper() -> Result<(), ()> {{ Ok(()) }}\nfn check() -> bool {{ {body} }}\n"));
+            let claims_path = root.join("claims.json");
+            let blueprint_path = root.join("blueprint.json");
+            write_json(&claims_path, claims_fixture());
+            write_json(
+                &blueprint_path,
+                blueprint_fixture_with_result_binding(
+                    "verified_helper",
+                    &["check"],
+                    "must_return_result_is_ok",
+                ),
+            );
+            let err = check_blueprint_file(&blueprint_path, &claims_path)
+                .expect_err("transformed/discarded predicate must not satisfy exact return");
+            assert!(
+                err.to_string()
+                    .contains("exactly returned Result::is_ok predicate"),
+                "{name}: {err:#}"
+            );
+        }
+    }
+
+    #[test]
+    fn blueprint_exact_err_payload_accepts_direct_denial_handoff() {
+        for (name, arms) in [
+            (
+                "direct",
+                "Ok(value) => value, Err(response) => return response",
+            ),
+            (
+                "block",
+                "Ok(value) => value, Err(response) => { return response; }",
+            ),
+            (
+                "nested-ok",
+                "Ok(Some(value)) => value, Ok(None) => 0, Err(response) => return response",
+            ),
+        ] {
+            let root = test_root(&format!("exact-err-payload-{name}"));
+            write_repo_file(&root, "evidence/support.txt", "support");
+            write_repo_file(&root, "evidence/target.txt", "target");
+            write_repo_file(&root, "src/native.rs", &format!(
+                "fn verified_helper() {{}}\nfn check() {{ let value = match verified_helper() {{ {arms} }}; value }}\n"));
+            let claims_path = root.join("claims.json");
+            let blueprint_path = root.join("blueprint.json");
+            write_json(&claims_path, claims_fixture());
+            write_json(
+                &blueprint_path,
+                blueprint_fixture_with_result_binding(
+                    "verified_helper",
+                    &["check"],
+                    "must_return_match_err_payload",
+                ),
+            );
+            check_blueprint_file(&blueprint_path, &claims_path)
+                .unwrap_or_else(|err| panic!("{name}: {err:#}"));
+        }
+    }
+
+    #[test]
+    fn blueprint_exact_err_payload_rejects_mutations_and_preserves_old_fail_closed_contract() {
+        for (name, arms) in [
+            (
+                "other-value",
+                "Ok(value) => value, Err(response) => return 0",
+            ),
+            (
+                "transformed",
+                "Ok(value) => value, Err(response) => return response + 1",
+            ),
+            (
+                "rebound",
+                "Ok(value) => value, Err(response) => { let response = 0; return response; }",
+            ),
+            (
+                "guarded",
+                "Ok(value) => value, Err(response) if true => return response",
+            ),
+            (
+                "catch-all",
+                "_ => return 0, Err(response) => return response",
+            ),
+            ("swallowed", "Ok(value) => value, Err(response) => 0"),
+            (
+                "converted",
+                "Ok(value) => value, Err(response) => return response.into()",
+            ),
+            (
+                "wrapped",
+                "Ok(value) => value, Err(response) => return Err(response)",
+            ),
+            (
+                "ref-pattern",
+                "Ok(value) => value, Err(ref response) => return response",
+            ),
+            (
+                "two-err-arms",
+                "Ok(value) => value, Err(response) => return response, Err(other) => return other",
+            ),
+        ] {
+            let root = test_root(&format!("exact-err-payload-mutation-{name}"));
+            write_repo_file(&root, "evidence/support.txt", "support");
+            write_repo_file(&root, "evidence/target.txt", "target");
+            write_repo_file(&root, "src/native.rs", &format!(
+                "fn verified_helper() {{}}\nfn check() {{ let value = match verified_helper() {{ {arms} }}; value }}\n"));
+            let claims_path = root.join("claims.json");
+            let blueprint_path = root.join("blueprint.json");
+            write_json(&claims_path, claims_fixture());
+            write_json(
+                &blueprint_path,
+                blueprint_fixture_with_result_binding(
+                    "verified_helper",
+                    &["check"],
+                    "must_return_match_err_payload",
+                ),
+            );
+            let err = check_blueprint_file(&blueprint_path, &claims_path)
+                .expect_err("denial payload transformation must reject");
+            assert!(
+                err.to_string()
+                    .contains("exactly returned Err match payload"),
+                "{name}: {err:#}"
+            );
+        }
+        let source =
+            "{ match verified_helper() { Ok(()) => (), Err(response) => return response } }";
+        let calls = rust_call_sites(source, "verified_helper");
+        assert_eq!(calls.len(), 1);
+        assert!(!call_satisfies_result_obligation(
+            source,
+            source,
+            &calls[0],
+            ResultObligation::MustCheckResultFailClosed
+        ));
+        assert!(call_satisfies_result_obligation(
+            source,
+            source,
+            &calls[0],
+            ResultObligation::MustReturnMatchErrPayload
+        ));
     }
 
     #[test]

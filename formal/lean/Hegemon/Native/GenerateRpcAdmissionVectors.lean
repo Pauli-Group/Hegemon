@@ -12,10 +12,14 @@ def nullableStringJson (value : Option String) : String :=
 
 def policyJson : RpcPolicy -> String
   | RpcPolicy.safeOnly => "\"safe\""
+  | RpcPolicy.poolOnly => "\"pool\""
+  | RpcPolicy.publicSubmit => "\"public-submit\""
   | RpcPolicy.unsafeAllowed => "\"unsafe\""
 
 def rawPolicyTagJson : RawRpcPolicy -> String
   | RawRpcPolicy.safeToken => "\"safe\""
+  | RawRpcPolicy.poolToken => "\"pool\""
+  | RawRpcPolicy.publicSubmitToken => "\"public-submit\""
   | RawRpcPolicy.unsafeToken => "\"unsafe\""
   | RawRpcPolicy.autoToken => "\"auto\""
   | RawRpcPolicy.emptyToken => "\"empty\""
@@ -23,6 +27,7 @@ def rawPolicyTagJson : RawRpcPolicy -> String
 
 def policyRejectionJson : Except RpcPolicyReject RpcPolicy -> String
   | Except.ok _ => "null"
+  | Except.error RpcPolicyReject.externalPoolPolicy => "\"external_pool_policy\""
   | Except.error RpcPolicyReject.invalidPolicy => "\"invalid_policy\""
   | Except.error RpcPolicyReject.externalUnsafePolicy => "\"external_unsafe_policy\""
 
@@ -37,6 +42,17 @@ def methodJson : RpcMethod -> String
   | RpcMethod.hegemonStopMining => "\"hegemon_stopMining\""
   | RpcMethod.hegemonSubmitAction => "\"hegemon_submitAction\""
   | RpcMethod.systemPeers => "\"system_peers\""
+  | RpcMethod.safeNonPoolMethod => "\"hegemon_latestBlock\""
+  | RpcMethod.poolWork => "\"hegemon_poolWork\""
+  | RpcMethod.compactJob => "\"hegemon_compactJob\""
+  | RpcMethod.submitPoolShare => "\"hegemon_submitPoolShare\""
+  | RpcMethod.submitCompactSolution => "\"hegemon_submitCompactSolution\""
+  | RpcMethod.pendingActionChunk => "\"hegemon_pendingActionChunk\""
+  | RpcMethod.developmentPendingActionChunk => "\"hegemon_developmentPendingActionChunk\""
+  | RpcMethod.assetSnapshot => "\"hegemon_assetSnapshot\""
+  | RpcMethod.assetRecoverySnapshot => "\"hegemon_assetRecoverySnapshot\""
+  | RpcMethod.disabledProofService => "\"hegemon_generateProof\""
+  | RpcMethod.unknownMethod => "\"unknown_public_rpc_method\""
 
 def methodRejectionJson : Option RpcMethodReject -> String
   | none => "null"
@@ -51,6 +67,8 @@ def policyCaseJson
     match result with
     | Except.ok policy => some (match policy with
       | RpcPolicy.safeOnly => "safe"
+      | RpcPolicy.poolOnly => "pool"
+      | RpcPolicy.publicSubmit => "public-submit"
       | RpcPolicy.unsafeAllowed => "unsafe")
     | Except.error _ => none
   "    {\n"
@@ -63,27 +81,54 @@ def policyCaseJson
     ++ "      \"expected_rejection\": " ++ policyRejectionJson result ++ "\n"
     ++ "    }"
 
-def methodGateCaseJson
-    (name : String)
-    (policy : RpcPolicy)
-    (method : RpcMethod) : String :=
-  let result := evaluateRpcMethodGate policy method
+def allPolicies : List RpcPolicy := [.safeOnly, .poolOnly, .unsafeAllowed, .publicSubmit]
+
+def allMethods : List RpcMethod :=
+  [.safeMethod, .safeNonPoolMethod, .daSubmitCiphertexts, .daSubmitProofs,
+   .hegemonExportBridgeWitness, .hegemonPeerGraph, .hegemonPeerList,
+   .hegemonStartMining, .hegemonStopMining, .hegemonSubmitAction, .systemPeers,
+   .poolWork, .compactJob, .submitPoolShare, .submitCompactSolution,
+   .pendingActionChunk, .developmentPendingActionChunk, .assetSnapshot,
+   .assetRecoverySnapshot, .disabledProofService, .unknownMethod]
+
+def caseName (casePrefix : String) (policy : RpcPolicy) (method : RpcMethod)
+    (featureEnabled available : Bool) : String :=
+  casePrefix ++ "-" ++ reprStr policy ++ "-" ++ reprStr method ++ "-" ++
+    toString featureEnabled ++ "-" ++ toString available
+
+def methodGateCaseJson (policy : RpcPolicy) (method : RpcMethod)
+    (featureEnabled : Bool) : String :=
+  let allowed := rpcMethodAllowedWithFeatures policy method featureEnabled
   "    {\n"
-    ++ "      \"name\": \"" ++ name ++ "\",\n"
+    ++ "      \"name\": \"" ++ caseName "gate" policy method featureEnabled true ++ "\",\n"
     ++ "      \"policy\": " ++ policyJson policy ++ ",\n"
     ++ "      \"method\": " ++ methodJson method ++ ",\n"
-    ++ "      \"is_unsafe_method\": " ++ boolJson (rpcMethodIsUnsafe method) ++ ",\n"
-    ++ "      \"expected_valid\": " ++ boolJson (result == none) ++ ",\n"
-    ++ "      \"expected_rejection\": " ++ methodRejectionJson result ++ "\n"
+    ++ "      \"feature_enabled\": " ++ boolJson featureEnabled ++ ",\n"
+    ++ "      \"is_unsafe_method\": " ++ boolJson (rpcMethodIsUnsafeWithFeatures method featureEnabled) ++ ",\n"
+    ++ "      \"expected_valid\": " ++ boolJson allowed ++ ",\n"
+    ++ "      \"expected_rejection\": " ++
+      nullableStringJson (if allowed then none else some "unsafe_method_disabled") ++ "\n"
     ++ "    }"
 
-def methodListCaseJson (name : String) (policy : RpcPolicy) : String :=
+def methodListCaseJson (policy : RpcPolicy) (method : RpcMethod)
+    (featureEnabled available : Bool) : String :=
   "    {\n"
-    ++ "      \"name\": \"" ++ name ++ "\",\n"
+    ++ "      \"name\": \"" ++ caseName "dispatch" policy method featureEnabled available ++ "\",\n"
     ++ "      \"policy\": " ++ policyJson policy ++ ",\n"
-    ++ "      \"expected_unsafe_methods_visible\": "
-      ++ boolJson (unsafeMethodsVisibleInList policy) ++ "\n"
+    ++ "      \"method\": " ++ methodJson method ++ ",\n"
+    ++ "      \"feature_enabled\": " ++ boolJson featureEnabled ++ ",\n"
+    ++ "      \"available\": " ++ boolJson available ++ ",\n"
+    ++ "      \"expected_registered\": " ++ boolJson (rpcMethodRegistered method featureEnabled) ++ ",\n"
+    ++ "      \"expected_visible\": " ++ boolJson (rpcMethodListed policy method featureEnabled available) ++ "\n"
     ++ "    }"
+
+def methodGateCases : List String :=
+  allPolicies.flatMap fun p => allMethods.flatMap fun m =>
+    [false, true].map fun f => methodGateCaseJson p m f
+
+def methodListCases : List String :=
+  allPolicies.flatMap fun p => allMethods.flatMap fun m =>
+    [false, true].flatMap fun f => [false, true].map fun a => methodListCaseJson p m f a
 
 def timestampRejectionJson : Option TimestampRangeReject -> String
   | none => "null"
@@ -188,11 +233,60 @@ def byteHexTextOver : ByteParseInput :=
     maxDecodedBytes := 4
   }
 
+def nullableNatJson : Option Nat -> String
+  | none => "null"
+  | some n => toString n
+
+def resourceCaseJson (kind : String) (first second : Nat) (flag : Bool)
+    (expectedCount : Option Nat) (expectedBool : Bool) : String :=
+  "    {\"kind\": \"" ++ kind ++ "\", \"first\": " ++ toString first ++
+  ", \"second\": " ++ toString second ++ ", \"flag\": " ++ boolJson flag ++
+  ", \"expected_count\": " ++ nullableNatJson expectedCount ++
+  ", \"expected_bool\": " ++ boolJson expectedBool ++ "}"
+
+def resourceCases : List String :=
+  ([0, 1, 2, 65535].flatMap fun family =>
+    [0, 1, 8, 14, 15, 16, 65535].map fun action =>
+      resourceCaseJson "route" family action false none (publicSubmitActionRouteAllowed family action)) ++
+  ([0, 1, 2, 3, 6, 1024, u64Max].flatMap fun active =>
+    [0, 1, 2, 4, 6, 1024, u64Max].map fun limit =>
+      resourceCaseJson "reserve" active limit false (publicCapacityReserve active limit) false) ++
+  ([0, 1, 2, 4, 1024, u64Max].map fun active =>
+      resourceCaseJson "release" active 0 false (publicCapacityRelease active) false) ++
+  ([0, 1, 5, 6, 7, 4294967295].flatMap fun used =>
+    [0, 1, 6, 60, 4294967295].flatMap fun limit => [false, true].map fun expired =>
+      resourceCaseJson "charge" used limit expired (publicClientCharge used limit expired) false) ++
+  ([0, 1, 2, 1024, u64Max].flatMap fun retained =>
+    [0, 1, 1024, u64Max].flatMap fun capacity => [false, true].map fun known =>
+      resourceCaseJson "table" retained capacity known none
+        (publicClientTableInsertAllowed retained capacity known))
+
+def ownershipCaseJson (kind : String) (submission : Bool) (states : List OwnedReservation) : String :=
+  "    {\"kind\": \"" ++ kind ++ "\", \"expected_active\": [" ++
+    String.intercalate "," (states.map fun state => toString state.active) ++
+    "], \"expected_submissions\": [" ++ String.intercalate ","
+      (states.map fun state => toString (if submission then state.active else 0)) ++ "]}"
+
+def ownershipCases : List String :=
+  let caller : OwnedReservation := { owner := .caller, active := 1 }
+  let worker := moveReservationToWorker caller
+  let cancelled := disconnectCaller worker
+  let response := moveReservationToResponse worker
+  [ownershipCaseJson "worker_cancel" true [caller, worker, cancelled, dropReservation worker],
+   ownershipCaseJson "worker_failure" true [caller, worker, cancelled, dropReservation worker],
+   ownershipCaseJson "response_drop" false [caller, worker, response, response, dropReservation response],
+   ownershipCaseJson "response_exhaust" false [caller, worker, response, response, dropReservation response]]
+
 def vectorJson : String :=
   "{\n"
-    ++ "  \"schema_version\": 1,\n"
+    ++ "  \"schema_version\": 2,\n"
     ++ "  \"policy_cases\": [\n"
     ++ policyCaseJson "safe-token" "safe" RawRpcPolicy.safeToken false ++ ",\n"
+    ++ policyCaseJson "local-pool" "pool" RawRpcPolicy.poolToken false ++ ",\n"
+    ++ policyCaseJson "external-pool-rejected" "pool" RawRpcPolicy.poolToken true ++ ",\n"
+    ++ policyCaseJson "local-public-submit" "public-submit" RawRpcPolicy.publicSubmitToken false ++ ",\n"
+    ++ policyCaseJson "external-public-submit" "public-submit" RawRpcPolicy.publicSubmitToken true ++ ",\n"
+    ++ policyCaseJson "trimmed-public-submit" " PUBLIC-SUBMIT " RawRpcPolicy.publicSubmitToken true ++ ",\n"
     ++ policyCaseJson "unsafe-token" "unsafe" RawRpcPolicy.unsafeToken false ++ ",\n"
     ++ policyCaseJson "external-unsafe-rejected" "unsafe" RawRpcPolicy.unsafeToken true ++ ",\n"
     ++ policyCaseJson "external-auto-resolves-safe" "auto" RawRpcPolicy.autoToken true ++ ",\n"
@@ -203,33 +297,13 @@ def vectorJson : String :=
     ++ policyCaseJson "invalid-policy-rejected" "public" RawRpcPolicy.invalidToken false ++ "\n"
     ++ "  ],\n"
     ++ "  \"method_gate_cases\": [\n"
-    ++ methodGateCaseJson "safe-method-under-safe-policy" RpcPolicy.safeOnly
-      RpcMethod.safeMethod ++ ",\n"
-    ++ methodGateCaseJson "unsafe-method-under-safe-policy" RpcPolicy.safeOnly
-      RpcMethod.daSubmitCiphertexts ++ ",\n"
-    ++ methodGateCaseJson "unsafe-method-under-unsafe-policy" RpcPolicy.unsafeAllowed
-      RpcMethod.daSubmitCiphertexts ++ ",\n"
-    ++ methodGateCaseJson "proof-upload-unsafe-under-safe-policy" RpcPolicy.safeOnly
-      RpcMethod.daSubmitProofs ++ ",\n"
-    ++ methodGateCaseJson "bridge-witness-export-unsafe-under-safe-policy" RpcPolicy.safeOnly
-      RpcMethod.hegemonExportBridgeWitness ++ ",\n"
-    ++ methodGateCaseJson "peer-graph-unsafe-under-safe-policy" RpcPolicy.safeOnly
-      RpcMethod.hegemonPeerGraph ++ ",\n"
-    ++ methodGateCaseJson "peer-list-unsafe-under-safe-policy" RpcPolicy.safeOnly
-      RpcMethod.hegemonPeerList ++ ",\n"
-    ++ methodGateCaseJson "start-mining-unsafe-under-safe-policy" RpcPolicy.safeOnly
-      RpcMethod.hegemonStartMining ++ ",\n"
-    ++ methodGateCaseJson "stop-mining-unsafe-under-safe-policy" RpcPolicy.safeOnly
-      RpcMethod.hegemonStopMining ++ ",\n"
-    ++ methodGateCaseJson "submit-action-unsafe-under-safe-policy" RpcPolicy.safeOnly
-      RpcMethod.hegemonSubmitAction ++ ",\n"
-    ++ methodGateCaseJson "system-peers-unsafe-under-safe-policy" RpcPolicy.safeOnly
-      RpcMethod.systemPeers ++ "\n"
-    ++ "  ],\n"
+    ++ String.intercalate ",\n" methodGateCases ++ "\n  ],\n"
     ++ "  \"method_list_cases\": [\n"
-    ++ methodListCaseJson "safe-list-hides-unsafe-methods" RpcPolicy.safeOnly ++ ",\n"
-    ++ methodListCaseJson "unsafe-list-shows-unsafe-methods" RpcPolicy.unsafeAllowed ++ "\n"
-    ++ "  ],\n"
+    ++ String.intercalate ",\n" methodListCases ++ "\n  ],\n"
+    ++ "  \"ownership_cases\": [\n"
+    ++ String.intercalate ",\n" ownershipCases ++ "\n  ],\n"
+    ++ "  \"resource_cases\": [\n"
+    ++ String.intercalate ",\n" resourceCases ++ "\n  ],\n"
     ++ "  \"timestamp_range_cases\": [\n"
     ++ timestampCaseJson "timestamp-exact-limit" validTimestampRange ++ ",\n"
     ++ timestampCaseJson "timestamp-over-limit-rejected" overlargeTimestampRange ++ ",\n"

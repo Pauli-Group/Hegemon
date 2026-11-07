@@ -3581,6 +3581,7 @@ mod tests {
             rpc_methods: "unsafe".to_owned(),
             rpc_external: false,
             rpc_cors: None,
+            public_rpc_limits: Default::default(),
             seeds: Vec::new(),
             max_peers: 0,
             mine: false,

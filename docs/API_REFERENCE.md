@@ -89,9 +89,21 @@ p budgets.
 
 Hegemon-specific RPC methods exposed on the native JSON-RPC server:
 
-Native HTTP JSON-RPC rejects request bodies above 8 MiB and caps in-flight RPC
-requests at 8. Chunk DA sidecar staging uploads rather than sending one large
-aggregate JSON body.
+Native HTTP JSON-RPC retains its 8 MiB normal body limit and existing resource
+bounds. The opt-in `--rpc-methods=public-submit` policy has a separate finite
+public request budget (default 4), general per-IP budget (60 HTTP attempts plus
+additional batch items/minute), per-IP submission budget (6 attempts/minute),
+and public submission concurrency (1, no permit waiting queue). General charging
+precedes body parsing; malformed, oversized and timed-out HTTP attempts count.
+Worker/response-body ownership retains request capacity until work finishes and
+the response body is consumed or dropped. Scheduling/lock waits, socket counts,
+OS buffers and remote acknowledgement are not bounded by a time guarantee.
+The default and `auto` remain
+safe. See [public wallet integration](PUBLIC_SUBMIT_WALLET_INTEGRATION.md) for
+transport identity, CORS, exact limits and retry semantics. Privileged DA sidecar
+uploads remain local/operator-only; public clients need self-contained inline
+requests. An explicitly source-authorized Development recovery route's separate
+body allowance does not grant public-submit access to that action family.
 
 - `hegemon_miningStatus() -> MiningStatus`
 - `hegemon_startMining(params?: { threads: number }) -> MiningControlResponse`
@@ -104,10 +116,11 @@ aggregate JSON body.
 - `hegemon_submitPoolShare(request: { worker_name: String, nonce: String, pre_hash: String, parent_hash: String, height: u64, auth_token?: String }) -> SubmitPoolShareResponse`
 - `hegemon_poolStatus(params?: { auth_token?: String }) -> PoolStatusResponse`
 - `hegemon_submitTransaction(...) -> { success: false, error: String }`
-  - Disabled compatibility stub. Wallets and applications must use `hegemon_submitAction` for live native protocol actions.
+  - Disabled compatibility stub, omitted from `rpc_methods` discovery; its direct-call refusal remains compatible. Wallets and applications must use `hegemon_submitAction` for live native protocol actions.
 - `hegemon_submitAction(request: NativeActionRequest) -> SubmitActionResponse`
-  - Unsafe-only local/operator submission. Shielded transfers complete canonical payload/state checks and full independent native `tx_leaf` verification before any sled or in-memory mempool write. Candidate-artifact and coinbase submissions are rejected; coinbase is authored only inside mining.
-  - Proof admission is arrival-time-insensitive single-flight with bounded negative caching and one reserved local verifier lane. A capacity response is retryable; deterministic invalid-proof responses are cached briefly to suppress repeated verifier work. Block import still re-verifies the artifact.
+  - Local `unsafe` retains existing action routing. Opt-in `public-submit` permits only the existing shielded-pool PrivateSpend family 1/action 15, subject to unchanged source/network/version capability checks. Its hidden ordinary/HTLC/policy/treasury witness branches are not distinguishable by RPC. Other explicit families, candidate artifacts and coinbase remain unavailable on this public path.
+  - Canonical payload/state checks and independent proof verification precede mempool staging. Inline proof/action bytes and action identity are preserved. Existing single-flight and bounded negative-cache checks remain; public verification uses separate capacity and cannot take reserved local permits. Block import still re-verifies the artifact.
+  - Each submission in a batch consumes admission independently. Capacity denial is explicit; timeout/disconnection does not prove rejection. Retain uncertain inputs and reconcile/retry the same action bytes rather than creating another spend.
 - `hegemon_consensusStatus() -> ConsensusStatus`
 - `hegemon_isValidAnchor(anchor_hex: String) -> bool`
   - Read-only wallet precheck. Accepts a 48-byte commitment-tree root as hex, with or without `0x`, and returns whether the native commitment tree recognizes it.

@@ -22,13 +22,20 @@ Every miner should use the same approved `HEGEMON_SEEDS` list to avoid accidenta
 
 ## RPC surface
 
-The live node exposes:
+The live submission method is `hegemon_submitAction`. The default and `auto`
+method policies are safe and read-only. `--rpc-methods unsafe` is a private local
+control plane; `pool` is a loopback mining control plane. The explicit
+`--rpc-methods public-submit` policy adds the existing PrivateSpend submission
+route to the available safe methods with bounded public admission. Use
+`rpc_methods` for the actual capability-available catalog.
 
-- compatibility `chain_*`, `state_*`, and `system_*` RPC for inspection and sync
-- Hegemon-specific RPC such as `hegemon_submitAction`, `hegemon_getEncryptedNotes`, and `hegemon_getMerkleWitness`
-- mining/prover RPC under the `hegemon_*` and `prover_*` namespaces
-
-The node no longer treats generic `author_*` transaction submission as a supported public interface. Clients should submit shielded transactions through the Hegemon RPC namespace.
+Public browser access requires one exact `--rpc-cors ORIGIN`; omission stays
+closed and public wildcard origins are rejected. `--rpc-external` must be
+explicit. The public policy does not expose DA uploads, mining controls,
+topology, server scanning or hosted proving. Public clients must submit the
+existing self-contained inline action and keep keys/scanning/proving local.
+See [the wallet and operator guide](../docs/PUBLIC_SUBMIT_WALLET_INTEGRATION.md)
+and [v0.11.3 candidate checklist](../docs/releases/v0.11.3.md).
 
 ## Behavior
 
@@ -56,4 +63,4 @@ curl -s -H "Content-Type: application/json" \
   http://127.0.0.1:9944
 ```
 
-These should show a live chain and advancing headers. Wallets should use `hegemon_submitAction` rather than any generic author-submission RPC. `hegemon_submitShieldedTransfer` remains only as a deprecated adapter for older callers.
+These should show a live chain and advancing headers. Wallets should use `hegemon_submitAction` rather than any generic author-submission RPC.

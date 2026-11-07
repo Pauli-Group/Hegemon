@@ -117,6 +117,7 @@ pub(crate) fn effective_rpc_methods_label(raw: &str, rpc_external: bool) -> Resu
 pub(crate) fn rpc_method_policy(raw: &str, rpc_external: bool) -> Result<RpcMethodPolicy> {
     match raw.trim().to_ascii_lowercase().as_str() {
         "safe" => Ok(RpcMethodPolicy::Safe),
+        "public-submit" => Ok(RpcMethodPolicy::PublicSubmit),
         "pool" => {
             if rpc_external {
                 Err(anyhow!("--rpc-methods=pool requires a loopback listener behind an authenticated tunnel"))
@@ -135,7 +136,7 @@ pub(crate) fn rpc_method_policy(raw: &str, rpc_external: bool) -> Result<RpcMeth
         }
         "auto" | "" => Ok(RpcMethodPolicy::Safe),
         other => Err(anyhow!(
-            "invalid --rpc-methods value {other:?}; expected auto, safe, pool, or unsafe"
+            "invalid --rpc-methods value {other:?}; expected auto, safe, public-submit, pool, or unsafe"
         )),
     }
 }
@@ -198,6 +199,9 @@ pub(crate) fn rpc_method_allowed(policy: RpcMethodPolicy, method: &str) -> bool 
     match policy {
         RpcMethodPolicy::Unsafe => true,
         RpcMethodPolicy::Safe => !is_unsafe_rpc_method(method),
+        RpcMethodPolicy::PublicSubmit => {
+            !is_unsafe_rpc_method(method) || method == "hegemon_submitAction"
+        }
         RpcMethodPolicy::Pool => is_pool_rpc_method(method),
     }
 }
@@ -743,7 +747,7 @@ pub(crate) fn rpc_cors_origin(node: &NativeNode) -> Option<HeaderValue> {
     if cors == "*"
         && matches!(
             node.rpc_policy().ok(),
-            Some(RpcMethodPolicy::Unsafe | RpcMethodPolicy::Pool)
+            Some(RpcMethodPolicy::Unsafe | RpcMethodPolicy::Pool | RpcMethodPolicy::PublicSubmit)
         )
     {
         warn!("ignoring wildcard RPC CORS while privileged RPC methods are enabled");
@@ -763,81 +767,140 @@ pub(crate) fn rpc_error(id: Value, code: i64, message: impl Into<String>) -> Val
     })
 }
 
+const NATIVE_REGISTERED_RPC_METHODS: &[&str] = &[
+    "archive_getContract",
+    "archive_getProvider",
+    "archive_listContracts",
+    "archive_listProviders",
+    "archive_providerCount",
+    "author_pendingExtrinsics",
+    "block_getCommitmentProof",
+    "chain_getBlock",
+    "chain_getBlockActionsChunk",
+    "hegemon_pendingActionChunk",
+    "chain_getBlockHash",
+    "chain_getHeader",
+    "chain_subscribeFinalizedHeads",
+    "chain_subscribeNewHeads",
+    "da_getChunk",
+    "da_getParams",
+    "da_submitCiphertexts",
+    "da_submitProofs",
+    "da_submitWitnesses",
+    "hegemon_blockReward",
+    "hegemon_blockTimestamps",
+    "hegemon_compactJob",
+    "hegemon_consensusStatus",
+    "hegemon_exportBridgeWitness",
+    "hegemon_generateProof",
+    "hegemon_isValidAnchor",
+    "hegemon_latestBlock",
+    "hegemon_minedBlockTimestamps",
+    "hegemon_miningStatus",
+    "hegemon_nodeConfig",
+    "hegemon_peerGraph",
+    "hegemon_peerList",
+    "hegemon_poolStatus",
+    "hegemon_poolWork",
+    "hegemon_privateSpendParameters",
+    "hegemon_assetParameters",
+    "hegemon_assetRegistry",
+    "hegemon_assetSnapshot",
+    "hegemon_assetRecoverySnapshot",
+    "hegemon_startMining",
+    "hegemon_stopMining",
+    "hegemon_storageFootprint",
+    "hegemon_submitAction",
+    "hegemon_submitCompactSolution",
+    "hegemon_submitPoolShare",
+    "hegemon_submitTransaction",
+    "hegemon_telemetry",
+    "hegemon_walletCiphertexts",
+    "hegemon_walletCommitments",
+    "hegemon_walletNotes",
+    "hegemon_walletNullifiers",
+    "rpc_methods",
+    "state_getRuntimeVersion",
+    "state_getStorage",
+    "state_getStorageAt",
+    "state_getStorageHash",
+    "state_getStorageHashAt",
+    "state_getStorageSize",
+    "state_getStorageSizeAt",
+    "system_chain",
+    "system_health",
+    "system_name",
+    "system_peers",
+    "system_version",
+];
+
+/// Registered handler names. Per-node capability checks are separate and shared
+/// by discovery and dispatch; an unknown name is never an allowed route.
+pub(crate) fn rpc_method_registered(method: &str) -> bool {
+    NATIVE_REGISTERED_RPC_METHODS.contains(&method)
+        || (cfg!(feature = "development-candidate")
+            && method == "hegemon_developmentPendingActionChunk")
+}
+
+pub(crate) fn rpc_method_dispatch_allowed(
+    policy: RpcMethodPolicy,
+    method: &str,
+    available: bool,
+) -> bool {
+    rpc_method_registered(method) && rpc_method_allowed(policy, method) && available
+}
+
 pub(crate) fn native_rpc_methods(policy: RpcMethodPolicy) -> Vec<&'static str> {
-    let mut methods = vec![
-        "archive_getContract",
-        "archive_getProvider",
-        "archive_listContracts",
-        "archive_listProviders",
-        "archive_providerCount",
-        "author_pendingExtrinsics",
-        "block_getCommitmentProof",
-        "chain_getBlock",
-        "chain_getBlockHash",
-        "chain_getHeader",
-        "chain_subscribeFinalizedHeads",
-        "chain_subscribeNewHeads",
-        "da_getChunk",
-        "da_getParams",
-        "da_submitCiphertexts",
-        "da_submitProofs",
-        "da_submitWitnesses",
-        "hegemon_blockReward",
-        "hegemon_blockTimestamps",
-        "hegemon_compactJob",
-        "hegemon_consensusStatus",
-        "hegemon_exportBridgeWitness",
-        "hegemon_generateProof",
-        "hegemon_isValidAnchor",
-        "hegemon_latestBlock",
-        "hegemon_minedBlockTimestamps",
-        "hegemon_miningStatus",
-        "hegemon_nodeConfig",
-        "hegemon_peerGraph",
-        "hegemon_peerList",
-        "hegemon_poolStatus",
-        "hegemon_poolWork",
-        "hegemon_privateSpendParameters",
-        "hegemon_assetParameters",
-        "hegemon_assetRegistry",
-        "hegemon_assetSnapshot",
-        "hegemon_assetRecoverySnapshot",
-        "hegemon_startMining",
-        "hegemon_stopMining",
-        "hegemon_storageFootprint",
-        "hegemon_submitAction",
-        "hegemon_submitCompactSolution",
-        "hegemon_submitPoolShare",
-        "hegemon_submitTransaction",
-        "hegemon_telemetry",
-        "hegemon_walletCiphertexts",
-        "hegemon_walletCommitments",
-        "hegemon_walletNotes",
-        "hegemon_walletNullifiers",
-        "rpc_methods",
-        "state_getRuntimeVersion",
-        "state_getStorage",
-        "state_getStorageAt",
-        "state_getStorageHash",
-        "state_getStorageHashAt",
-        "state_getStorageSize",
-        "state_getStorageSizeAt",
-        "system_chain",
-        "system_health",
-        "system_name",
-        "system_peers",
-        "system_version",
-    ];
-    if policy != RpcMethodPolicy::Unsafe {
-        let mut safe_methods = Vec::with_capacity(methods.len());
-        for method in methods {
-            if rpc_method_allowed(policy, method) {
-                safe_methods.push(method);
-            }
+    let mut methods = Vec::new();
+    for &method in NATIVE_REGISTERED_RPC_METHODS {
+        if rpc_method_dispatch_allowed(policy, method, true) {
+            methods.push(method);
         }
-        methods = safe_methods;
     }
+    #[cfg(feature = "development-candidate")]
+    if rpc_method_allowed(policy, "hegemon_developmentPendingActionChunk") {
+        methods.push("hegemon_developmentPendingActionChunk");
+    }
+    methods.sort_unstable();
     methods
+}
+
+/// Public browser access requires one explicit origin; absence remains closed.
+/// CORS controls browser response access, not authentication or RPC authority.
+pub(crate) fn validate_public_rpc_cors(policy: &str, cors: Option<&str>) -> Result<()> {
+    if policy != "public-submit" {
+        return Ok(());
+    }
+    let Some(origin) = cors else {
+        return Ok(());
+    };
+    let parsed = url::Url::parse(origin)
+        .map_err(|_| anyhow!("public-submit --rpc-cors requires one explicit browser origin"))?;
+    let canonical = if matches!(parsed.scheme(), "http" | "https") {
+        parsed.origin().ascii_serialization()
+    } else {
+        format!(
+            "{}://{}",
+            parsed.scheme(),
+            parsed.host_str().unwrap_or("").to_ascii_lowercase()
+        )
+    };
+    if origin != canonical
+        || !matches!(
+            parsed.scheme(),
+            "http" | "https" | "chrome-extension" | "moz-extension"
+        )
+        || parsed.host_str().is_none()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || !matches!(parsed.path(), "" | "/")
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+        || HeaderValue::from_str(origin).is_err()
+    {
+        return Err(anyhow!("public-submit --rpc-cors requires one explicit browser origin without path, credentials, query, or fragment"));
+    }
+    Ok(())
 }
 
 pub(crate) fn system_peers_snapshot(node: &NativeNode) -> Value {

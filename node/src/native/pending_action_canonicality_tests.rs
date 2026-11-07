@@ -19,6 +19,7 @@ fn canonicality_test_config(
         rpc_methods: "unsafe".to_string(),
         rpc_external: false,
         rpc_cors: None,
+        public_rpc_limits: Default::default(),
         seeds: Vec::new(),
         max_peers: 0,
         mine: false,

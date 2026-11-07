@@ -11,6 +11,7 @@ import platform
 import re
 import stat
 import sys
+from urllib.parse import urlsplit
 
 SEEDS = ("hegemon.pauli.group:30333", "devnet.hegemonprotocol.com:30333")
 NETWORK_SHA256 = "386f21b8d9b474fce096c0691ec7d625f292e9aadf0cd5f06fb4088442ec6754"
@@ -129,7 +130,7 @@ def verify_bundle(root: Path, *, check_host: bool = True):
         fail("release record is not ready for public v0.11 joining")
     software_release = bundle.get("software_release", "v0.11")
     software_version = bundle.get("software_version", "0.11.0")
-    if {"v0.11": "0.11.0", "v0.11.1": "0.11.1", "v0.11.2": "0.11.2"}.get(software_release) != software_version or release.get("software_release", "v0.11") != software_release or release.get("software_version", "0.11.0") != software_version:
+    if {"v0.11": "0.11.0", "v0.11.1": "0.11.1", "v0.11.2": "0.11.2", "v0.11.3": "0.11.3"}.get(software_release) != software_version or release.get("software_release", "v0.11") != software_release or release.get("software_version", "0.11.0") != software_version:
         fail("bundle and release software identities disagree")
     if release.get("network_manifest_sha256") != NETWORK_SHA256 or digest_file(root, manifest_name) != NETWORK_SHA256 or release.get("seeds") != list(SEEDS):
         fail("frozen network identity/approved seeds mismatch")
@@ -152,13 +153,29 @@ def port_number(value):
     return number
 
 
+def browser_origin(value):
+    parsed = urlsplit(value)
+    if (not value or value.strip() != value or any(ord(c) <= 32 or ord(c) == 127 or c in "*," for c in value)
+            or parsed.scheme not in ("http", "https", "chrome-extension", "moz-extension")
+            or not parsed.hostname or parsed.username is not None or parsed.password is not None
+            or parsed.path or parsed.query or parsed.fragment):
+        fail("public-submit CORS requires one exact browser Origin without wildcard, path, credentials, query or fragment")
+    # Accessing .port rejects malformed ports before printing a launch command.
+    if parsed.port is not None and not 1 <= parsed.port <= 65535:
+        fail("public-submit CORS origin has an invalid port")
+    return value
+
+
 def arguments(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mine", action="store_true", help="explicitly enable mining; requires a full public reward address")
     parser.add_argument("--miner-address", help="public recipient only; never a key or seed")
     parser.add_argument("--wallet-rpc", action="store_true", help="enable submission RPC on loopback only for your local native wallet")
+    parser.add_argument("--public-submit-rpc", action="store_true", help="opt in to bounded public PrivateSpend submission (v0.11.3 only); loopback unless --rpc-external is explicit")
+    parser.add_argument("--rpc-external", action="store_true", help="bind public-submit RPC on all interfaces; requires --public-submit-rpc")
+    parser.add_argument("--rpc-cors", help="one exact browser Origin for public-submit; omitted means closed browser access; no wildcard")
     parser.add_argument("--data-dir", help="deliberately selected v0.11 node database; never an old-chain directory")
-    parser.add_argument("--rpc-port", type=port_number, default=9944, help="loopback RPC port, 1..65535 (default: 9944)")
+    parser.add_argument("--rpc-port", type=port_number, default=9944, help="RPC port, 1..65535 (default: 9944)")
     parser.add_argument("--p2p-port", type=port_number, default=30333, help="peer listener port, 1..65535 (default: 30333)")
     parser.add_argument("--check-only", action="store_true", help="verify bundle and print public launch arguments without starting a node")
     return parser.parse_args(argv)
@@ -166,6 +183,18 @@ def arguments(argv=None):
 
 def launch_command(root: Path, args, environment):
     binary = verify_bundle(root)
+    if args.wallet_rpc and args.public_submit_rpc:
+        fail("--wallet-rpc and --public-submit-rpc are incompatible")
+    if args.rpc_external and not args.public_submit_rpc:
+        fail("--rpc-external requires --public-submit-rpc; local wallet RPC stays loopback")
+    if args.rpc_cors is not None and not args.public_submit_rpc:
+        fail("--rpc-cors requires --public-submit-rpc")
+    if args.public_submit_rpc:
+        bundle = read_json(root, "bundle.json")
+        if (bundle.get("software_release"), bundle.get("software_version")) != ("v0.11.3", "0.11.3"):
+            fail("public-submit requires an exact v0.11.3 bundle; older binaries cannot be relabeled")
+        if args.rpc_cors is not None:
+            browser_origin(args.rpc_cors)
     env = dict(environment)
     seeds = ",".join(SEEDS)
     if "HEGEMON_SEEDS" in env and env["HEGEMON_SEEDS"] != seeds:
@@ -189,7 +218,11 @@ def launch_command(root: Path, args, environment):
         env["HEGEMON_MINER_ADDRESS"] = recipient
     else:
         env.pop("HEGEMON_MINER_ADDRESS", None)
-    command = [str(binary), "--network", "pre-mainnet", "--network-manifest", str(root / "config/testnet/0.11/network-manifest.json"), "--base-path", str(data_dir), "--rpc-port", str(args.rpc_port), "--port", str(args.p2p_port), "--rpc-methods", "unsafe" if args.wallet_rpc else "safe", "--name", "Hegemon-v0.11"]
+    command = [str(binary), "--network", "pre-mainnet", "--network-manifest", str(root / "config/testnet/0.11/network-manifest.json"), "--base-path", str(data_dir), "--rpc-port", str(args.rpc_port), "--port", str(args.p2p_port), "--rpc-methods", "public-submit" if args.public_submit_rpc else "unsafe" if args.wallet_rpc else "safe", "--name", "Hegemon-v0.11"]
+    if args.rpc_external:
+        command.append("--rpc-external")
+    if args.rpc_cors is not None:
+        command.extend(["--rpc-cors", args.rpc_cors])
     return command, env
 
 
@@ -199,7 +232,7 @@ def main(argv=None):
         root = Path(__file__).absolute().parent
         command, env = launch_command(root, args, os.environ)
         if args.check_only:
-            print(json.dumps({"command": command, "environment": {key: env[key] for key in ("HEGEMON_SEEDS", "HEGEMON_MINE", "HEGEMON_BOOTSTRAP_AUTHORING")}, "wallet_rpc": args.wallet_rpc}, indent=2))
+            print(json.dumps({"command": command, "environment": {key: env[key] for key in ("HEGEMON_SEEDS", "HEGEMON_MINE", "HEGEMON_BOOTSTRAP_AUTHORING")}, "wallet_rpc": args.wallet_rpc, "public_submit_rpc": args.public_submit_rpc}, indent=2))
             return 0
         os.execve(command[0], command, env)
     except (ValueError, OSError, UnicodeError, KeyError, TypeError) as error:

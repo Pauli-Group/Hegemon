@@ -1,0 +1,25 @@
+{
+  "schema": "hegemon.v0113.release-plan.v1",
+  "software_release": "v0.11.3",
+  "software_version": "0.11.3",
+  "network_release": "v0.11",
+  "status": "implementation_candidate",
+  "baseline_tag": "v0.11.2",
+  "baseline_commit": "15c42e687b24d9cb35bb6dbde6061459d6f1242a",
+  "reviewed_maintenance_commit": "af9a05cac18b663832d6bbacce4b634c81937779",
+  "candidate_source_commit": null,
+  "candidate_artifact_manifest_sha256": null,
+  "production_authority": false,
+  "publication_authorized": false,
+  "deployment_authorized": false,
+  "preparation_tool": "scripts/prepare_v0113_candidate.py",
+  "release_notes": "docs/releases/v0.11.3.md",
+  "internal_package_versions": {
+    "hegemon-node": "0.10.0",
+    "wallet": "0.10.0",
+    "walletd": "0.10.0",
+    "protocol-versioning": "0.1.0"
+  },
+  "frozen_cargo_lock_sha256": "1c243bf3858f4ee22fa4441c7a2ee6d49b16d264147b0f3a2de845e760821719",
+  "package_version_reason": "Cargo.lock is an exact PrivateSpend relation-digest input; change only the product software release label."
+}

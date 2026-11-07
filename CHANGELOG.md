@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.11.3 - candidate (unpublished)
+
+- Add opt-in `public-submit` RPC policy for existing PrivateSpend inline submissions, with finite per-client admission, global request/submission limits and a separate public verifier lane.
+- Preserve safe/default, pool and local unsafe policies; keep privileged DA uploads, mining controls and topology unavailable publicly.
+- Add explicit launcher public mode and exact-origin browser configuration while preserving local `--wallet-rpc`.
+- Set the product software release label to 0.11.3 while preserving internal Cargo versions and the exact Cargo.lock, which is bound into the PrivateSpend relation digest. Network, consensus, transaction/proof and cryptographic versions stay unchanged.
+- Prepare source-bound local candidate inventory and [qualification/rollout checklist](docs/releases/v0.11.3.md); no publication or deployment authority is inferred.
+
 ## v0.10.0 - 2026-03-27
 - Version bump: `hegemon-node`, `wallet`, and `walletd` are now `0.10.0`.
 - Interface package bump: `hegemon-app` is now `0.10.0`.

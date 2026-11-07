@@ -390,12 +390,15 @@ pub struct NativeCli {
     /// Expose JSON-RPC on all interfaces.
     #[arg(long)]
     pub rpc_external: bool,
-    /// RPC method policy: auto, safe, pool (loopback only), or unsafe.
+    /// RPC policy: auto (safe), safe, public-submit, pool (loopback only), or unsafe (loopback only).
     #[arg(long, default_value = "auto")]
     pub rpc_methods: String,
     /// CORS policy. Default is no browser cross-origin access; set explicitly for trusted UIs.
     #[arg(long)]
     pub rpc_cors: Option<String>,
+    /// Public listener admission budgets; apply only with --rpc-methods=public-submit.
+    #[command(flatten)]
+    pub public_rpc_limits: PublicRpcLimits,
     /// P2P listen port.
     #[arg(long, default_value_t = 30333)]
     pub port: u16,
@@ -420,6 +423,7 @@ pub struct NativeConfig {
     pub rpc_methods: String,
     pub rpc_external: bool,
     pub rpc_cors: Option<String>,
+    pub public_rpc_limits: PublicRpcLimits,
     pub seeds: Vec<String>,
     pub max_peers: u32,
     pub mine: bool,
@@ -432,6 +436,7 @@ pub struct NativeConfig {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RpcMethodPolicy {
     Safe,
+    PublicSubmit,
     Pool,
     Unsafe,
 }
@@ -440,6 +445,7 @@ impl RpcMethodPolicy {
     fn label(self) -> &'static str {
         match self {
             Self::Safe => "safe",
+            Self::PublicSubmit => "public-submit",
             Self::Pool => "pool",
             Self::Unsafe => "unsafe",
         }
@@ -493,6 +499,8 @@ impl NativeConfig {
         let db_path = base_path.join("native-chain.sled");
         let rpc_methods =
             effective_rpc_methods_label(&cli.rpc_methods, cli.rpc_external)?.to_string();
+        cli.public_rpc_limits.validate()?;
+        validate_public_rpc_cors(&rpc_methods, cli.rpc_cors.as_deref())?;
         let rpc_ip = if cli.rpc_external {
             IpAddr::from(Ipv4Addr::UNSPECIFIED)
         } else {
@@ -555,6 +563,7 @@ impl NativeConfig {
             rpc_methods,
             rpc_external: cli.rpc_external,
             rpc_cors: cli.rpc_cors,
+            public_rpc_limits: cli.public_rpc_limits,
             seeds,
             max_peers,
             mine,
@@ -4572,6 +4581,7 @@ type NativeSyncTestObserver = Arc<dyn Fn(&NativeNode) + Send + Sync>;
 
 pub struct NativeNode {
     config: NativeConfig,
+    public_rpc_admission: PublicRpcAdmission,
     db: sled::Db,
     meta_tree: sled::Tree,
     height_tree: sled::Tree,
@@ -4741,8 +4751,19 @@ pub(crate) mod poseidon2_v8_verifier;
 mod rp06_verifier;
 pub use network_profile::{NativeNetworkIdentity, NativeNetworkManifest, NativeNetworkProfile};
 mod pow;
+mod public_admission;
 #[cfg(test)]
 mod reorg_wal;
+pub use public_admission::PublicRpcLimits;
+pub(crate) use public_admission::{
+    public_submit_action_route_allowed, PublicRpcAdmission, PublicSubmissionPermit,
+};
+#[cfg(test)]
+mod public_rpc_formal_tests;
+#[cfg(test)]
+mod public_rpc_http_tests;
+#[cfg(test)]
+mod public_submit_fixture_tests;
 mod rpc;
 mod service;
 pub(crate) mod smallwood_v8_lifetime;

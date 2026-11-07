@@ -2405,6 +2405,8 @@ struct LeanRpcAdmissionVectorFile {
     policy_cases: Vec<LeanRpcPolicyCase>,
     method_gate_cases: Vec<LeanRpcMethodGateCase>,
     method_list_cases: Vec<LeanRpcMethodListCase>,
+    resource_cases: Vec<LeanRpcResourceCase>,
+    ownership_cases: Vec<super::public_rpc_formal_tests::LeanRpcOwnershipCase>,
     timestamp_range_cases: Vec<LeanRpcTimestampRangeCase>,
     byte_parse_cases: Vec<LeanRpcByteParseCase>,
     batch_cases: Vec<LeanRpcBatchCase>,
@@ -2427,6 +2429,7 @@ struct LeanRpcPolicyCase {
 struct LeanRpcMethodGateCase {
     name: String,
     policy: String,
+    feature_enabled: bool,
     method: String,
     is_unsafe_method: bool,
     expected_valid: bool,
@@ -2438,7 +2441,22 @@ struct LeanRpcMethodGateCase {
 struct LeanRpcMethodListCase {
     name: String,
     policy: String,
-    expected_unsafe_methods_visible: bool,
+    method: String,
+    feature_enabled: bool,
+    available: bool,
+    expected_registered: bool,
+    expected_visible: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LeanRpcResourceCase {
+    kind: String,
+    first: usize,
+    second: usize,
+    flag: bool,
+    expected_count: Option<usize>,
+    expected_bool: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -3063,6 +3081,7 @@ fn submit_action_returns_exact_rejection_response() {
         rpc_methods: "unsafe".to_string(),
         rpc_external: false,
         rpc_cors: None,
+        public_rpc_limits: Default::default(),
         seeds: Vec::new(),
         max_peers: 0,
         mine: false,
@@ -3099,6 +3118,7 @@ fn submit_action_rejects_invalid_shielded_transfer_before_persistence() {
         rpc_methods: "unsafe".to_string(),
         rpc_external: false,
         rpc_cors: None,
+        public_rpc_limits: Default::default(),
         seeds: Vec::new(),
         max_peers: 0,
         mine: false,
@@ -5017,6 +5037,7 @@ fn side_branch_with_more_work_reorganizes_canonical_chain() {
         rpc_methods: "unsafe".to_string(),
         rpc_external: false,
         rpc_cors: None,
+        public_rpc_limits: Default::default(),
         seeds: Vec::new(),
         max_peers: 0,
         mine: false,
@@ -9008,6 +9029,7 @@ fn manual_coinbase_action_submission_is_rejected() {
         rpc_methods: "unsafe".to_string(),
         rpc_external: false,
         rpc_cors: None,
+        public_rpc_limits: Default::default(),
         seeds: Vec::new(),
         max_peers: 0,
         mine: false,
@@ -24772,7 +24794,7 @@ async fn lean_generated_rpc_admission_vectors_match_production() {
     let raw = std::fs::read_to_string(&path).expect("read generated Lean RPC admission vectors");
     let vectors: LeanRpcAdmissionVectorFile =
         serde_json::from_str(&raw).expect("parse generated Lean RPC admission vectors");
-    assert_eq!(vectors.schema_version, 1);
+    assert_eq!(vectors.schema_version, 2);
     assert!(
         !vectors.policy_cases.is_empty(),
         "Lean RPC policy cases must not be empty"
@@ -24798,6 +24820,21 @@ async fn lean_generated_rpc_admission_vectors_match_production() {
         "Lean RPC batch cases must not be empty"
     );
 
+    assert!(
+        !vectors.resource_cases.is_empty(),
+        "Lean public resource cases must not be empty"
+    );
+    for case in &vectors.resource_cases {
+        verify_lean_rpc_resource_case(case);
+    }
+    assert_eq!(vectors.policy_cases.len(), 14);
+    assert_eq!(vectors.method_gate_cases.len(), 168);
+    assert_eq!(vectors.method_list_cases.len(), 336);
+    assert_eq!(vectors.resource_cases.len(), 183);
+    assert_eq!(vectors.ownership_cases.len(), 4);
+    for case in &vectors.ownership_cases {
+        super::public_rpc_formal_tests::verify_lean_rpc_ownership_case(case).await;
+    }
     let mut names = BTreeSet::new();
     for case in &vectors.policy_cases {
         assert!(names.insert(case.name.clone()));
@@ -24826,101 +24863,133 @@ async fn lean_generated_rpc_admission_vectors_match_production() {
 }
 
 fn verify_lean_rpc_policy_case(case: &LeanRpcPolicyCase) {
-    assert!(
-        matches!(
-            case.raw_tag.as_str(),
-            "safe" | "unsafe" | "auto" | "empty" | "invalid"
-        ),
-        "{} unknown Lean RPC raw policy tag {}",
-        case.name,
-        case.raw_tag
-    );
+    assert!(matches!(
+        case.raw_tag.as_str(),
+        "safe" | "pool" | "unsafe" | "public-submit" | "auto" | "empty" | "invalid"
+    ));
     let actual = rpc_method_policy(&case.raw, case.rpc_external);
     let actual_policy = actual.as_ref().ok().map(|policy| policy.label().to_owned());
     let actual_rejection = actual.as_ref().err().map(|err| {
-        if err
-            .to_string()
-            .contains("cannot be combined with --rpc-external")
-        {
-            "external_unsafe_policy".to_string()
+        let message = err.to_string();
+        if message.contains("--rpc-methods=pool requires a loopback listener") {
+            "external_pool_policy"
+        } else if message.contains("cannot be combined with --rpc-external") {
+            "external_unsafe_policy"
         } else {
-            "invalid_policy".to_string()
+            "invalid_policy"
         }
+        .to_owned()
     });
     assert_eq!(
         actual.is_ok(),
         case.expected_valid,
-        "{} RPC policy validity drifted from Lean spec",
+        "{} policy validity",
         case.name
     );
     assert_eq!(
         actual_policy, case.expected_policy,
-        "{} RPC policy resolution drifted from Lean spec",
+        "{} policy resolution",
         case.name
     );
     assert_eq!(
         actual_rejection, case.expected_rejection,
-        "{} RPC policy rejection drifted from Lean spec",
+        "{} policy rejection",
         case.name
     );
 }
 
 fn verify_lean_rpc_method_gate_case(case: &LeanRpcMethodGateCase) {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let node =
-        NativeNode::open(test_config(tmp.path(), 0x207f_ffff, &case.policy, false)).expect("node");
-    let params = rpc_test_params_for_method(&case.method);
-    let actual = dispatch_rpc_method(&node, &case.method, params);
-    let actual_rejection = actual
-        .as_ref()
-        .err()
-        .and_then(|err| rpc_method_gate_rejection_label(&err.to_string()));
+    // Both feature configurations are emitted by Lean. Each actual binary checks
+    // its compiled configuration; release qualification also runs the feature build.
+    if case.feature_enabled != cfg!(feature = "development-candidate") {
+        return;
+    }
+    let policy = rpc_policy_from_label(&case.policy);
+    let allowed = rpc_method_allowed(policy, &case.method);
+    let rejection = (!allowed).then(|| "unsafe_method_disabled".to_owned());
     assert_eq!(
         is_unsafe_rpc_method(&case.method),
         case.is_unsafe_method,
-        "{} RPC unsafe-method classification drifted from Lean spec",
+        "{} unsafe classifier",
         case.name
     );
     assert_eq!(
-        actual.is_ok(),
-        case.expected_valid,
-        "{} RPC method gate validity drifted from Lean spec",
+        allowed, case.expected_valid,
+        "{} policy permission",
         case.name
     );
     assert_eq!(
-        actual_rejection, case.expected_rejection,
-        "{} RPC method gate rejection drifted from Lean spec",
+        rejection, case.expected_rejection,
+        "{} policy rejection",
         case.name
     );
 }
 
 fn verify_lean_rpc_method_list_case(case: &LeanRpcMethodListCase) {
+    if case.feature_enabled != cfg!(feature = "development-candidate") {
+        return;
+    }
     let policy = rpc_policy_from_label(&case.policy);
-    let methods = native_rpc_methods(policy);
-    let unsafe_methods = [
-        "da_submitCiphertexts",
-        "da_submitProofs",
-        "hegemon_exportBridgeWitness",
-        "hegemon_peerGraph",
-        "hegemon_peerList",
-        "hegemon_startMining",
-        "hegemon_stopMining",
-        "hegemon_submitAction",
-        "system_peers",
-    ];
-    for method in unsafe_methods {
+    assert_eq!(
+        rpc_method_registered(&case.method),
+        case.expected_registered,
+        "{} registration",
+        case.name
+    );
+    assert_eq!(
+        rpc_method_dispatch_allowed(policy, &case.method, case.available),
+        case.expected_visible,
+        "{} registered available dispatch",
+        case.name
+    );
+    // The static catalog uses available=true; actual per-node discovery is
+    // separately checked against rpc_method_available in public_rpc_formal_tests.
+    if case.available {
         assert_eq!(
-            methods.contains(&method),
-            case.expected_unsafe_methods_visible,
-            "{} RPC method-list unsafe visibility drifted for {method}",
+            native_rpc_methods(policy).contains(&case.method.as_str()),
+            case.expected_visible,
+            "{} static catalog",
             case.name
         );
     }
-    assert!(
-        methods.contains(&"system_health"),
-        "{} RPC method-list must keep safe health method visible",
-        case.name
-    );
+}
+
+fn verify_lean_rpc_resource_case(case: &LeanRpcResourceCase) {
+    use super::public_admission::{
+        public_capacity_release, public_capacity_reserve, public_client_charge,
+        public_client_table_insert_allowed, public_submit_action_route_allowed,
+    };
+    let actual = match case.kind.as_str() {
+        "reserve" => public_capacity_reserve(case.first, case.second),
+        "release" => public_capacity_release(case.first),
+        "charge" => public_client_charge(
+            u32::try_from(case.first).unwrap(),
+            u32::try_from(case.second).unwrap(),
+            case.flag,
+        )
+        .map(|value| value as usize),
+        "route" => {
+            assert_eq!(
+                public_submit_action_route_allowed(
+                    u16::try_from(case.first).unwrap(),
+                    u16::try_from(case.second).unwrap()
+                ),
+                case.expected_bool,
+                "{case:?}"
+            );
+            None
+        }
+        "table" => {
+            assert_eq!(
+                public_client_table_insert_allowed(case.first, case.second, case.flag),
+                case.expected_bool,
+                "{case:?}"
+            );
+            None
+        }
+        other => panic!("unknown resource vector {other}"),
+    };
+    assert_eq!(actual, case.expected_count, "{case:?}");
 }
 
 fn verify_lean_rpc_timestamp_range_case(case: &LeanRpcTimestampRangeCase) {
@@ -25079,6 +25148,8 @@ async fn verify_lean_rpc_batch_case(case: &LeanRpcBatchCase) {
 fn rpc_policy_from_label(label: &str) -> RpcMethodPolicy {
     match label {
         "safe" => RpcMethodPolicy::Safe,
+        "pool" => RpcMethodPolicy::Pool,
+        "public-submit" => RpcMethodPolicy::PublicSubmit,
         "unsafe" => RpcMethodPolicy::Unsafe,
         other => panic!("unknown RPC method policy label {other}"),
     }
@@ -27444,6 +27515,7 @@ fn live_mining_requires_shared_seeds_or_explicit_bootstrap_authoring() {
         rpc_external: false,
         rpc_methods: "safe".to_string(),
         rpc_cors: None,
+        public_rpc_limits: Default::default(),
         port: 30333,
         listen_addr: Some("127.0.0.1:0".to_string()),
         name: Some("test-live-miner".to_string()),
@@ -38574,6 +38646,7 @@ pub(super) fn test_config(
         rpc_methods: rpc_methods.to_string(),
         rpc_external,
         rpc_cors: None,
+        public_rpc_limits: Default::default(),
         seeds: Vec::new(),
         max_peers: 0,
         mine: false,

@@ -1946,6 +1946,11 @@ fn inspect_native_pow_metadata_bincode_exact(
 
 impl NativeNode {
     pub fn open(config: NativeConfig) -> Result<Arc<Self>> {
+        validate_public_rpc_cors(
+            config.rpc_methods.trim().to_ascii_lowercase().as_str(),
+            config.rpc_cors.as_deref(),
+        )?;
+        let public_rpc_admission = PublicRpcAdmission::new(config.public_rpc_limits.clone())?;
         if config.pow_bits != config.network.pow_bits(config.pow_bits) {
             return Err(anyhow!(
                 "configured pow_bits differ from immutable network manifest"
@@ -2058,6 +2063,7 @@ impl NativeNode {
         let selected_chain_id = config.chain_id();
         let node = Arc::new(Self {
             config,
+            public_rpc_admission,
             db,
             meta_tree,
             height_tree,
@@ -13352,7 +13358,25 @@ impl NativeNode {
     }
 
     pub(crate) fn submit_action(&self, request: Value) -> Value {
-        let action = match self.validate_and_stage_action(request) {
+        self.submit_action_with_admission(request, None)
+    }
+
+    /// The caller owns this node's public reservation for the complete blocking
+    /// invocation. HTTP cancellation must not drop it before this function ends.
+    pub(crate) fn submit_action_public(
+        &self,
+        request: Value,
+        permit: &PublicSubmissionPermit,
+    ) -> Value {
+        self.submit_action_with_admission(request, Some(permit))
+    }
+
+    fn submit_action_with_admission(
+        &self,
+        request: Value,
+        public_permit: Option<&PublicSubmissionPermit>,
+    ) -> Value {
+        let action = match self.validate_and_stage_action_with_admission(request, public_permit) {
             Ok(action) => action,
             Err(err) => {
                 return serde_json::json!({
@@ -13449,7 +13473,54 @@ impl NativeNode {
     }
 
     pub(crate) fn validate_and_stage_action(&self, request: Value) -> Result<PendingAction> {
+        self.validate_and_stage_action_with_admission(request, None)
+    }
+
+    /// Select the actual verifier lane used immediately before proof preflight.
+    /// Public admission is a separate owned reservation and never acquires a
+    /// local, peer or mining slot. This helper also rejects cross-node tokens.
+    pub(crate) fn acquire_pending_verifier_lane(
+        &self,
+        public_permit: Option<&PublicSubmissionPermit>,
+    ) -> Result<
+        Option<(
+            tokio::sync::OwnedSemaphorePermit,
+            tokio::sync::OwnedSemaphorePermit,
+        )>,
+    > {
+        if let Some(permit) = public_permit {
+            if !self.public_rpc_admission.owns_submission(permit) {
+                return Err(anyhow!("public submission reservation belongs to another node"));
+            }
+            return Ok(None);
+        }
+        let local_permit = Arc::clone(&self.local_pending_proof_admission_semaphore)
+            .try_acquire_owned()
+            .map_err(|_| anyhow!("native local pending proof verifier at capacity; retry submission"))?;
+        let permit = Arc::clone(&self.pending_proof_admission_semaphore)
+            .try_acquire_owned()
+            .map_err(|_| anyhow!("native pending proof verifier at capacity; retry submission"))?;
+        Ok(Some((local_permit, permit)))
+    }
+
+    fn validate_and_stage_action_with_admission(
+        &self,
+        request: Value,
+        public_permit: Option<&PublicSubmissionPermit>,
+    ) -> Result<PendingAction> {
+        if public_permit.is_some_and(|permit| !self.public_rpc_admission.owns_submission(permit)) {
+            return Err(anyhow!(
+                "public submission reservation belongs to another node"
+            ));
+        }
         let request = decode_submit_action_rpc_request(request)?;
+        if public_permit.is_some()
+            && !public_submit_action_route_allowed(request.family_id, request.action_id)
+        {
+            return Err(anyhow!(
+                "public submission accepts only the existing inline PrivateSpend route"
+            ));
+        }
         if request.family_id == FAMILY_SHIELDED_POOL {
             match request.action_id {
                 transaction_circuit::asset_spend_v1_admission::ASSET_SPEND_ACTION_ID
@@ -13628,26 +13699,11 @@ impl NativeNode {
                     anyhow!("native pending action proof verification already in flight")
                 })?;
             let admission_guard = self.pending_proof_admission_guard(admission_key);
-            let local_permit = match Arc::clone(&self.local_pending_proof_admission_semaphore)
-                .try_acquire_owned()
-            {
-                Ok(permit) => permit,
-                Err(_) => {
-                    return Err(anyhow!(
-                        "native local pending proof verifier at capacity; retry submission"
-                    ));
-                }
-            };
-            let permit =
-                match Arc::clone(&self.pending_proof_admission_semaphore).try_acquire_owned() {
-                    Ok(permit) => permit,
-                    Err(_) => {
-                        return Err(anyhow!(
-                            "native pending proof verifier at capacity; retry submission"
-                        ));
-                    }
-                };
-            Some((admission_guard, local_permit, permit))
+            // Public work already owns its dedicated, bounded reservation. It
+            // must never borrow the existing peer/local/mining global pool: its
+            // three slots are exactly the three separately protected lanes.
+            let local_permits = self.acquire_pending_verifier_lane(public_permit)?;
+            Some((admission_guard, local_permits))
         } else {
             None
         };

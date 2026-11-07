@@ -6,45 +6,251 @@ pub(crate) async fn rpc_handler(
     State(node): State<Arc<NativeNode>>,
     request: axum::extract::Request,
 ) -> Response {
-    let payload = match rpc_payload(&node, request).await {
-        Ok(payload) => payload,
+    let public = node.rpc_policy().ok() == Some(RpcMethodPolicy::PublicSubmit);
+    // Socket identity is supplied by axum's ConnectInfo. Forwarded and
+    // X-Forwarded-For are deliberately ignored, including on loopback.
+    let peer = request
+        .extensions()
+        .get::<axum::extract::ConnectInfo<SocketAddr>>()
+        .map(|peer| peer.0.ip());
+    let request_permit = match admit_public_rpc_request(&node, peer) {
+        Ok(permit) => permit,
         Err(response) => return response,
     };
-    let dispatch_node = Arc::clone(&node);
-    let response = match tokio::task::spawn_blocking(move || match payload {
-        Value::Array(requests) => {
-            if requests.is_empty() {
-                rpc_error(Value::Null, -32600, "empty JSON-RPC batch")
-            } else if requests.len() > MAX_NATIVE_RPC_BATCH_REQUESTS {
-                rpc_error(
-                    Value::Null,
-                    -32600,
-                    format!(
-                        "JSON-RPC batch too large: {} > {}",
-                        requests.len(),
-                        MAX_NATIVE_RPC_BATCH_REQUESTS
-                    ),
+    // This bounds only body collection, never the duration of a running verifier.
+    let payload_result = if public {
+        match tokio::time::timeout(Duration::from_secs(10), rpc_payload(&node, request)).await {
+            Ok(result) => result,
+            Err(_) => {
+                return json_response(
+                    &node,
+                    StatusCode::REQUEST_TIMEOUT,
+                    rpc_error(Value::Null, -32056, "public RPC body timeout"),
                 )
-            } else {
-                let responses = requests
-                    .into_iter()
-                    .map(|request| dispatch_rpc_request(&dispatch_node, request))
-                    .collect::<Vec<_>>();
-                Value::Array(responses)
             }
         }
-        request => dispatch_rpc_request(&dispatch_node, request),
+    } else {
+        rpc_payload(&node, request).await
+    };
+    let payload = match payload_result {
+        Ok(payload) => payload,
+        Err(response) => return with_cors(&node, response),
+    };
+    let dispatch_node = Arc::clone(&node);
+    let (response, request_permit) = match tokio::task::spawn_blocking(move || {
+        // Ownership follows the worker, not the HTTP future. Disconnecting or
+        // cancelling the response cannot release capacity while this work runs.
+        let response = match payload {
+            Value::Array(requests) => {
+                let batch_limit = if public {
+                    8
+                } else {
+                    MAX_NATIVE_RPC_BATCH_REQUESTS
+                };
+                if requests.is_empty() {
+                    rpc_error(Value::Null, -32600, "empty JSON-RPC batch")
+                } else if requests.len() > batch_limit {
+                    rpc_error(
+                        Value::Null,
+                        -32600,
+                        format!(
+                            "JSON-RPC batch too large: {} > {}",
+                            requests.len(),
+                            batch_limit
+                        ),
+                    )
+                } else {
+                    let mut bytes = 0usize;
+                    let responses = requests
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, request)| {
+                            let response = dispatch_transport_rpc_request(
+                                &dispatch_node,
+                                request,
+                                peer,
+                                index != 0,
+                            );
+                            bounded_public_rpc_response(response, public, &mut bytes)
+                        })
+                        .collect::<Vec<_>>();
+                    Value::Array(responses)
+                }
+            }
+            request => {
+                let response = dispatch_transport_rpc_request(&dispatch_node, request, peer, false);
+                bounded_public_rpc_response(response, public, &mut 0)
+            }
+        };
+        (response, request_permit)
     })
     .await
     {
         Ok(response) => response,
-        Err(err) => rpc_error(
-            Value::Null,
-            -32603,
-            format!("native JSON-RPC blocking worker failed: {err}"),
+        Err(err) => (
+            rpc_error(
+                Value::Null,
+                -32603,
+                format!("native JSON-RPC blocking worker failed: {err}"),
+            ),
+            None,
         ),
     };
-    json_response(&node, StatusCode::OK, response)
+    let response = json_response(&node, StatusCode::OK, response);
+    match request_permit {
+        Some(permit) => public_admission::hold_public_response_permit(response, permit),
+        None => response,
+    }
+}
+
+/// Admission is unconditionally called before body collection or worker launch.
+/// Its nonpublic branch retains the existing control-plane behavior.
+fn admit_public_rpc_request(
+    node: &NativeNode,
+    peer: Option<IpAddr>,
+) -> std::result::Result<Option<public_admission::PublicRequestPermit>, Response> {
+    if node.rpc_policy().ok() != Some(RpcMethodPolicy::PublicSubmit) {
+        return Ok(None);
+    }
+    let Some(peer) = peer else {
+        return Err(json_response(
+            node,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            rpc_error(
+                Value::Null,
+                -32603,
+                "public RPC transport identity unavailable",
+            ),
+        ));
+    };
+    let denied = |err: public_admission::PublicAdmissionRejection| {
+        json_response(
+            node,
+            StatusCode::TOO_MANY_REQUESTS,
+            rpc_error(Value::Null, err.code(), err.message()),
+        )
+    };
+    let permit = node.public_rpc_admission.try_request().map_err(denied)?;
+    // Charge the HTTP attempt before parsing, including malformed/oversized or
+    // timed-out bodies. This is also the first batch item's request charge.
+    node.public_rpc_admission
+        .charge_request(peer)
+        .map_err(denied)?;
+    Ok(Some(permit))
+}
+
+/// Bound retained response bytes across a public batch. An overflow describes
+/// response delivery only: a submitted action may already have been accepted.
+fn bounded_public_rpc_response(response: Value, public: bool, bytes: &mut usize) -> Value {
+    if !public {
+        return response;
+    }
+    // Reserve enough space for all eight bounded error envelopes and array
+    // punctuation. Count serialization without allocating another response copy.
+    let limit = MAX_NATIVE_RPC_BODY_BYTES - 4096;
+    struct Counter {
+        bytes: usize,
+        limit: usize,
+    }
+    impl std::io::Write for Counter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.bytes = self.bytes.saturating_add(buf.len());
+            if self.bytes > self.limit {
+                Err(std::io::Error::other("public RPC response capacity"))
+            } else {
+                Ok(buf.len())
+            }
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut counter = Counter {
+        bytes: *bytes,
+        limit,
+    };
+    if serde_json::to_writer(&mut counter, &response).is_err() {
+        // Null avoids echoing an arbitrarily large caller-selected id into the
+        // bounded capacity error. The caller must treat the outcome as unknown.
+        rpc_error(
+            Value::Null,
+            -32055,
+            "public RPC response limit exceeded; execution outcome may be uncertain",
+        )
+    } else {
+        *bytes = counter.bytes;
+        response
+    }
+}
+
+fn dispatch_transport_rpc_request(
+    node: &Arc<NativeNode>,
+    request: Value,
+    peer: Option<IpAddr>,
+    charge_additional_request: bool,
+) -> Value {
+    if node.rpc_policy().ok() != Some(RpcMethodPolicy::PublicSubmit) {
+        return dispatch_rpc_request(node, request);
+    }
+    let id = request.get("id").cloned().unwrap_or(Value::Null);
+    let Some(peer) = peer else {
+        return rpc_error(id, -32603, "public RPC transport identity unavailable");
+    };
+    let submission = request.get("method").and_then(Value::as_str) == Some("hegemon_submitAction");
+    // The HTTP attempt paid for the first item before body parsing. Every
+    // additional item pays here; each submission pays its separate budget even
+    // when general request accounting rejects. Batches cannot bypass accounting.
+    let request_admission = if charge_additional_request {
+        node.public_rpc_admission.charge_request(peer)
+    } else {
+        Ok(())
+    };
+    let submission_admission = if submission {
+        node.public_rpc_admission.charge_submission(peer)
+    } else {
+        Ok(())
+    };
+    if let Err(err) = request_admission {
+        return rpc_error(id, err.code(), err.message());
+    }
+    if let Err(err) = submission_admission {
+        return rpc_error(id, err.code(), err.message());
+    }
+    if !public_rpc_envelope_valid(&request) {
+        return rpc_error(Value::Null, -32600, "invalid public JSON-RPC request");
+    }
+    if !submission {
+        return dispatch_rpc_request(node, request);
+    }
+    if !request.get("params").is_some_and(|params| {
+        params.is_object()
+            || params
+                .as_array()
+                .is_some_and(|args| args.len() == 1 && args[0].is_object())
+    }) {
+        return rpc_error(
+            id,
+            -32602,
+            "hegemon_submitAction requires one action object",
+        );
+    }
+    let permit = match node.public_rpc_admission.try_submit() {
+        Ok(permit) => permit,
+        Err(err) => return rpc_error(id, err.code(), err.message()),
+    };
+    dispatch_rpc_request_admitted(node, request, Some(&permit))
+}
+
+fn public_rpc_envelope_valid(request: &Value) -> bool {
+    request.is_object()
+        && request.get("jsonrpc").and_then(Value::as_str) == Some("2.0")
+        && request.get("method").and_then(Value::as_str).is_some()
+        && request
+            .get("params")
+            .is_none_or(|params| params.is_array() || params.is_object())
+        && request.get("id").is_none_or(|id| {
+            id.is_null() || id.is_number() || id.as_str().is_some_and(|id| id.len() <= 128)
+        })
 }
 
 /// Only a source-authenticated, qualified Development recovery selection may
@@ -53,6 +259,7 @@ pub(crate) async fn rpc_handler(
 /// default 8 MiB body limit for other nodes/requests.
 fn recovery_large_body_authority(node: &NativeNode) -> bool {
     node.config.network.profile() == NativeNetworkProfile::Development
+        && node.rpc_policy().ok() != Some(RpcMethodPolicy::PublicSubmit)
         && node
             .rpc_policy()
             .is_ok_and(|policy| rpc_method_allowed(policy, "hegemon_submitAction"))
@@ -194,6 +401,75 @@ fn recovery_snapshot_params(params: &Value) -> Result<(Option<u32>, Option<u32>)
     Ok((asset_id, position))
 }
 
+pub(crate) async fn root_transport_handler(
+    State(node): State<Arc<NativeNode>>,
+    request: axum::extract::Request,
+) -> Response {
+    if node.rpc_policy().ok() == Some(RpcMethodPolicy::PublicSubmit) {
+        public_get_response(node, request, false).await
+    } else {
+        root_handler(State(node)).await
+    }
+}
+
+pub(crate) async fn health_transport_handler(
+    State(node): State<Arc<NativeNode>>,
+    request: axum::extract::Request,
+) -> Response {
+    if node.rpc_policy().ok() == Some(RpcMethodPolicy::PublicSubmit) {
+        public_get_response(node, request, true).await
+    } else {
+        health_handler(State(node)).await
+    }
+}
+
+async fn public_get_response(
+    node: Arc<NativeNode>,
+    request: axum::extract::Request,
+    health: bool,
+) -> Response {
+    let Some(peer) = request
+        .extensions()
+        .get::<axum::extract::ConnectInfo<SocketAddr>>()
+        .map(|peer| peer.0.ip())
+    else {
+        return json_response(
+            &node,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            rpc_error(
+                Value::Null,
+                -32603,
+                "public RPC transport identity unavailable",
+            ),
+        );
+    };
+    let permit = match admit_public_rpc_request(&node, Some(peer)) {
+        Ok(Some(permit)) => permit,
+        Ok(None) => unreachable!("public GET policy was checked by its transport handler"),
+        Err(response) => return response,
+    };
+    let worker_node = Arc::clone(&node);
+    let result = tokio::task::spawn_blocking(move || {
+        let value = if health {
+            json!({"ok": true, "height": worker_node.best_height(), "syncing": false})
+        } else {
+            json!({"name": "hegemon-node", "version": protocol_versioning::RELEASE_VERSION, "best": worker_node.consensus_status()})
+        };
+        (value, permit)
+    }).await;
+    match result {
+        Ok((value, permit)) => public_admission::hold_public_response_permit(
+            json_response(&node, StatusCode::OK, value),
+            permit,
+        ),
+        Err(_) => json_response(
+            &node,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            rpc_error(Value::Null, -32603, "public RPC read worker failed"),
+        ),
+    }
+}
+
 pub(crate) async fn root_handler(State(node): State<Arc<NativeNode>>) -> Response {
     json_response(
         &node,
@@ -223,6 +499,14 @@ pub(crate) async fn options_handler(State(node): State<Arc<NativeNode>>) -> Resp
 }
 
 pub(crate) fn dispatch_rpc_request(node: &Arc<NativeNode>, request: Value) -> Value {
+    dispatch_rpc_request_admitted(node, request, None)
+}
+
+fn dispatch_rpc_request_admitted(
+    node: &Arc<NativeNode>,
+    request: Value,
+    permit: Option<&PublicSubmissionPermit>,
+) -> Value {
     let id = request.get("id").cloned().unwrap_or(Value::Null);
     let Some(method) = request.get("method").and_then(Value::as_str) else {
         return rpc_error(id, -32600, "invalid JSON-RPC request");
@@ -232,7 +516,7 @@ pub(crate) fn dispatch_rpc_request(node: &Arc<NativeNode>, request: Value) -> Va
         .cloned()
         .unwrap_or(Value::Array(Vec::new()));
 
-    match dispatch_rpc_method(node, method, params) {
+    match dispatch_rpc_method_admitted(node, method, params, permit) {
         Ok(result) => json!({
             "jsonrpc": "2.0",
             "result": result,
@@ -244,8 +528,92 @@ pub(crate) fn dispatch_rpc_request(node: &Arc<NativeNode>, request: Value) -> Va
 
 fn controlled_asset_rpc_route(method: &str) -> Option<bool> {
     match method {
-        "hegemon_assetSnapshot" | "hegemon_assetParameters" | "hegemon_assetRegistry" => Some(false),
+        "hegemon_assetSnapshot" | "hegemon_assetParameters" | "hegemon_assetRegistry" => {
+            Some(false)
+        }
         "hegemon_assetRecoverySnapshot" => Some(true),
+        _ => None,
+    }
+}
+
+/// One capability predicate feeds both discovery and dispatch. Argument
+/// validation and transaction/proof validity remain the individual handler's job.
+fn require_rpc_method_available(node: &NativeNode, method: &str) -> Result<()> {
+    let available = rpc_method_capability_available(node, method);
+    if rpc_method_dispatch_allowed(node.rpc_policy()?, method, available) {
+        Ok(())
+    } else if !rpc_method_registered(method) {
+        Err(anyhow!("method not found: {method}"))
+    } else {
+        // Preserve existing capability refusal diagnostics while discovery uses
+        // the same available/denied decision. No handler parameters are parsed.
+        if let Some(recovery) = controlled_asset_rpc_route(method) {
+            node.require_development_controlled_asset_route(recovery)?;
+        }
+        if method == "hegemon_pendingActionChunk" {
+            pending_action_observation_capability(node)?;
+        }
+        Err(anyhow!(
+            "RPC method {method} is unavailable for this node capability"
+        ))
+    }
+}
+
+fn rpc_method_capability_available(node: &NativeNode, method: &str) -> bool {
+    if compatibility_rpc_refusal(method).is_some() {
+        return false;
+    }
+    if let Some(recovery) = controlled_asset_rpc_route(method) {
+        return node
+            .require_development_controlled_asset_route(recovery)
+            .is_ok();
+    }
+    if method == "hegemon_pendingActionChunk" {
+        return pending_action_observation_capability(node).is_ok();
+    }
+    if method == "hegemon_developmentPendingActionChunk" {
+        return cfg!(feature = "development-candidate")
+            && node.rpc_policy().ok() == Some(RpcMethodPolicy::Unsafe)
+            && node.config.network.profile() == NativeNetworkProfile::Development
+            && node
+                .config
+                .network
+                .development_candidate()
+                .is_some_and(|candidate| candidate.private_spend_only);
+    }
+    true
+}
+
+pub(crate) fn rpc_method_available(node: &NativeNode, method: &str) -> bool {
+    require_rpc_method_available(node, method).is_ok()
+}
+
+pub(crate) fn available_rpc_methods(node: &NativeNode) -> Result<Vec<&'static str>> {
+    let mut methods = Vec::new();
+    for method in native_rpc_methods(node.rpc_policy()?) {
+        if rpc_method_available(node, method) {
+            methods.push(method);
+        }
+    }
+    Ok(methods)
+}
+
+/// Preserve existing refusal payloads without advertising an unavailable
+/// service. These branches perform no verification, upload, or state mutation.
+fn compatibility_rpc_refusal(method: &str) -> Option<Result<Value>> {
+    match method {
+        "chain_subscribeNewHeads" | "chain_subscribeFinalizedHeads" => Some(Err(anyhow!(
+            "subscriptions require the native WebSocket RPC milestone"
+        ))),
+        "da_submitWitnesses" => Some(Err(anyhow!("witness sidecar upload is disabled"))),
+        "hegemon_generateProof" => Some(Ok(json!({
+            "success": false, "proof": null, "public_inputs": null,
+            "error": "native proof generation has not moved into the node yet", "generation_time_ms": 0u64,
+        }))),
+        "hegemon_submitTransaction" => Some(Ok(json!({
+            "success": false, "tx_id": null,
+            "error": "generic transaction submission is disabled; use hegemon_submitAction",
+        }))),
         _ => None,
     }
 }
@@ -254,6 +622,15 @@ pub(crate) fn dispatch_rpc_method(
     node: &Arc<NativeNode>,
     method: &str,
     params: Value,
+) -> Result<Value> {
+    dispatch_rpc_method_admitted(node, method, params, None)
+}
+
+fn dispatch_rpc_method_admitted(
+    node: &Arc<NativeNode>,
+    method: &str,
+    params: Value,
+    permit: Option<&PublicSubmissionPermit>,
 ) -> Result<Value> {
     let policy = node.rpc_policy()?;
     if policy == RpcMethodPolicy::Pool && !node.config.rpc_addr.ip().is_loopback() {
@@ -271,41 +648,14 @@ pub(crate) fn dispatch_rpc_method(
         ));
     }
 
-    if let Some(recovery) = controlled_asset_rpc_route(method) {
-        node.require_development_controlled_asset_route(recovery)?;
+    if let Some(refusal) = compatibility_rpc_refusal(method) {
+        return refusal;
     }
+    require_rpc_method_available(node, method)?;
 
     match method {
         "rpc_methods" => {
-            let mut methods = native_rpc_methods(node.rpc_policy()?);
-            let assets_enabled = node.require_development_controlled_asset_route(false).is_ok();
-            let recovery_enabled = assets_enabled
-                && node.require_development_controlled_asset_route(true).is_ok();
-            methods.retain(|method| match controlled_asset_rpc_route(method) {
-                Some(false) => assets_enabled,
-                Some(true) => recovery_enabled,
-                None => true,
-            });
-            if rpc_method_allowed(policy, "chain_getBlockActionsChunk") {
-                methods.push("chain_getBlockActionsChunk");
-            }
-            if rpc_method_allowed(policy, "hegemon_pendingActionChunk")
-                && pending_action_observation_capability(node).is_ok()
-            {
-                methods.push("hegemon_pendingActionChunk");
-            }
-            #[cfg(feature = "development-candidate")]
-            if node.rpc_policy()? == RpcMethodPolicy::Unsafe
-                && node.config.network.profile() == NativeNetworkProfile::Development
-                && node
-                    .config
-                    .network
-                    .development_candidate()
-                    .is_some_and(|candidate| candidate.private_spend_only)
-            {
-                methods.push("hegemon_developmentPendingActionChunk");
-            }
-            methods.sort_unstable();
+            let methods = available_rpc_methods(node)?;
             Ok(json!({ "methods": methods }))
         }
         "system_health" => {
@@ -439,7 +789,14 @@ pub(crate) fn dispatch_rpc_method(
         "hegemon_peerList" => Ok(hegemon_peer_list_snapshot(node)),
         "hegemon_peerGraph" => Ok(hegemon_peer_graph_snapshot(node)),
         "hegemon_submitAction" => {
-            Ok(node.submit_action(first_param(&params).cloned().unwrap_or(params)))
+            let request = first_param(&params).cloned().unwrap_or(params);
+            if policy == RpcMethodPolicy::PublicSubmit {
+                let permit = permit
+                    .ok_or_else(|| anyhow!("public submission requires transport admission"))?;
+                Ok(node.submit_action_public(request, permit))
+            } else {
+                Ok(node.submit_action(request))
+            }
         }
         "hegemon_isValidAnchor" => node.is_valid_anchor(params),
         "hegemon_walletNotes" => Ok(node.note_status()),
@@ -768,7 +1125,9 @@ fn pending_action_observation_capability(
         .checked_add(1)
         .ok_or_else(|| anyhow!("active height overflow"))?;
     if next_height < capability.activation_height()
-        || capability.deactivation_height_exclusive().is_some_and(|end| next_height >= end)
+        || capability
+            .deactivation_height_exclusive()
+            .is_some_and(|end| next_height >= end)
     {
         return Err(anyhow!(
             "pending action observation is outside its source capability interval"
@@ -1592,6 +1951,7 @@ mod pending_action_observer_tests {
             rpc_methods: "unsafe".into(),
             rpc_external: false,
             rpc_cors: None,
+            public_rpc_limits: PublicRpcLimits::default(),
             seeds: Vec::new(),
             max_peers: 0,
             mine: false,
@@ -1928,6 +2288,7 @@ mod hgn_only_release_boundary_tests {
             rpc_methods: "unsafe".into(),
             rpc_external: false,
             rpc_cors: None,
+            public_rpc_limits: PublicRpcLimits::default(),
             seeds: Vec::new(),
             max_peers: 0,
             mine: false,
@@ -2096,5 +2457,81 @@ mod hgn_only_release_boundary_tests {
             assert!(methods.iter().any(|listed| listed == method));
         }
         assert!(dispatch_rpc_method(&node, "hegemon_assetRecoverySnapshot", json!([1001])).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod public_transport_contract_tests {
+    use super::*;
+
+    #[test]
+    fn public_response_budget_includes_bounded_errors_and_batch_framing() {
+        let mut bytes = 0;
+        let responses = (0..8)
+            .map(|id| {
+                bounded_public_rpc_response(
+                    json!({"jsonrpc":"2.0", "id":id, "result":"x".repeat(1024*1024)}),
+                    true,
+                    &mut bytes,
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(responses.last().unwrap()["error"]["code"], -32055);
+        assert!(responses.last().unwrap()["id"].is_null());
+        assert!(
+            serde_json::to_vec(&Value::Array(responses)).unwrap().len()
+                <= MAX_NATIVE_RPC_BODY_BYTES
+        );
+        let giant_id = json!({"id":"x".repeat(MAX_NATIVE_RPC_BODY_BYTES), "result":true});
+        let overflow = bounded_public_rpc_response(giant_id, true, &mut 0);
+        assert!(overflow["id"].is_null());
+        assert!(serde_json::to_vec(&overflow).unwrap().len() < 512);
+    }
+
+    #[test]
+    fn public_envelope_requires_jsonrpc_and_bounded_scalar_identity() {
+        assert!(public_rpc_envelope_valid(
+            &json!({"jsonrpc":"2.0", "id":"x".repeat(128), "method":"system_health", "params":[]})
+        ));
+        for value in [
+            json!({"id":1,"method":"hegemon_submitAction","params":[{}]}),
+            json!({"jsonrpc":"1.0","id":1,"method":"hegemon_submitAction","params":[{}]}),
+            json!({"jsonrpc":"2.0","id":{},"method":"system_health"}),
+            json!({"jsonrpc":"2.0","id":"x".repeat(129),"method":"system_health"}),
+            json!({"jsonrpc":"2.0","id":1,"method":"system_health","params":false}),
+        ] {
+            assert!(!public_rpc_envelope_valid(&value));
+        }
+    }
+
+    #[test]
+    fn public_cors_requires_canonical_web_or_extension_origin() {
+        for origin in [
+            "https://wallet.example",
+            "http://localhost:3000",
+            "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "moz-extension://01234567-89ab-cdef-0123-456789abcdef",
+        ] {
+            validate_public_rpc_cors("public-submit", Some(origin)).unwrap();
+        }
+        for origin in [
+            "*",
+            "null",
+            "",
+            "https://wallet.example/",
+            "https://wallet.example:443",
+            "https://WALLET.example",
+            "https://wallet.example/path",
+            "https://wallet.example,https://other.example",
+            "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/",
+            "moz-extension://example:123",
+        ] {
+            assert!(
+                validate_public_rpc_cors("public-submit", Some(origin)).is_err(),
+                "{origin}"
+            );
+        }
+        validate_public_rpc_cors("public-submit", None).unwrap();
+        validate_public_rpc_cors("safe", Some("*")).unwrap();
     }
 }

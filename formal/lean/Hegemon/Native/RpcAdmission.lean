@@ -8,14 +8,21 @@ def maxTimestampRows : Nat := 4096
 
 def maxRpcBatchRequests : Nat := 128
 
+/-- Policy permission is distinct from registration and source capability.  In
+particular an unknown string can pass the historical unsafe/safe classifier
+without being registered or callable. -/
 inductive RpcPolicy where
   | safeOnly
+  | poolOnly
   | unsafeAllowed
+  | publicSubmit
 deriving DecidableEq, Repr
 
 inductive RawRpcPolicy where
   | safeToken
+  | poolToken
   | unsafeToken
+  | publicSubmitToken
   | autoToken
   | emptyToken
   | invalidToken
@@ -24,61 +31,60 @@ deriving DecidableEq, Repr
 inductive RpcPolicyReject where
   | invalidPolicy
   | externalUnsafePolicy
+  | externalPoolPolicy
 deriving DecidableEq, Repr
 
-def resolveRpcPolicy
-    (raw : RawRpcPolicy)
-    (rpcExternal : Bool) : Except RpcPolicyReject RpcPolicy :=
+def resolveRpcPolicy (raw : RawRpcPolicy) (rpcExternal : Bool) :
+    Except RpcPolicyReject RpcPolicy :=
   match raw with
-  | RawRpcPolicy.safeToken => Except.ok RpcPolicy.safeOnly
-  | RawRpcPolicy.unsafeToken =>
-      if rpcExternal then
-        Except.error RpcPolicyReject.externalUnsafePolicy
-      else
-        Except.ok RpcPolicy.unsafeAllowed
-  | RawRpcPolicy.autoToken =>
-      Except.ok RpcPolicy.safeOnly
-  | RawRpcPolicy.emptyToken =>
-      Except.ok RpcPolicy.safeOnly
-  | RawRpcPolicy.invalidToken => Except.error RpcPolicyReject.invalidPolicy
+  | .safeToken => .ok .safeOnly
+  | .poolToken => if rpcExternal then .error .externalPoolPolicy else .ok .poolOnly
+  | .unsafeToken => if rpcExternal then .error .externalUnsafePolicy else .ok .unsafeAllowed
+  | .publicSubmitToken => .ok .publicSubmit
+  | .autoToken | .emptyToken => .ok .safeOnly
+  | .invalidToken => .error .invalidPolicy
 
 def rpcPolicyAccepts (raw : RawRpcPolicy) (rpcExternal : Bool) : Bool :=
   match resolveRpcPolicy raw rpcExternal with
-  | Except.ok _ => true
-  | Except.error _ => false
+  | .ok _ => true
+  | .error _ => false
 
 theorem rpc_policy_accepts_valid_tokens
-    {raw : RawRpcPolicy}
-    {rpcExternal : Bool}
-    (valid : raw ≠ RawRpcPolicy.invalidToken)
-    (notExternalUnsafe :
-      raw = RawRpcPolicy.unsafeToken -> rpcExternal = false) :
+    {raw : RawRpcPolicy} {rpcExternal : Bool}
+    (valid : raw ≠ .invalidToken)
+    (notExternalUnsafe : raw = .unsafeToken -> rpcExternal = false)
+    (notExternalPool : raw = .poolToken -> rpcExternal = false) :
     rpcPolicyAccepts raw rpcExternal = true := by
   cases raw <;> cases rpcExternal <;> simp [rpcPolicyAccepts, resolveRpcPolicy] at *
 
-theorem rpc_policy_rejects_invalid
-    {rpcExternal : Bool} :
-    resolveRpcPolicy RawRpcPolicy.invalidToken rpcExternal =
-      Except.error RpcPolicyReject.invalidPolicy := by
-  cases rpcExternal <;> rfl
+theorem rpc_policy_rejects_invalid {rpcExternal : Bool} :
+    resolveRpcPolicy .invalidToken rpcExternal = .error .invalidPolicy := by
+  rfl
 
 theorem rpc_policy_rejects_external_unsafe :
-    resolveRpcPolicy RawRpcPolicy.unsafeToken true =
-      Except.error RpcPolicyReject.externalUnsafePolicy := by
-  rfl
+    resolveRpcPolicy .unsafeToken true = .error .externalUnsafePolicy := by rfl
+
+theorem rpc_policy_rejects_external_pool :
+    resolveRpcPolicy .poolToken true = .error .externalPoolPolicy := by rfl
+
+theorem rpc_policy_accepts_external_public_submit :
+    resolveRpcPolicy .publicSubmitToken true = .ok .publicSubmit := by rfl
 
 theorem rpc_policy_auto_external_safe :
-    resolveRpcPolicy RawRpcPolicy.autoToken true =
-      Except.ok RpcPolicy.safeOnly := by
-  rfl
+    resolveRpcPolicy .autoToken true = .ok .safeOnly := by rfl
 
 theorem rpc_policy_auto_local_safe :
-    resolveRpcPolicy RawRpcPolicy.autoToken false =
-      Except.ok RpcPolicy.safeOnly := by
-  rfl
+    resolveRpcPolicy .autoToken false = .ok .safeOnly := by rfl
 
+theorem rpc_policy_empty_defaults_safe {external : Bool} :
+    resolveRpcPolicy .emptyToken external = .ok .safeOnly := by rfl
+
+/-- Representatives of all policy/registration/feature classes.  The generated
+vectors bind their concrete method strings to the production classifier.  This
+is not a proof that every future dispatch match arm is included in the registry. -/
 inductive RpcMethod where
   | safeMethod
+  | safeNonPoolMethod
   | daSubmitCiphertexts
   | daSubmitProofs
   | hegemonExportBridgeWitness
@@ -88,65 +94,320 @@ inductive RpcMethod where
   | hegemonStopMining
   | hegemonSubmitAction
   | systemPeers
+  | poolWork
+  | compactJob
+  | submitPoolShare
+  | submitCompactSolution
+  | pendingActionChunk
+  | developmentPendingActionChunk
+  | assetSnapshot
+  | assetRecoverySnapshot
+  | disabledProofService
+  | unknownMethod
 deriving DecidableEq, Repr
 
 inductive RpcMethodReject where
   | unsafeMethodDisabled
 deriving DecidableEq, Repr
 
-def rpcMethodIsUnsafe : RpcMethod -> Bool
-  | RpcMethod.safeMethod => false
-  | RpcMethod.daSubmitCiphertexts => true
-  | RpcMethod.daSubmitProofs => true
-  | RpcMethod.hegemonExportBridgeWitness => true
-  | RpcMethod.hegemonPeerGraph => true
-  | RpcMethod.hegemonPeerList => true
-  | RpcMethod.hegemonStartMining => true
-  | RpcMethod.hegemonStopMining => true
-  | RpcMethod.hegemonSubmitAction => true
-  | RpcMethod.systemPeers => true
+def rpcMethodIsUnsafeWithFeatures (method : RpcMethod) (featureEnabled : Bool) : Bool :=
+  match method with
+  | .safeMethod | .safeNonPoolMethod | .pendingActionChunk | .assetSnapshot
+  | .assetRecoverySnapshot | .disabledProofService | .unknownMethod => false
+  | .developmentPendingActionChunk => featureEnabled
+  | _ => true
 
-def evaluateRpcMethodGate
-    (policy : RpcPolicy)
-    (method : RpcMethod) : Option RpcMethodReject :=
-  if rpcMethodIsUnsafe method && policy != RpcPolicy.unsafeAllowed then
-    some RpcMethodReject.unsafeMethodDisabled
-  else
-    none
+def rpcMethodIsUnsafe (method : RpcMethod) : Bool :=
+  rpcMethodIsUnsafeWithFeatures method false
+
+def rpcMethodIsPool : RpcMethod -> Bool
+  | .safeMethod | .poolWork | .compactJob | .submitPoolShare | .submitCompactSolution => true
+  | _ => false
+
+def rpcMethodRegistered (method : RpcMethod) (featureEnabled : Bool) : Bool :=
+  match method with
+  | .unknownMethod => false
+  | .developmentPendingActionChunk => featureEnabled
+  | _ => true
+
+def rpcMethodAllowedWithFeatures
+    (policy : RpcPolicy) (method : RpcMethod) (featureEnabled : Bool) : Bool :=
+  match policy with
+  | .unsafeAllowed => true
+  | .safeOnly => !rpcMethodIsUnsafeWithFeatures method featureEnabled
+  | .poolOnly => rpcMethodIsPool method
+  | .publicSubmit =>
+      !rpcMethodIsUnsafeWithFeatures method featureEnabled || method == .hegemonSubmitAction
+
+def evaluateRpcMethodGate (policy : RpcPolicy) (method : RpcMethod) :
+    Option RpcMethodReject :=
+  if rpcMethodAllowedWithFeatures policy method false then none else some .unsafeMethodDisabled
 
 def rpcMethodAllowed (policy : RpcPolicy) (method : RpcMethod) : Bool :=
-  evaluateRpcMethodGate policy method = none
+  rpcMethodAllowedWithFeatures policy method false
 
-theorem safe_policy_rejects_unsafe_methods
-    {method : RpcMethod}
+/-- Availability means the actual source/network/feature capability check passed;
+policy permission by itself grants no route authority. -/
+def rpcDispatchAllowed (policy : RpcPolicy) (method : RpcMethod)
+    (featureEnabled available : Bool) : Bool :=
+  rpcMethodRegistered method featureEnabled &&
+    rpcMethodAllowedWithFeatures policy method featureEnabled && available
+
+def rpcMethodListed := rpcDispatchAllowed
+
+theorem safe_policy_rejects_unsafe_methods {method : RpcMethod}
     (unsafeMethod : rpcMethodIsUnsafe method = true) :
-    evaluateRpcMethodGate RpcPolicy.safeOnly method =
-      some RpcMethodReject.unsafeMethodDisabled := by
-  unfold evaluateRpcMethodGate
-  simp [unsafeMethod]
+    evaluateRpcMethodGate .safeOnly method = some .unsafeMethodDisabled := by
+  simp [evaluateRpcMethodGate, rpcMethodAllowedWithFeatures, rpcMethodIsUnsafe] at *
+  exact unsafeMethod
 
-theorem unsafe_policy_allows_every_method
-    {method : RpcMethod} :
-    evaluateRpcMethodGate RpcPolicy.unsafeAllowed method = none := by
-  cases method <;> rfl
+theorem unsafe_policy_allows_every_method {method : RpcMethod} :
+    evaluateRpcMethodGate .unsafeAllowed method = none := by rfl
 
-theorem safe_policy_allows_safe_methods
-    {method : RpcMethod}
+theorem safe_policy_allows_safe_methods {method : RpcMethod}
     (safeMethod : rpcMethodIsUnsafe method = false) :
-    evaluateRpcMethodGate RpcPolicy.safeOnly method = none := by
-  unfold evaluateRpcMethodGate
-  simp [safeMethod]
+    evaluateRpcMethodGate .safeOnly method = none := by
+  simp [evaluateRpcMethodGate, rpcMethodAllowedWithFeatures, rpcMethodIsUnsafe] at *
+  exact safeMethod
 
+theorem public_submit_adds_exactly_submit_action
+    {method : RpcMethod} {featureEnabled : Bool} :
+    rpcMethodAllowedWithFeatures .publicSubmit method featureEnabled =
+      (rpcMethodAllowedWithFeatures .safeOnly method featureEnabled ||
+        method == .hegemonSubmitAction) := by rfl
+
+theorem public_submit_denies_other_privileged_methods
+    {method : RpcMethod} {featureEnabled : Bool}
+    (privileged : rpcMethodIsUnsafeWithFeatures method featureEnabled = true)
+    (notSubmit : method ≠ .hegemonSubmitAction) :
+    rpcMethodAllowedWithFeatures .publicSubmit method featureEnabled = false := by
+  simp [rpcMethodAllowedWithFeatures, privileged, notSubmit]
+
+theorem discovery_equals_available_dispatch
+    {policy : RpcPolicy} {method : RpcMethod} {featureEnabled available : Bool} :
+    rpcMethodListed policy method featureEnabled available =
+      rpcDispatchAllowed policy method featureEnabled available := by rfl
+
+theorem dispatch_requires_registration_policy_and_capability
+    {policy : RpcPolicy} {method : RpcMethod} {featureEnabled available : Bool} :
+    rpcDispatchAllowed policy method featureEnabled available = true ↔
+      rpcMethodRegistered method featureEnabled = true ∧
+      rpcMethodAllowedWithFeatures policy method featureEnabled = true ∧ available = true := by
+  simp [rpcDispatchAllowed, Bool.and_eq_true, and_assoc]
+
+theorem unknown_methods_never_dispatch
+    {policy : RpcPolicy} {featureEnabled available : Bool} :
+    rpcDispatchAllowed policy .unknownMethod featureEnabled available = false := by
+  rfl
+
+theorem unavailable_methods_never_dispatch
+    {policy : RpcPolicy} {method : RpcMethod} {featureEnabled : Bool} :
+    rpcDispatchAllowed policy method featureEnabled false = false := by
+  simp [rpcDispatchAllowed]
+
+theorem feature_disabled_route_never_dispatch
+    {policy : RpcPolicy} {available : Bool} :
+    rpcDispatchAllowed policy .developmentPendingActionChunk false available = false := by
+  rfl
+
+theorem public_submit_effective_surface_delta
+    {method : RpcMethod} {featureEnabled available : Bool} :
+    rpcDispatchAllowed .publicSubmit method featureEnabled available =
+      (rpcDispatchAllowed .safeOnly method featureEnabled available ||
+       (method == .hegemonSubmitAction && available)) := by
+  cases method <;> cases featureEnabled <;> cases available <;> rfl
+
+/-- Historical all-privileged-method visibility projection, not the full catalog. -/
 def unsafeMethodsVisibleInList (policy : RpcPolicy) : Bool :=
-  policy == RpcPolicy.unsafeAllowed
+  policy == .unsafeAllowed
 
 theorem safe_method_list_hides_unsafe_methods :
-    unsafeMethodsVisibleInList RpcPolicy.safeOnly = false := by
-  rfl
+    unsafeMethodsVisibleInList .safeOnly = false := by rfl
 
 theorem unsafe_method_list_shows_unsafe_methods :
-    unsafeMethodsVisibleInList RpcPolicy.unsafeAllowed = true := by
-  rfl
+    unsafeMethodsVisibleInList .unsafeAllowed = true := by rfl
+
+/-- This is an explicit family/action gate, not a claim to distinguish hidden
+ordinary/HTLC/policy witnesses within the unchanged PrivateSpend statement. -/
+def publicSubmitActionRouteAllowed (family action : Nat) : Bool :=
+  family == 1 && action == 15
+
+theorem public_action_route_is_exact {family action : Nat} :
+    publicSubmitActionRouteAllowed family action = true ↔ family = 1 ∧ action = 15 := by
+  simp [publicSubmitActionRouteAllowed]
+
+theorem public_action_route_denies_other_families {family action : Nat}
+    (different : family ≠ 1 ∨ action ≠ 15) :
+    publicSubmitActionRouteAllowed family action = false := by
+  rcases different with h | h <;> simp [publicSubmitActionRouteAllowed, h]
+
+/-- These four arithmetic helpers are called by the production mutex counters and
+client map. Rust inputs are bounded machine integers; an admitted increment is
+below the representable limit, so checked_add agrees with Nat here. -/
+def publicCapacityReserve (active limit : Nat) : Option Nat :=
+  if active < limit then some (active + 1) else none
+
+def publicCapacityRelease (active : Nat) : Option Nat :=
+  if active = 0 then none else some (active - 1)
+
+def publicClientCharge (used limit : Nat) (expired : Bool) : Option Nat :=
+  if limit = 0 then none else if expired then some 1 else publicCapacityReserve used limit
+
+def publicClientTableInsertAllowed (retained capacity : Nat) (known : Bool) : Bool :=
+  known || retained < capacity
+
+theorem public_reservation_bounded {active limit next : Nat}
+    (accepted : publicCapacityReserve active limit = some next) :
+    next = active + 1 ∧ next ≤ limit := by
+  unfold publicCapacityReserve at accepted
+  split at accepted
+  · cases accepted
+    omega
+  · contradiction
+
+theorem public_capacity_exhaustion_rejects {active limit : Nat}
+    (full : limit ≤ active) : publicCapacityReserve active limit = none := by
+  simp [publicCapacityReserve, Nat.not_lt.mpr full]
+
+theorem public_release_decreases_once {active next : Nat}
+    (released : publicCapacityRelease active = some next) :
+    active = next + 1 := by
+  unfold publicCapacityRelease at released
+  split at released
+  · contradiction
+  · cases released
+    omega
+
+theorem public_release_empty_rejects : publicCapacityRelease 0 = none := by rfl
+
+theorem public_client_charge_bounded {used limit next : Nat} {expired : Bool}
+    (accepted : publicClientCharge used limit expired = some next) :
+    1 ≤ next ∧ next ≤ limit := by
+  unfold publicClientCharge at accepted
+  split at accepted
+  · contradiction
+  · split at accepted
+    · cases accepted
+      omega
+    · obtain ⟨rfl, h⟩ := public_reservation_bounded accepted
+      omega
+
+theorem public_client_table_full_unknown_rejects {retained capacity : Nat}
+    (full : capacity ≤ retained) :
+    publicClientTableInsertAllowed retained capacity false = false := by
+  simp [publicClientTableInsertAllowed, Nat.not_lt.mpr full]
+
+theorem public_client_table_insert_bounded {retained capacity : Nat} {known : Bool}
+    (bounded : retained ≤ capacity)
+    (accepted : publicClientTableInsertAllowed retained capacity known = true) :
+    (if known then retained else retained + 1) ≤ capacity := by
+  cases known <;> simp [publicClientTableInsertAllowed] at * <;> omega
+
+/-- The implementation uses distinct counter objects for public and local work.
+The public transition has no write to the local component. This contract does
+not prove OS scheduling fairness or a hard verifier wall-clock deadline. -/
+structure LaneCounts where
+  publicActive : Nat
+  localActive : Nat
+deriving DecidableEq, Repr
+
+def reservePublicLane (counts : LaneCounts) (limit : Nat) : Option LaneCounts :=
+  (publicCapacityReserve counts.publicActive limit).map fun next =>
+    { counts with publicActive := next }
+
+theorem public_reservation_preserves_local_capacity {before after : LaneCounts} {limit : Nat}
+    (accepted : reservePublicLane before limit = some after) :
+    after.localActive = before.localActive ∧ after.publicActive ≤ limit := by
+  unfold reservePublicLane at accepted
+  cases result : publicCapacityReserve before.publicActive limit with
+  | none => simp [result] at accepted
+  | some next =>
+    simp [result] at accepted
+    cases accepted
+    exact ⟨rfl, (public_reservation_bounded result).2⟩
+
+/-- A non-cloneable Rust guard moves from HTTP caller to blocking worker. The
+HTTP future does not own that guard after the move. `released` has no live token;
+only the current owner may drop. These are ownership contracts, bound by source
+ordering, Rust moves/Drop, and cancellation tests, not a model of Tokio scheduling. -/
+inductive ReservationOwner where
+  | caller
+  | worker
+  | responseBody
+  | released
+deriving DecidableEq, Repr
+
+structure OwnedReservation where
+  owner : ReservationOwner
+  active : Nat
+deriving DecidableEq, Repr
+
+def moveReservationToWorker (state : OwnedReservation) : OwnedReservation :=
+  if state.owner = .caller then { state with owner := .worker } else state
+
+def moveReservationToResponse (state : OwnedReservation) : OwnedReservation :=
+  if state.owner = .worker then { state with owner := .responseBody } else state
+
+def dropReservation (state : OwnedReservation) : OwnedReservation :=
+  if state.owner = .released then state
+  else { owner := .released, active := state.active - 1 }
+
+def disconnectCaller (state : OwnedReservation) : OwnedReservation :=
+  if state.owner = .caller then dropReservation state else state
+
+theorem worker_transfer_preserves_reservation {state : OwnedReservation} :
+    (moveReservationToWorker state).active = state.active := by
+  simp [moveReservationToWorker]
+  split <;> rfl
+
+theorem response_transfer_preserves_reservation {state : OwnedReservation} :
+    (moveReservationToResponse state).active = state.active := by
+  simp [moveReservationToResponse]
+  split <;> rfl
+
+theorem response_disconnect_releases_owned_reservation {active : Nat}
+    (nonzero : 0 < active) :
+    (dropReservation { owner := .responseBody, active := active }).active + 1 = active := by
+  simp [dropReservation]
+  omega
+
+theorem worker_disconnect_retains_reservation {active : Nat} :
+    disconnectCaller { owner := .worker, active := active } =
+      { owner := .worker, active := active } := by rfl
+
+theorem reservation_drop_is_idempotent {state : OwnedReservation} :
+    dropReservation (dropReservation state) = dropReservation state := by
+  cases state with
+  | mk owner active => cases owner <;> simp [dropReservation]
+
+theorem owned_drop_releases_exactly_once {owner : ReservationOwner} {active : Nat}
+    (owned : owner ≠ .released) (nonzero : 0 < active) :
+    (dropReservation { owner := owner, active := active }).active + 1 = active := by
+  simp [dropReservation, owned]
+  omega
+
+/-- The application uses non-waiting try-reserve. Tokio may schedule admitted
+blocking workers later; those workers still own slots counted against the cap.
+This states no zero-queue or scheduler-fairness property about Tokio or the OS. -/
+theorem owned_transfers_and_drop_preserve_outstanding_bound
+    {state : OwnedReservation} {limit : Nat} (bounded : state.active ≤ limit) :
+    (moveReservationToWorker state).active ≤ limit ∧
+    (moveReservationToResponse state).active ≤ limit ∧
+    (disconnectCaller state).active ≤ limit ∧
+    (dropReservation state).active ≤ limit := by
+  have dropped : (dropReservation state).active ≤ limit := by
+    unfold dropReservation
+    split
+    · exact bounded
+    · simp only
+      omega
+  refine ⟨?_, ?_, ?_, dropped⟩
+  · simpa [worker_transfer_preserves_reservation] using bounded
+  · simpa [response_transfer_preserves_reservation] using bounded
+  · unfold disconnectCaller
+    split
+    · exact dropped
+    · exact bounded
 
 inductive TimestampRangeReject where
   | endBeforeStart

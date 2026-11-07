@@ -193,6 +193,43 @@ class PackagingTests(unittest.TestCase):
             self.assertEqual(command[command.index("--rpc-methods") + 1], "unsafe")
             self.assertNotIn("--rpc-external", command)
 
+    def test_public_rpc_requires_new_bundle_and_explicit_external_opt_in(self):
+        bundle, _ = self.fixture_bundle()
+        binary = bundle / "bin/hegemon-node"
+        with mock.patch.object(join, "verify_bundle", return_value=binary):
+            with self.assertRaisesRegex(ValueError, "exact v0.11.3"):
+                join.launch_command(bundle, join.arguments(["--public-submit-rpc"]), {})
+            record = json.loads((bundle / "bundle.json").read_text())
+            record.update(software_release="v0.11.3", software_version="0.11.3")
+            (bundle / "bundle.json").write_bytes(pack.encoded(record))
+            command, _ = join.launch_command(bundle, join.arguments(["--public-submit-rpc"]), {})
+            self.assertEqual(command[command.index("--rpc-methods") + 1], "public-submit")
+            self.assertNotIn("--rpc-external", command)
+            self.assertNotIn("--rpc-cors", command)
+            command, _ = join.launch_command(bundle, join.arguments(["--public-submit-rpc", "--rpc-external", "--rpc-cors", "chrome-extension://test-wallet"]), {})
+            self.assertIn("--rpc-external", command)
+            self.assertEqual(command[command.index("--rpc-cors") + 1], "chrome-extension://test-wallet")
+
+    def test_public_rpc_rejects_unsafe_combinations_and_wildcard_origins(self):
+        bundle, _ = self.fixture_bundle()
+        record = json.loads((bundle / "bundle.json").read_text())
+        record.update(software_release="v0.11.3", software_version="0.11.3")
+        (bundle / "bundle.json").write_bytes(pack.encoded(record))
+        rejected = (["--wallet-rpc", "--public-submit-rpc"], ["--rpc-external"],
+                    ["--wallet-rpc", "--rpc-external"], ["--rpc-cors", "https://wallet.example"],
+                    ["--public-submit-rpc", "--rpc-cors", "*"],
+                    ["--public-submit-rpc", "--rpc-cors", "https://a.example,https://b.example"],
+                    ["--public-submit-rpc", "--rpc-cors", ""],
+                    ["--public-submit-rpc", "--rpc-cors", "https://wallet.example/"],
+                    ["--public-submit-rpc", "--rpc-cors", "https://user@wallet.example"],
+                    ["--public-submit-rpc", "--rpc-cors", "https://wallet.example?q=1"],
+                    ["--public-submit-rpc", "--rpc-cors", "https://wallet.example:invalid"],
+                    ["--public-submit-rpc", "--rpc-cors", "null"])
+        with mock.patch.object(join, "verify_bundle", return_value=bundle / "bin/hegemon-node"):
+            for argv in rejected:
+                with self.subTest(argv=argv), self.assertRaises(ValueError):
+                    join.launch_command(bundle, join.arguments(argv), {})
+
     def test_explicit_mining_requires_public_address_and_fixed_seeds(self):
         bundle, _ = self.fixture_bundle()
         with mock.patch.object(join, "verify_bundle", return_value=bundle / "bin/hegemon-node"):

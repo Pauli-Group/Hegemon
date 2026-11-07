@@ -27,6 +27,7 @@ fn config(path: &Path) -> NativeConfig {
         rpc_methods: "pool".into(),
         rpc_external: false,
         rpc_cors: None,
+        public_rpc_limits: Default::default(),
         seeds: vec![],
         max_peers: 0,
         mine: false,
