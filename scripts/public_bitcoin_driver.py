@@ -53,11 +53,13 @@ def _fee():
     return math.ceil(max(rate,1)*250)
 
 
-def fund(journal,key_file,hashlock,claimant,refund_height,amount):
+def fund(journal,key_file,hashlock,claimant,refund_height,amount,rehearsal_short_refund=False):
+    """`rehearsal_short_refund` lifts the policy's minimum refund distance for the one script that rehearses the refund path
+    on purpose (`public_bitcoin_refund_rehearsal.py`). Swaps never pass it: the engine and the drivers use the policy floor."""
     if type(amount) is not int or not 546<=amount<=2100000000000000:raise ValueError('Invalid Bitcoin escrow amount')
     key=load_test_key(key_file);refund=key.get_public_key().sec().hex();_,output=contract(hashlock,claimant,refund,refund_height)
     verify_network('bitcoin-testnet4');height=int(request(BITCOIN+'/blocks/tip/height'))
-    minimum_blocks,_=policy_limits()
+    minimum_blocks=1 if rehearsal_short_refund else policy_limits()[0]
     if type(refund_height) is not int or refund_height-height<minimum_blocks:raise ValueError('Bitcoin refund height too close; the timelock policy needs at least '+str(minimum_blocks)+' blocks')
     fee=_fee()
     if amount-fee<546:raise ValueError('Bitcoin escrow would be dust after the current spend fee')

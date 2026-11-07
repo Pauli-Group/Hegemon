@@ -4,28 +4,28 @@ overview: "Plan 7 of 8. Make the swap work maintainable and reviewable: one test
 todos:
   - id: p7-pin
     content: Pin Node 24 and document tool versions
-    status: pending
+    status: completed
   - id: p7-make
     content: Add make swap-test and swap-integration targets with explicit skips
-    status: pending
+    status: completed
   - id: p7-ci
     content: CI workflow for the fast tier
-    status: pending
+    status: completed
   - id: p7-index
     content: Write scripts/SWAP_SCRIPTS.md index and mark superseded scripts
-    status: pending
+    status: completed
   - id: p7-docs
     content: Update DESIGN.md, METHODS.md, READMEs, CHANGELOG, runbook notes (HEGEMON_SEEDS, NTP)
-    status: pending
+    status: completed
   - id: p7-secrets
     content: Secret scan and ignore-file hygiene
-    status: pending
+    status: completed
   - id: p7-prs
     content: Propose and verify reviewable PR split
-    status: pending
+    status: completed
   - id: p7-close
     content: Final master ExecPlan status and follow-up backlog including resuming Hegemon public swaps
-    status: pending
+    status: completed
 isProject: false
 ---
 

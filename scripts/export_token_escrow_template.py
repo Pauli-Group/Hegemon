@@ -5,6 +5,7 @@ import hashlib
 import json
 import subprocess
 from pathlib import Path
+from swap_engine.tools import tool_default
 ROOT=Path(__file__).resolve().parents[1]
 SOURCE=ROOT/'contracts/ethereum/TokenHTLC.sol'
 ARTIFACT=ROOT/'contracts/ethereum/out/TokenHTLC.sol/TokenHTLC.json'
@@ -13,7 +14,7 @@ OUTPUT=ROOT/'swap-ui/token-escrow-template.json'
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--solc',type=Path,default=Path('/workspace/chain-tools/solc'))
+    parser.add_argument('--solc',type=Path,default=tool_default('solc'))
     parser.add_argument('--check',action='store_true')
     parser.add_argument('--native',action='store_true',help='export the native ETH escrow template')
     args=parser.parse_args()

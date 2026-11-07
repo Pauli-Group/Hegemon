@@ -28,6 +28,16 @@ its gas. Other participants and assets are outside this particular test.
 
 ## Preparation
 
+Operator notes for the node this runner reads (it never starts or configures one). A node that follows the public
+chain must be started with the approved seed list, `HEGEMON_SEEDS="hegemon.pauli.group:30333,devnet.hegemonprotocol.com:30333"`,
+unless the list has been deliberately rotated. Every node and miner on the same network must use the same seeds,
+otherwise they can partition and fork. Keep NTP or chrony enabled on the host: blocks and PoW timestamps beyond the
+future-skew bound are rejected, and a drifting clock also makes the probe's 20-minute freshness check lie. Both apply
+to any Hegemon leg of a swap, public or local. This runbook is the older, single-run path: new swaps go through the
+swap engine (`scripts/SWAP_SCRIPTS.md`), and a public Hegemon adapter is the first item of the follow-up backlog in
+`.agent/SWAP_SERIES_EXECPLAN.md`. Tool versions and the `pip --target` alternative to a virtual environment are in
+`docs/SWAP_TOOLCHAIN.md`.
+
 Work from a checkout containing this runbook and the current branch. Preserve
 any unrelated local edits. Set `TEST_WALLETS` to the private directory with
 `addresses.json`, `alice/`, `bob/`, and `hegemon-pre-mainnet/`. The transferred archive

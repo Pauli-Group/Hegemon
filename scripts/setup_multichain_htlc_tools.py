@@ -16,7 +16,7 @@ def digest(p):
  return h.hexdigest()
 
 def main():
- p=argparse.ArgumentParser(description=__doc__);p.add_argument('--tools',type=Path,default=Path('/workspace/chain-tools'));p.add_argument('--verify-only',action='store_true');a=p.parse_args()
+ p=argparse.ArgumentParser(description=__doc__);p.add_argument('--tools',type=Path,default=Path(os.environ.get('HEGEMON_CHAIN_TOOLS') or Path.home()/'.local/opt/chain-tools'));p.add_argument('--verify-only',action='store_true');a=p.parse_args()
  if platform.system()!='Linux' or platform.machine()!='x86_64':raise SystemExit('This tool manifest requires Linux x86_64')
  a.tools.mkdir(parents=True,exist_ok=True);manifest={}
  for name,(url,sha,members) in ASSETS.items():

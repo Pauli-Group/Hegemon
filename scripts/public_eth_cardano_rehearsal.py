@@ -5,6 +5,9 @@ The first participant uses Ethereum Alice and Cardano Bob; the second uses
 Cardano Alice and Ethereum Bob. Each advance makes at most one public
 submission. Inflight states require manual journal inspection after failure.
 This is testnet-only and relies on trusted public endpoints, not light clients.
+
+Superseded for new runs by the swap engine (`swap_engine_cli.py`), which plans both expiries with the timelock policy.
+Kept as the record of how the 2026 ETH/ADA rehearsal was staged.
 """
 import argparse
 import hashlib

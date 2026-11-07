@@ -15,8 +15,8 @@ Ethereum uses an explicit spent flag before any external payment.
 
 ## Install and build
 
-Linux x86_64, Python 3.12 and already-built Hegemon Development-capable binaries
-are required. From the repository root:
+Linux x86_64, Python 3.10 or newer and already-built Hegemon Development-capable binaries
+are required (every tool version in one place: `docs/SWAP_TOOLCHAIN.md`). From the repository root:
 
     python3 -m pip install -r scripts/requirements-htlc-local.txt
     python3 scripts/setup_multichain_htlc_tools.py
@@ -24,7 +24,9 @@ are required. From the repository root:
 The installer pins Foundry 1.8.7, solc 0.8.30, Aiken 1.1.24, cardano-node 11.1.3
 and its bundled cardano-cli 11.2.3.0. It validates release archive SHA-256 hashes,
 extracts only named binaries and builds both contracts. It uses
-`/workspace/chain-tools` by default; `--tools /other/path` selects another root.
+`$HEGEMON_CHAIN_TOOLS`, else `~/.local/opt/chain-tools`, by default; `--tools /other/path` selects another root. Scripts and tests
+find tools through `scripts/swap_engine/tools.py`, so `HEGEMON_TOOL_<NAME>` (for example `HEGEMON_TOOL_ANVIL`) overrides one binary.
+Unpack Bitcoin Core 32.1 into `<tools>/bitcoin` yourself; the installer does not download it.
 Cardano's stdlib v3.1.0 is pinned in `cardano/aiken.lock`.
 
 For a fresh Hegemon build:
@@ -33,12 +35,14 @@ For a fresh Hegemon build:
 
 ## Tests
 
-    /workspace/chain-tools/foundry/forge test --root contracts/ethereum --use /workspace/chain-tools/solc -vv
-    /workspace/chain-tools/aiken/aiken-x86_64-unknown-linux-musl/aiken check contracts/cardano
-    python3 scripts/local_multichain_htlc_swap.py --chain ethereum --output /workspace/new-eth-run
-    python3 scripts/local_multichain_htlc_swap.py --chain cardano --output /workspace/new-ada-run
+    TOOLS="${HEGEMON_CHAIN_TOOLS:-$HOME/.local/opt/chain-tools}"
+    mkdir -p -m 700 "$HOME/hegemon-runs"
+    "$TOOLS/foundry/forge" test --root contracts/ethereum --use "$TOOLS/solc" -vv
+    "$TOOLS/aiken/aiken-x86_64-unknown-linux-musl/aiken" check contracts/cardano
+    python3 scripts/local_multichain_htlc_swap.py --chain ethereum --output "$HOME/hegemon-runs/new-eth-run"
+    python3 scripts/local_multichain_htlc_swap.py --chain cardano --output "$HOME/hegemon-runs/new-ada-run"
 
-Output directories must not already exist. `--scenario happy`,
+Output directories must not already exist (their parent must). `--scenario happy`,
 `no_counterparty`, `both_refund` or `late_claim` selects a single case; the default
 runs all four with separate wallets and chains. `--node`, `--wallet` and `--tools`
 select executable paths. Each output directory contains private disposable keys,
@@ -69,22 +73,22 @@ and NTP/chrony guidance in the operator runbooks.
 
 The local harness can mint disposable Cardano native assets and deploy disposable Ethereum token fixtures. It is not a general wallet transaction builder. From the repository root, after compiling the contracts and installing the tools described above, run:
 
-    python3 scripts/check_ethereum_token_htlc.py --output /workspace/new-ethereum-token-run
-    python3 scripts/check_cardano_token_htlc.py --output /workspace/new-cardano-token-run
-    python3 scripts/check_ethereum_cardano_swap.py --output /workspace/new-eth-cardano-run
-    python3 scripts/local_multichain_htlc_swap.py --chain cardano --cardano-test-tokens --scenario happy --output /workspace/new-hgn-cardano-token-run
-    python3 scripts/local_multichain_htlc_swap.py --chain ethereum --ethereum-test-token erc20 --scenario happy --output /workspace/new-hgn-erc20-run
+    python3 scripts/check_ethereum_token_htlc.py --output "$HOME/hegemon-runs/new-ethereum-token-run"
+    python3 scripts/check_cardano_token_htlc.py --output "$HOME/hegemon-runs/new-cardano-token-run"
+    python3 scripts/check_ethereum_cardano_swap.py --output "$HOME/hegemon-runs/new-eth-cardano-run"
+    python3 scripts/local_multichain_htlc_swap.py --chain cardano --cardano-test-tokens --scenario happy --output "$HOME/hegemon-runs/new-hgn-cardano-token-run"
+    python3 scripts/local_multichain_htlc_swap.py --chain ethereum --ethereum-test-token erc20 --scenario happy --output "$HOME/hegemon-runs/new-hgn-erc20-run"
 
 Each output path must not exist and contains disposable keys and logs; protect it as private data. The Cardano path must be short enough for a Unix socket. Ethereum token choices are `erc20`, `erc721`, and `erc1155`. These fixtures do not exercise arbitrary issued tokens, public-chain confirmation policy, issuer controls, or security review.
 
 Additional isolated pairing examples:
 
-    python3 scripts/check_bitcoin_ethereum_swap.py --output /workspace/new-btc-eth-run
-    python3 scripts/check_bitcoin_ethereum_swap.py --counterpart cardano --output /workspace/new-btc-cardano-run
-    python3 scripts/check_samechain_ethereum_swap.py --output /workspace/new-same-ethereum-run
-    python3 scripts/check_samechain_cardano_swap.py --output /workspace/new-same-cardano-run
+    python3 scripts/check_bitcoin_ethereum_swap.py --output "$HOME/hegemon-runs/new-btc-eth-run"
+    python3 scripts/check_bitcoin_ethereum_swap.py --counterpart cardano --output "$HOME/hegemon-runs/new-btc-cardano-run"
+    python3 scripts/check_samechain_ethereum_swap.py --output "$HOME/hegemon-runs/new-same-ethereum-run"
+    python3 scripts/check_samechain_cardano_swap.py --output "$HOME/hegemon-runs/new-same-cardano-run"
 
-The recorded results and important limitations are in `MULTIASSET_LOCAL_RESULTS.md` at the repository root.
+The recorded results and important limitations are in `MULTIASSET_LOCAL_RESULTS.md` at the repository root. The role of every swap script is in `scripts/SWAP_SCRIPTS.md`; the engine that now plans and runs swaps (and its Hegemon adapter, local only) is described in `DESIGN.md` ("Two-party swap engine", "Hegemon adapter and local fixtures").
 
 The local pairing scripts also exercise read-only verification. `scripts/bitcoin_escrow_verifier.py` reconstructs the expected Bitcoin regtest script and checks its confirmed UTxO through a trusted local Bitcoin Core node. `scripts/cardano_escrow_verifier.py` checks a local UTxO's pinned validator, datum and exact assets. The Cardano UTxO query does not prove confirmation depth, and neither checker independently authenticates the counterparty's terms or the RPC provider.
 

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {chromium} from 'playwright-core';
 import {spawn} from 'node:child_process';
 import {mkdtemp,rm} from 'node:fs/promises';
-import {tmpdir} from 'node:os';
+import {tmpdir,homedir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {createServer} from 'node:net';
 import {once} from 'node:events';
@@ -152,7 +152,7 @@ test('browser verifies real local Ethereum token escrow and rejects changed term
  const dir=await mkdtemp(join(tmpdir(),'swap-verify-'));const serverPort=await port(),rpcPort=await port();
  const base=`http://127.0.0.1:${serverPort}`,rpcUrl=`http://127.0.0.1:${rpcPort}`;
  const server=spawn(process.execPath,[resolve('swap-service/server.ts')],{env:{...process.env,SWAP_DB:join(dir,'offers.db'),SWAP_PORT:String(serverPort)},stdio:'ignore'});
- const anvil=spawn(process.env.ANVIL_PATH||'/workspace/chain-tools/foundry/anvil',['--host','127.0.0.1','--port',String(rpcPort),'--chain-id','31337','--hardfork','cancun','--silent'],{stdio:'ignore'});
+ const anvil=spawn(process.env.ANVIL_PATH||process.env.HEGEMON_TOOL_ANVIL||join(process.env.HEGEMON_CHAIN_TOOLS||join(homedir(),'.local/opt/chain-tools'),'foundry/anvil'),['--host','127.0.0.1','--port',String(rpcPort),'--chain-id','31337','--hardfork','cancun','--silent'],{stdio:'ignore'});
  let browser;
  async function rpc(method,params=[]){const r=await fetch(rpcUrl,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method,params})});const data=await r.json();if(data.error)throw Error(data.error.message);return data.result;}
  async function send(from,data,to,value){const tx={from,data,gas:'0x3d0900'};if(to)tx.to=to;if(value)tx.value=value;const hash=await rpc('eth_sendTransaction',[tx]);for(let i=0;i<100;i++){const r=await rpc('eth_getTransactionReceipt',[hash]);if(r){assert.equal(r.status,'0x1');return r;}await new Promise(r=>setTimeout(r,50));}throw Error('transaction not mined');}

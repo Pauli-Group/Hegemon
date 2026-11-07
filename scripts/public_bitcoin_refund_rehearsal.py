@@ -35,7 +35,7 @@ def advance(root):
     if phase.endswith('_inflight'):raise ValueError('Uncertain Bitcoin refund action; inspect journal and chain')
     if phase=='lock':
         verify_network('bitcoin-testnet4');height=int(request(BITCOIN+'/blocks/tip/height'));state['btc_refund_height']=height+6
-        _begin(work,state,'lock');result=fund(work,root/'alice/bitcoin-testnet4.key',state['hashlock'],terms['btc_claimant'],state['btc_refund_height'],AMOUNT);state.update(phase='lock_submitted',btc_lock=result['txid']);_save(work,state)
+        _begin(work,state,'lock');result=fund(work,root/'alice/bitcoin-testnet4.key',state['hashlock'],terms['btc_claimant'],state['btc_refund_height'],AMOUNT,rehearsal_short_refund=True);state.update(phase='lock_submitted',btc_lock=result['txid']);_save(work,state)
     elif phase=='lock_submitted':
         if _bitcoin_lock(state) is not None:state['phase']='wait_refund';_save(work,state)
     elif phase=='wait_refund':

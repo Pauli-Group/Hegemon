@@ -24,11 +24,12 @@ from development_atomic_swap_rehearsal import BitcoinRPC,rehearsal_bitcoin_key
 from htlc_counterpart import Cardano,TOOLS,wait_for
 from local_private_spend_swap import descriptor,port,require,stop
 from unlock_swap_backup import save_recovered_backup
+from swap_engine.tools import tool_default
 
 
 def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--output',type=Path,required=True);p.add_argument('--tools',type=Path,default=TOOLS)
-    p.add_argument('--bitcoind',type=Path,default=Path('/workspace/bitcoin-32.1/bin/bitcoind'));p.add_argument('--ogmios',type=Path,default=Path('/workspace/chain-tools/ogmios/bin/ogmios'))
+    p.add_argument('--bitcoind',type=Path,default=tool_default('bitcoind'));p.add_argument('--ogmios',type=Path,default=tool_default('ogmios'))
     a=p.parse_args();os.umask(0o077);out=a.output.resolve();out.mkdir(mode=0o700,exist_ok=False)
     cardano=bitcoin=ogmios=None;clients=[];receipt={'status':'failed','checks':{}};secret=bytearray(os.urandom(32))
     try:

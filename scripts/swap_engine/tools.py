@@ -16,6 +16,7 @@ RELATIVE = {
     'solc': ['solc'],
     'cardano-cli': ['cardano/bin/cardano-cli'],
     'cardano-node': ['cardano/bin/cardano-node'],
+    'cardano-testnet': ['cardano/bin/cardano-testnet'],
     'aiken': ['aiken/aiken-x86_64-unknown-linux-musl/aiken'],
     'ogmios': ['ogmios/bin/ogmios'],
     'bitcoind': ['bitcoin/bin/bitcoind', '../bitcoin-32.1/bin/bitcoind'],
@@ -57,3 +58,39 @@ def tool(name):
     if path is None:
         raise FileNotFoundError(f'Tool {name} not found; set HEGEMON_TOOL_{name.upper().replace("-", "_")} or HEGEMON_CHAIN_TOOLS, or run scripts/setup_multichain_htlc_tools.py --tools DIR')
     return path
+
+
+def tool_default(name):
+    """Argparse default: the located tool, else the bare name so the failure message names the tool."""
+    return find_tool(name) or Path(name)
+
+
+def missing(*names):
+    """Names of the tools that cannot be found; empty when all are present."""
+    return [name for name in names if find_tool(name) is None]
+
+
+def skip_unless_tools(*names):
+    """unittest decorator: skip with an explicit message naming each missing tool and how to supply it, never pass silently."""
+    import unittest
+    absent = missing(*names)
+    reason = ('missing tool(s): ' + ', '.join(absent) + '; set HEGEMON_TOOL_<NAME> or HEGEMON_CHAIN_TOOLS, '
+              'or run scripts/setup_multichain_htlc_tools.py --tools DIR (Bitcoin Core: unpack to DIR/bitcoin)') if absent else ''
+    return unittest.skipIf(bool(absent), reason)
+
+
+def main(argv=None):
+    """`python3 -m swap_engine.tools [NAME ...]`: print where each tool resolves; exit 3 if any named tool is missing."""
+    import sys
+    names = list(sys.argv[1:] if argv is None else argv) or sorted(RELATIVE)
+    for name in names:
+        print(f'{name:16} {find_tool(name) or "MISSING"}')
+    absent = missing(*names)
+    if absent:
+        print('missing: ' + ', '.join(absent) + ' (set HEGEMON_TOOL_<NAME> or HEGEMON_CHAIN_TOOLS, or run scripts/setup_multichain_htlc_tools.py --tools DIR)', file=sys.stderr)
+        return 3
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

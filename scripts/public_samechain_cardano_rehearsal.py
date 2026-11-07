@@ -3,6 +3,9 @@
 
 Each advance submits at most one transaction and records an inflight state
 before signing. Public indexers are trusted and the deadlines are test-only.
+
+Superseded for new runs by the swap engine (`swap_engine_cli.py`) and the same-chain local checks (`check_samechain_cardano_swap.py`).
+Kept as the record of how the 2026 same-chain Cardano rehearsal was staged.
 """
 import argparse
 import hashlib

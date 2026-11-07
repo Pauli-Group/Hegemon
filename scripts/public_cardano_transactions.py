@@ -9,7 +9,7 @@ import subprocess
 from pathlib import Path
 
 from swap_engine.tools import find_tool
-CLI=find_tool('cardano-cli') or Path('/workspace/chain-tools/cardano/bin/cardano-cli')  # HEGEMON_CHAIN_TOOLS or HEGEMON_TOOL_CARDANO_CLI override the legacy path
+CLI=find_tool('cardano-cli') or Path('cardano-cli')  # HEGEMON_CHAIN_TOOLS or HEGEMON_TOOL_CARDANO_CLI override the legacy path
 
 
 def _amount(value,positive=False):

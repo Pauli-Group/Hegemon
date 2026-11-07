@@ -25,6 +25,9 @@ BTC_AMOUNT=1500
 TOKEN_AMOUNT=10
 
 
+BTC_REFUND_BLOCKS=150  # the Bitcoin driver refuses less than the policy floor of 145 blocks
+
+
 def _save(work,state,exclusive=False):_write(work/'state.json',(json.dumps(state,sort_keys=True,indent=2)+'\n').encode(),exclusive)
 def _state(work):
     s=json.loads((work/'state.json').read_text())
@@ -52,7 +55,7 @@ def advance(root):
     if t!=_wallets(root):raise ValueError('BTC/ERC20 wallet identities changed')
     if phase.endswith('_inflight'):raise ValueError('Uncertain action: inspect private journal and chain before recovery')
     if phase=='btc_lock':
-        verify_network('bitcoin-testnet4');tip=int(request(BITCOIN+'/blocks/tip/height'));state['btc_refund_height']=tip+144
+        verify_network('bitcoin-testnet4');tip=int(request(BITCOIN+'/blocks/tip/height'));state['btc_refund_height']=tip+BTC_REFUND_BLOCKS
         _begin(work,state,phase);result=fund(work,root/'alice/bitcoin-testnet4.key',state['hashlock'],t['btc_claimant'],state['btc_refund_height'],BTC_AMOUNT);state.update(phase='btc_lock_submitted',btc_lock=result['txid']);_save(work,state)
     elif phase=='btc_lock_submitted':
         if _bitcoin_lock(state) is not None:state['phase']='deploy_eth';_save(work,state)

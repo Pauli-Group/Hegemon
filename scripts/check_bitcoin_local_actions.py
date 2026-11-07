@@ -14,11 +14,12 @@ from bitcoin_companion_actions_check import TestBitcoinActions
 from bitcoin_preimage_observer import observe_bitcoin_preimage
 from bitcoin_observer_cli_check import check_bitcoin_observer_cli
 from unlock_swap_backup import unlock_backup
+from swap_engine.tools import tool_default
 
 
 def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--output',type=Path,required=True)
-    p.add_argument('--bitcoind',type=Path,default=Path('/workspace/bitcoin-32.1/bin/bitcoind'))
+    p.add_argument('--bitcoind',type=Path,default=tool_default('bitcoind'))
     p.add_argument('--exercise-companion',action='store_true',help='run actions through locally approved companion terminals')
     p.add_argument('--encrypted-wallets',action='store_true',help='use encrypted disposable wallets')
     p.add_argument('--exercise-backup-claim',action='store_true',help='claim using a local encrypted preimage backup')

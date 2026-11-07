@@ -3,6 +3,9 @@
 
 The long Bitcoin refund deadline is a test choice, not a safety guarantee.
 Actions are journaled and uncertain inflight submissions are never retried.
+
+Superseded for new runs by the swap engine (`swap_engine_cli.py`), which plans both expiries with the timelock policy.
+Kept as the record of how the 2026 BTC/ADA rehearsal was staged; its Bitcoin refund distance is `BTC_REFUND_BLOCKS` (150), the driver's policy floor being 145.
 """
 import argparse
 import hashlib
@@ -29,6 +32,9 @@ from public_testnet_utxos import cardano_utxos
 ROOT=Path(__file__).resolve().parents[1]
 BTC_AMOUNT=1500
 ADA_AMOUNT=10_000_000
+
+
+BTC_REFUND_BLOCKS=150  # the Bitcoin driver refuses less than the policy floor of 145 blocks
 
 
 def _actors(root):
@@ -66,7 +72,7 @@ def advance(root,token_fixture=False):
     if terms!=_actors(root):raise ValueError('BTC/Cardano wallet identities changed')
     if not isinstance(phase,str) or phase.endswith('_inflight'):raise ValueError('Uncertain action: inspect private journal and chain before recovery')
     if phase=='created':
-        verify_network('bitcoin-testnet4');tip=int(request(BITCOIN+'/blocks/tip/height'));state['btc_refund_height']=tip+144
+        verify_network('bitcoin-testnet4');tip=int(request(BITCOIN+'/blocks/tip/height'));state['btc_refund_height']=tip+BTC_REFUND_BLOCKS
         _begin(work,state,'btc_lock');result=bitcoin_fund(work,root/'alice/bitcoin-testnet4.key',state['hashlock'],terms['btc_claimant'],state['btc_refund_height'],BTC_AMOUNT)
         state.update(phase='btc_lock_submitted',btc_lock=result['txid']);_save(work,state)
     elif phase=='btc_lock_submitted':

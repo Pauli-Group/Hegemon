@@ -6,6 +6,10 @@ public submission. Before submission its state becomes `*_inflight`, and a
 signed transaction is journaled privately. If interrupted there, stop and
 inspect the journal and both chains; this program will not automatically
 retry. Testnet deadlines and third-party APIs do not establish real-fund safety.
+
+Superseded for new runs by the swap engine (`swap_engine_cli.py`), which plans both expiries with the timelock policy.
+This script keeps a fixed Bitcoin refund distance (`BTC_REFUND_BLOCKS`, raised from 144 to 150 because the Bitcoin driver
+refuses less than the policy floor of 145 blocks) and does not check the spacing between the two legs.
 """
 import argparse
 import fcntl
@@ -23,6 +27,8 @@ from public_bitcoin_driver import fund as bitcoin_fund,load_test_key,spend_contr
 from public_bitcoin_transactions import contract as bitcoin_contract
 from public_ethereum_verify import verify_native
 from public_sepolia_driver import load_test_wallet,send as ethereum_send
+
+BTC_REFUND_BLOCKS=150
 from public_testnet_observers import bitcoin_claim,ethereum_claim
 from public_testnet_probe import BITCOIN,request,rpc
 from public_testnet_submit import verify_network
@@ -135,7 +141,7 @@ def _advance(directory):
     elif phase=='eth_gas_submitted':
         if _receipt(state['eth_gas']) is not None:state['phase']='gas_ready';_save(directory,state)
     elif phase=='gas_ready':
-        verify_network('bitcoin-testnet4');tip=int(request(BITCOIN+'/blocks/tip/height'));state['btc_refund_height']=tip+144
+        verify_network('bitcoin-testnet4');tip=int(request(BITCOIN+'/blocks/tip/height'));state['btc_refund_height']=tip+BTC_REFUND_BLOCKS
         _begin(directory,state,'btc_lock');result=bitcoin_fund(directory,directory/'alice/bitcoin-testnet4.key',state['hashlock'],terms['btc_claimant'],state['btc_refund_height'],BTC_AMOUNT)
         state.update(phase='btc_lock_submitted',btc_lock=result['txid']);_save(directory,state)
     elif phase=='btc_lock_submitted':

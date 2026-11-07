@@ -1,4 +1,10 @@
 {
+  "name": "swap-service",
+  "private": true,
+  "description": "Tests and tools for the hosted swap relay and page. Needs Node 24 (node:sqlite and global crypto).",
+  "engines": {
+    "node": ">=24"
+  },
   "devDependencies": {
     "playwright-core": "1.56.1"
   }

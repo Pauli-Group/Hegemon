@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased - swap series (2026-11-06)
+- Timelock policy: one policy shared by Python and JavaScript through test vectors (`config/swap/timelock-vectors.json`); Bitcoin refunds must be at least 145 blocks ahead and the legs must be spaced by the policy. The planner takes a per-pair margin.
+- Swap engine (`scripts/swap_engine/`, `scripts/swap_engine_cli.py`): durable store, pure transition engine, adapters for Bitcoin testnet4, Sepolia and Cardano preview, simulated-chain fault-injection and crash-at-every-state tests, and a first public Sepolia/Cardano swap through it.
+- Hosted page: Sepolia, Cardano (CIP-30) and Bitcoin (PSBT) wallet flows, preimage observers and a guided swap view; relay identity statements, encrypted inbox key backup, client integrity manifest with CSP and SRI (`scripts/build_client_manifest.mjs`), and the Cloudflare Worker with its D1 migration.
+- Public Bitcoin cases independently verified (`scripts/verify_public_btc_cases.py`); stray testnet funds recovered or recorded as unrecoverable in `PUBLIC_TESTNET_RESULTS.md`.
+- Hegemon adapter for the engine on a private local Development chain, local fixture timing, and a design (not a deployment) for a scoped remote gateway (`scripts/check_hegemon_gateway.py`). No public Hegemon swap has been run through the engine.
+- Toolchain and verification: Node 24 pinned (`.nvmrc`, `engines`), tool resolution through `swap_engine/tools.py` instead of `/workspace` paths, explicit test skips, `make swap-test`, `make swap-integration`, `make swap-hegemon-local`, the `swap-fast` CI workflow, `docs/SWAP_TOOLCHAIN.md` and `scripts/SWAP_SCRIPTS.md`.
+- Rehearsal scripts that predate the policy are marked superseded; their Bitcoin refund distance is now 150 blocks. `public_bitcoin_driver.fund` gained the explicit `rehearsal_short_refund` flag used only by the Bitcoin refund rehearsal.
+- Operators: Hegemon nodes and miners for any of this must set `HEGEMON_SEEDS="hegemon.pauli.group:30333,devnet.hegemonprotocol.com:30333"` (the approved list unless deliberately rotated; all participants share it to avoid forks) and keep NTP or chrony enabled, because PoW timestamps beyond the future-skew bound are rejected.
+- Not production: testnet only, provider-reported snapshots, no authenticated Hegemon identity, no real-funds safety claim.
+
 ## v0.10.0 - 2026-03-27
 - Version bump: `hegemon-node`, `wallet`, and `walletd` are now `0.10.0`.
 - Interface package bump: `hegemon-app` is now `0.10.0`.

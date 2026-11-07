@@ -9,12 +9,14 @@ from embit import ec,networks,script
 from development_atomic_swap_rehearsal import BitcoinRPC
 from local_private_spend_swap import port,stop
 from public_bitcoin_transactions import contract,funding,spend,split
+from swap_engine.tools import tool, skip_unless_tools
 
 
 class PublicBitcoinTransactionsTest(unittest.TestCase):
+    @skip_unless_tools('bitcoind')
     def test_signed_funding_claim_and_refund_against_core(self):
         with tempfile.TemporaryDirectory(prefix='btc-offline-sign-') as directory:
-            rpcport=port();node=subprocess.Popen(['/workspace/bitcoin-32.1/bin/bitcoind','-regtest',f'-datadir={directory}','-listen=0','-connect=0','-dnsseed=0',f'-rpcport={rpcport}','-fallbackfee=0.0002'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
+            rpcport=port();node=subprocess.Popen([str(tool('bitcoind')),'-regtest',f'-datadir={directory}','-listen=0','-connect=0','-dnsseed=0',f'-rpcport={rpcport}','-fallbackfee=0.0002'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
             try:
                 rpc=BitcoinRPC(f'http://127.0.0.1:{rpcport}',Path(directory)/'regtest/.cookie')
                 deadline=time.monotonic()+30

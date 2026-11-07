@@ -15,14 +15,16 @@ from public_bitcoin_refund_rehearsal import initialize as initialize_refund,adva
 from public_swap_journal import prepare
 from public_testnet_probe import BITCOIN
 from test_public_btc_eth_rehearsal import wallets
+from swap_engine.tools import tool, skip_unless_tools
 
 
 class PublicBtcEthIntegrationTest(unittest.TestCase):
+    @skip_unless_tools('bitcoind', 'anvil')
     def test_full_staged_rehearsal_on_local_nodes(self):
         with tempfile.TemporaryDirectory(prefix='btc-eth-stages-') as d:
             root=Path(d);wallets(d);bd=root/'bitcoin';bd.mkdir();bp=port();ep=port()
-            btc_node=subprocess.Popen(['/workspace/bitcoin-32.1/bin/bitcoind','-regtest',f'-datadir={bd}','-listen=0','-connect=0','-dnsseed=0','-txindex=1',f'-rpcport={bp}','-fallbackfee=0.0002'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
-            eth_node=subprocess.Popen(['/workspace/chain-tools/foundry/anvil','--host','127.0.0.1','--port',str(ep),'--chain-id','11155111','--silent'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
+            btc_node=subprocess.Popen([str(tool('bitcoind')),'-regtest',f'-datadir={bd}','-listen=0','-connect=0','-dnsseed=0','-txindex=1',f'-rpcport={bp}','-fallbackfee=0.0002'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
+            eth_node=subprocess.Popen([str(tool('anvil')),'--host','127.0.0.1','--port',str(ep),'--chain-id','11155111','--silent'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
             btc=BitcoinRPC(f'http://127.0.0.1:{bp}',bd/'regtest/.cookie')
             def eth(method,params):
                 req=urllib.request.Request(f'http://127.0.0.1:{ep}',json.dumps({'jsonrpc':'2.0','id':1,'method':method,'params':params}).encode(),{'Content-Type':'application/json'})

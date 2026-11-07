@@ -125,3 +125,24 @@ Clean-up of leftovers from the P3 qualification runs and a scan for live escrows
 **Two Bitcoin escrows remain unspent and cannot be recovered:** `05995b8cec2d23dff568ae426333003d75aed1310d4eebcef7bfe110e07fcd87` (20,000 sats, from an aborted qualification run, refund height 159615) and `cc72202d7ceeda6a9bcf981479953f5f7848e555cda95d199004bce4f99d8ec2` (20,000 sats, block 159459; I could not tell which run broadcast it). A P2WSH output can be spent only with its witness script, which contains the hashlock the page generated for that run, and those hashlocks were lost with the closed browser sessions; I tried the hashlocks and keys of the two runs that left public traces over refund heights 159300 to 159700 and none matched. They are abandoned test funds. The qualification harness now writes each run's hashlock to its results file, so a future aborted run leaves enough to refund its escrows. Wallet balances read afterwards (not consolidated, kept for later runs): Sepolia Alice 0.1478 ETH and Bob 0.0022 ETH; Cardano preview Alice 19,882.8 ADA in 5 UTxOs and Bob 90.7 ADA in 11 UTxOs; Bitcoin testnet4 Alice 32,852 sats and Bob 24,720 sats.
 
 Not done in P4: no new swap was run (nothing remained to finish); no claim was performed from the hosted page for a pre-existing case, because none was left to claim (the page's Bitcoin claim and refund were exercised on fresh escrows in P3); the Bitcoin and Cardano checks have no second independent Cardano provider (Koios only); the escrow outputs were checked at one point in time and a later reorganization is not excluded.
+
+## Engine swap: Sepolia ETH and Cardano preview ADA (P2, 2026-11-06)
+
+The first public swap driven by the swap engine (`scripts/swap_engine_cli.py`, separate initiator and responder stores, swap id `75fabdeba3d82e1f`, 00:45 to 00:52 local time) instead of a per-pair rehearsal script. Sepolia was the long leg and Cardano preview the short leg. Planned expiries came from the timelock policy's `plan_with_margin` on live heads: about 5,700 seconds ahead for Sepolia and about 3,660 seconds for Cardano preview.
+
+| Step | Network | Transaction ID | Observation |
+| --- | --- | --- | --- |
+| Alice funds the escrow | Sepolia | `1b5998c2c89252fc0e64beee2c937ce8d7a920f316cb77a671d27b73ae2c8aa0` | Block 12074590, contract `0x3aeb87e73b88236425829b1f9ab7b7a9f31af84c`, 0.001 test ETH |
+| Bob funds the escrow | Cardano preview | `3554254f12e6aaec3ecff4991db8fdd3428315c730945defa2532fbfc06f307d` | 10 test ADA |
+| Alice claims | Cardano preview | `37ade18f0cd9bca291d06f901bef048e0ff5d4e397e3e592ea423bc287f5792d` | Reveals the preimage |
+| Bob claims | Sepolia | `3998d2dad84aca5e06857457608be68790177abab66a539e63a6e41c76ed9c7f` | Block 12074618 |
+
+Both records ended `done`. Bob learned the preimage from Alice's confirmed Cardano claim through Koios `tx_cbor`. A search of both stores, the run log and the wallet configs found no copy of the preimage outside the two mode-0600 `secret` and `learned-preimage` files. This is a provider-reported testnet snapshot like the entries above, not evidence of real-funds safety. The record of the run is `.agent/SWAP_ENGINE_EXECPLAN.md`.
+
+## What has not been run on a public Hegemon network (P6 and P7)
+
+No Hegemon leg has been swapped on a public network through the engine. The Hegemon adapter and its refund, missing-counterparty and late-claim scenarios were run on a private local Development chain with real wallets and local Ethereum, Bitcoin and Cardano chains; those results are in `.agent/SWAP_HEGEMON_ADAPTER_RESULTS.json` and the "Hegemon local adapter" section of `METHODS.md`. They advance local deadlines with fixture timing and say nothing about public timing, confirmation policy or finality. Public Hegemon swaps are the first item of the follow-up backlog in `.agent/SWAP_SERIES_EXECPLAN.md`.
+
+## Reconciliation note (P7)
+
+The sections above were written at different times and use the policy in force then. Two corrections apply to all of them. First, the P1 timelock policy (Bitcoin refund at least 145 blocks ahead, spacing between the legs) postdates the BTC/ETH, BTC/ADA, BTC/ADA-token and BTC/ERC-20 rehearsals, and the retroactive verdict in the P4 section shows each would be rejected today; those swaps completed, but their margins do not satisfy the policy. The rehearsal scripts were left as evidence with their refund distance raised to 150 blocks so they run again (`scripts/SWAP_SCRIPTS.md`). Second, where an earlier entry says a leftover was waiting, the P4 section is the final state: the Sepolia and Cardano leftovers were refunded and two Bitcoin escrows remain unspent and unrecoverable because their hashlocks were lost.

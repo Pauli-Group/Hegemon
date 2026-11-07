@@ -95,3 +95,13 @@ config/testnet-config
 # user-sim wallets contain root secrets
 tools/user-sim/.cache/
 tools/user-sim/users.json
+
+# Swap series: local state, secrets and tool output that must never be committed.
+# Swap stores (~/.hegemon-swaps*, ~/.hegemon-private) live outside the checkout; these cover copies made inside it.
+.wrangler/
+.dev.vars
+secrets.json
+.hegemon-swaps*/
+.hegemon-private/
+**/node_modules/
+__pycache__/

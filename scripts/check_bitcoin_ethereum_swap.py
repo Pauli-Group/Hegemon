@@ -13,13 +13,14 @@ from htlc_counterpart import Ethereum, Cardano, TOOLS, ROOT, wait_for
 from local_private_spend_swap import descriptor, port, stop, require
 from development_atomic_swap_rehearsal import BitcoinRPC, rehearsal_bitcoin_key, spend_contract, confirmed_bitcoin_preimage, wait_bitcoin_confirmations
 from bitcoin_escrow_verifier import verify_bitcoin_htlc
+from swap_engine.tools import tool_default
 
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--output',type=Path,required=True)
     p.add_argument('--tools',type=Path,default=TOOLS)
-    p.add_argument('--bitcoind',type=Path,default=Path('/workspace/bitcoin-32.1/bin/bitcoind'))
+    p.add_argument('--bitcoind',type=Path,default=tool_default('bitcoind'))
     p.add_argument('--counterpart',choices=['ethereum','cardano'],default='ethereum')
     p.add_argument('--ethereum-token',choices=['erc20','erc721','erc1155'],default='erc20')
     a=p.parse_args();os.umask(0o077)

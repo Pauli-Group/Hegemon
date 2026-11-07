@@ -15,12 +15,14 @@ from eth_abi import encode
 from eth_utils import keccak
 from public_swap_journal import prepare
 from test_public_btc_eth_rehearsal import wallets
+from swap_engine.tools import tool, skip_unless_tools
 
 class PublicEthereumSetupTest(unittest.TestCase):
+    @skip_unless_tools('anvil')
     def test_local_fixture_deployments_and_ownership(self):
         with tempfile.TemporaryDirectory(prefix='eth-public-fixtures-') as d:
             root=Path(d);wallets(root);addresses={name:{'ethereum_sepolia':(root/name/'ethereum-sepolia.key').read_text().split()[0]} for name in ('alice','bob')};(root/'addresses.json').write_text(json.dumps(addresses))
-            n=port();node=subprocess.Popen(['/workspace/chain-tools/foundry/anvil','--host','127.0.0.1','--port',str(n),'--chain-id','11155111','--silent'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
+            n=port();node=subprocess.Popen([str(tool('anvil')),'--host','127.0.0.1','--port',str(n),'--chain-id','11155111','--silent'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
             def rpc(method,params):
                 req=urllib.request.Request(f'http://127.0.0.1:{n}',json.dumps({'jsonrpc':'2.0','id':1,'method':method,'params':params}).encode(),{'Content-Type':'application/json'})
                 with urllib.request.urlopen(req,timeout=5) as response:out=json.load(response)

@@ -17,7 +17,7 @@ from public_testnet_utxos import cardano_utxos
 
 ROOT=Path(__file__).resolve().parents[1]
 from swap_engine.tools import find_tool
-AIKEN=find_tool('aiken') or Path('/workspace/chain-tools/aiken/aiken-x86_64-unknown-linux-musl/aiken')  # HEGEMON_CHAIN_TOOLS or HEGEMON_TOOL_AIKEN override the legacy path
+AIKEN=find_tool('aiken') or Path('aiken')  # HEGEMON_CHAIN_TOOLS or HEGEMON_TOOL_AIKEN override the legacy path
 
 
 def verify_preview(script_file,outref,hashlock,claimant,refundee,expiry_ms,lovelace,assets,confirmations=None,minimum_remaining_ms=None,allow_expired=False):

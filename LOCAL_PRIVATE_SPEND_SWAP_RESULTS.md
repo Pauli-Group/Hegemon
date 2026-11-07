@@ -44,6 +44,6 @@ From the repository root, build:
 
 Then run with an output directory that does not already exist:
 
-    python3 scripts/local_private_spend_swap.py --output /absolute/new/output --bitcoind /workspace/bitcoin-32.1/bin/bitcoind
+    python3 scripts/local_private_spend_swap.py --output /absolute/new/output   # Bitcoin Core is found like every tool: HEGEMON_TOOL_BITCOIND, HEGEMON_CHAIN_TOOLS, PATH (docs/SWAP_TOOLCHAIN.md)
 
 The private output directories contain disposable encrypted wallets, passphrase files and diagnostics. Public receipts with source/binary identities and complete measurements are in .agent/LOCAL_PRIVATE_SPEND_SWAP_RESULTS.json. These local manually advanced deadlines do not establish public-chain timeout margins, confirmation policy, cryptographic soundness or production authorization.

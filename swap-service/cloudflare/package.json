@@ -1,0 +1,9 @@
+{
+  "name": "hegemon-swap-worker",
+  "private": true,
+  "description": "The hosted swap relay Worker. Tested on Node 24 against an in-memory SQLite adapter; deploy with `npx wrangler@4` (see ../README.md).",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  }
+}

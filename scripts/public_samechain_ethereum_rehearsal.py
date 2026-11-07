@@ -3,6 +3,9 @@
 
 This is a testnet-only rehearsal using minimal fixtures. Each advance makes at
 most one public submission, and an uncertain inflight action is never retried.
+
+Superseded for new runs by the swap engine (`swap_engine_cli.py`) and the same-chain local checks (`check_samechain_ethereum_swap.py`).
+Kept as the record of how the 2026 same-chain Sepolia rehearsal was staged.
 """
 import argparse
 import hashlib

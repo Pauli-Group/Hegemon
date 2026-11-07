@@ -1,0 +1,55 @@
+name: Swap fast tier
+
+# The fast tier of the swap series: no network, no chain tools, no browser (see docs/SWAP_TOOLCHAIN.md).
+# Qualification, fund sweeps, public-testnet spend tools and the local-chain suites are deliberately not run here.
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'scripts/**'
+      - 'swap-ui/**'
+      - 'swap-service/**'
+      - 'contracts/**'
+      - 'config/swap/**'
+      - 'docs/SWAP_TOOLCHAIN.md'
+      - 'Makefile'
+      - '.nvmrc'
+      - '.github/workflows/swap-fast.yml'
+  pull_request:
+    paths:
+      - 'scripts/**'
+      - 'swap-ui/**'
+      - 'swap-service/**'
+      - 'contracts/**'
+      - 'config/swap/**'
+      - 'docs/SWAP_TOOLCHAIN.md'
+      - 'Makefile'
+      - '.nvmrc'
+      - '.github/workflows/swap-fast.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  swap-fast:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version-file: .nvmrc
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c
+        with:
+          python-version: '3.10'
+      - name: Install Python packages
+        run: python3 -m pip install -r scripts/requirements-htlc-local.txt -r scripts/requirements-htlc-public.txt
+      - name: Install the vendored-bundle builder
+        run: npm ci --prefix swap-service/vendor-src
+      - name: Node version
+        run: node --version
+      - name: Fast tier (manifest and bundle checks, JavaScript, Worker, Python)
+        run: make swap-test

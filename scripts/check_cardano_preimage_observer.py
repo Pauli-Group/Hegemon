@@ -12,11 +12,12 @@ from htlc_counterpart import Cardano,TOOLS,wait_for
 from local_private_spend_swap import port,require,stop
 from unlock_swap_backup import save_recovered_backup,unlock_backup
 from cardano_observer_cli_check import check_observer_cli
+from swap_engine.tools import tool_default
 
 
 def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--output',type=Path,required=True);p.add_argument('--tools',type=Path,default=TOOLS)
-    p.add_argument('--ogmios',type=Path,default=Path('/workspace/chain-tools/ogmios/bin/ogmios'))
+    p.add_argument('--ogmios',type=Path,default=tool_default('ogmios'))
     a=p.parse_args();os.umask(0o077);out=a.output.resolve();out.mkdir(mode=0o700,exist_ok=False);chain=Cardano(out/'chain',a.tools,test_tokens=True,epoch_length=5000);ogmios=None
     receipt={'status':'failed','checks':{}}
     try:

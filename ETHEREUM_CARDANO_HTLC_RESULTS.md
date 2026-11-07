@@ -44,11 +44,13 @@ See `contracts/README.md` for installation, pinned tool versions and commands.
 
     python3 -m pip install -r scripts/requirements-htlc-local.txt
     python3 scripts/setup_multichain_htlc_tools.py
-    /workspace/chain-tools/foundry/forge test --root contracts/ethereum --use /workspace/chain-tools/solc -vv
-    /workspace/chain-tools/aiken/aiken-x86_64-unknown-linux-musl/aiken check contracts/cardano
-    python3 scripts/local_multichain_htlc_swap.py --chain ethereum --output /workspace/new-ethereum-run
-    python3 scripts/local_multichain_htlc_swap.py --chain cardano --output /workspace/new-cardano-run
+    TOOLS="${HEGEMON_CHAIN_TOOLS:-$HOME/.local/opt/chain-tools}"
+    mkdir -p -m 700 "$HOME/hegemon-runs"
+    "$TOOLS/foundry/forge" test --root contracts/ethereum --use "$TOOLS/solc" -vv
+    "$TOOLS/aiken/aiken-x86_64-unknown-linux-musl/aiken" check contracts/cardano
+    python3 scripts/local_multichain_htlc_swap.py --chain ethereum --output "$HOME/hegemon-runs/new-ethereum-run"
+    python3 scripts/local_multichain_htlc_swap.py --chain cardano --output "$HOME/hegemon-runs/new-cardano-run"
 
-Use new output paths. Existing Hegemon binaries must have the Development features described in the README. Raw private output is in `/workspace/eth-htlc-run1` and `/workspace/ada-htlc-run1`; those directories contain disposable private keys and passphrases. Public receipts, unit-test results, source/tool hashes and complete proof measurements are retained in `.agent/ETHEREUM_CARDANO_HTLC_RESULTS.json`.
+Use new output paths. Existing Hegemon binaries must have the Development features described in the README. Raw private output of the recorded runs was in `/workspace/eth-htlc-run1` and `/workspace/ada-htlc-run1` on the original build host and is not part of this repository; those directories contain disposable private keys and passphrases. Public receipts, unit-test results, source/tool hashes and complete proof measurements are retained in `.agent/ETHEREUM_CARDANO_HTLC_RESULTS.json`.
 
 These tests advance shortened local deadlines. They do not establish public-chain timeout margins, confirmation/finality policy, production readiness or an independent security audit. They implement native-asset HTLC swaps and do not mint wrapped assets or operate a bridge.

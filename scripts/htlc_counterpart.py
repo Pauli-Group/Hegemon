@@ -3,8 +3,9 @@ import datetime, hashlib, json, os, subprocess, time
 from pathlib import Path
 from local_private_spend_swap import ROOT, port, stop, require
 from release_private_spend_lifecycle_io import rpc
+from swap_engine.tools import tools_directory
 
-TOOLS=Path('/workspace/chain-tools')
+TOOLS=tools_directory()  # HEGEMON_CHAIN_TOOLS, else ~/.local/opt/chain-tools
 
 def wait_for(fn, label, seconds=90):
     end=time.monotonic()+seconds

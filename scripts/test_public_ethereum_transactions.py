@@ -14,6 +14,7 @@ from local_private_spend_swap import port,stop
 from public_ethereum_transactions import sign_transaction
 from public_ethereum_verify import verify_native
 from public_ethereum_token_verify import verify_token
+from swap_engine.tools import tool, skip_unless_tools
 
 class PublicEthereumTransactionsTest(unittest.TestCase):
     def test_large_bounded_public_estimate_is_signable(self):
@@ -21,8 +22,9 @@ class PublicEthereumTransactionsTest(unittest.TestCase):
         raw,_=sign_transaction(key,sender,nonce=0,to=None,value=0,data=b'fixture',gas=20_000_000,max_fee=2_000_000_000,priority_fee=1_000_000_000)
         self.assertEqual(Account.recover_transaction(raw),sender)
         with self.assertRaises(ValueError):sign_transaction(key,sender,nonce=0,to=None,value=0,data=b'',gas=30_000_001,max_fee=1,priority_fee=1)
+    @skip_unless_tools('anvil')
     def test_local_sepolia_chainid_escrow_claim(self):
-        n=port();node=subprocess.Popen(['/workspace/chain-tools/foundry/anvil','--host','127.0.0.1','--port',str(n),'--chain-id','11155111','--silent'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
+        n=port();node=subprocess.Popen([str(tool('anvil')),'--host','127.0.0.1','--port',str(n),'--chain-id','11155111','--silent'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
         def rpc(method,params):
             req=urllib.request.Request(f'http://127.0.0.1:{n}',json.dumps({'jsonrpc':'2.0','id':1,'method':method,'params':params}).encode(),{'Content-Type':'application/json'})
             with urllib.request.urlopen(req,timeout=5) as response:out=json.load(response)
@@ -45,7 +47,7 @@ class PublicEthereumTransactionsTest(unittest.TestCase):
             alicekey=b'\x11'*32;bobkey=b'\x22'*32;alice=Account.from_key(alicekey).address;bob=Account.from_key(bobkey).address
             rpc('anvil_setBalance',[alice,hex(10**18)]);rpc('anvil_setBalance',[bob,hex(10**18)])
             preimage=b'\x33'*32;digest=hashlib.sha256(preimage).digest();expiry=int(rpc('eth_getBlockByNumber',['latest',False])['timestamp'],16)+600
-            artifact=json.loads(Path('contracts/ethereum/out/HegemonHTLC.sol/HegemonHTLC.json').read_text())
+            artifact=json.loads((Path(__file__).resolve().parents[1]/'contracts/ethereum/out/HegemonHTLC.sol/HegemonHTLC.json').read_text())
             bytecode=bytes.fromhex(artifact['bytecode']['object'].removeprefix('0x'))+encode(['bytes32','address','uint256'],[digest,bob,expiry])
             kwargs={'nonce':0,'to':None,'value':10**15,'data':bytecode,'gas':1000000,'max_fee':2_000_000_000,'priority_fee':1_000_000_000}
             with self.assertRaisesRegex(ValueError,'does not match'):sign_transaction(bobkey,alice,**kwargs)
@@ -63,8 +65,9 @@ class PublicEthereumTransactionsTest(unittest.TestCase):
             self.assertEqual(int(rpc('eth_getBalance',[contract,'latest']),16),0)
         finally:stop(node)
 
+    @skip_unless_tools('anvil')
     def test_local_sepolia_chainid_token_claims(self):
-        n=port();node=subprocess.Popen(['/workspace/chain-tools/foundry/anvil','--host','127.0.0.1','--port',str(n),'--chain-id','11155111','--silent'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
+        n=port();node=subprocess.Popen([str(tool('anvil')),'--host','127.0.0.1','--port',str(n),'--chain-id','11155111','--silent'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
         def rpc(method,params):
             req=urllib.request.Request(f'http://127.0.0.1:{n}',json.dumps({'jsonrpc':'2.0','id':1,'method':method,'params':params}).encode(),{'Content-Type':'application/json'})
             with urllib.request.urlopen(req,timeout=5) as response:out=json.load(response)
@@ -78,7 +81,7 @@ class PublicEthereumTransactionsTest(unittest.TestCase):
                 if time.monotonic()>deadline:raise RuntimeError('Local transaction not mined')
                 time.sleep(.05)
         def calldata(signature,types,args):return keccak(text=signature)[:4]+encode(types,args)
-        def code(path):return bytes.fromhex(json.loads(Path(path).read_text())['bytecode']['object'].removeprefix('0x'))
+        def code(path):return bytes.fromhex(json.loads((Path(__file__).resolve().parents[1]/path).read_text())['bytecode']['object'].removeprefix('0x'))
         try:
             deadline=time.monotonic()+20
             while True:

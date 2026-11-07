@@ -8,6 +8,7 @@ from development_atomic_swap_rehearsal import (
     confirmed_bitcoin_preimage, wait_bitcoin_confirmations,
 )
 from release_private_spend_lifecycle_io import rpc, height, chunks
+from swap_engine.tools import tool_default
 
 ROOT = Path(__file__).resolve().parents[1]
 PASS = b"Encrypted wallet passphrase: "
@@ -230,7 +231,7 @@ def main():
     p.add_argument('--scenario',choices=['all','happy','no_btc','both_refund','late_claim'],default='all')
     p.add_argument('--node',type=Path,default=ROOT/'target/release/hegemon-node')
     p.add_argument('--wallet',type=Path,default=ROOT/'target/release/private-spend')
-    p.add_argument('--bitcoind',type=Path,default=Path('/workspace/bitcoin-32.1/bin/bitcoind'))
+    p.add_argument('--bitcoind',type=Path,default=tool_default('bitcoind'))
     a=p.parse_args(); a.output=a.output.resolve(); a.output.mkdir(mode=0o700,exist_ok=False)
     os.umask(0o077)
     results=[]

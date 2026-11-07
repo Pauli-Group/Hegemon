@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 from htlc_counterpart import Cardano,wait_for
+from swap_engine.tools import skip_unless_tools
 from public_cardano_transactions import build_balanced
 from public_cardano_driver import sign_and_submit
 from public_swap_journal import transaction_id
@@ -26,6 +27,7 @@ class PublicCardanoTransactionsTest(unittest.TestCase):
             output['assets']={'22'*28+'.00':1}
             with self.assertRaisesRegex(ValueError,'Insufficient Cardano assets'):build_balanced(inputs=[item],outputs=[output],change_address=addr,params=params,body=body)
             self.assertFalse(body.exists())
+    @skip_unless_tools('cardano-cli', 'cardano-node', 'cardano-testnet', 'aiken')
     def test_offline_build_preserves_tokens_and_claims_script_output(self):
         with tempfile.TemporaryDirectory(prefix='ada-offline-build-') as root:
             chain=Cardano(Path(root)/'cardano',test_tokens=True,epoch_length=5000)
