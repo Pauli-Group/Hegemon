@@ -1,0 +1,97 @@
+{
+  "baseline_commit": "1e56a5c8f97eb6f8abf3e79a728849272c42dd0d",
+  "cryptographic_security_approved": false,
+  "evidence": [
+    {
+      "check": "exact_runtime_overlay",
+      "method": "Independently recomputed canonical sorted-key compact-JSON overlay SHA-256, checked every current source size and postimage SHA-256, and compared each deployed baseline preimage or required absence using git show.",
+      "result": "PASS",
+      "runtime_paths": 25
+    },
+    {
+      "added_source_paths": 12,
+      "cargo_lock_sha256": "1c243bf3858f4ee22fa4441c7a2ee6d49b16d264147b0f3a2de845e760821719",
+      "changed_runtime_paths": 55,
+      "check": "inherited_authenticated_source_comparison",
+      "method": "Executed the pinned inherited helper.current_source_gate against /private/tmp/hegemon-transport-recovery-20261105/successor-pin-controls/authenticated-predecessor-complete after load_binding(require_review=False) inside a read-only reviewer harness. This was review evidence, not acceptance by the public v0.11.3 release gate.",
+      "network_manifest_sha256": "386f21b8d9b474fce096c0691ec7d625f292e9aadf0cd5f06fb4088442ec6754",
+      "result": "PASS_COMPARISON_ONLY",
+      "runtime_files_compared": 598
+    },
+    {
+      "check": "private_spend_relation_inputs",
+      "files": 41,
+      "manifest": "release-evidence/v0.11-current-proof-fixture/manifest.json",
+      "manifest_sha256": "50a1c137b7d8d7d03181b7b9e1d353d98cfd26e708e178c75dd7925dff271a8c",
+      "method": "Checked current size and SHA-256 for all 41 frozen source_inputs. A separate read-only subreview also byte-compared the same set to public candidate e8f7df2dfc27856926cee58b8a2b40ba3fd2e909, deployed parent 1e56a5c8f97eb6f8abf3e79a728849272c42dd0d and v0.11.2 baseline 15c42e687b24d9cb35bb6dbde6061459d6f1242a with zero differences.",
+      "result": "PASS"
+    },
+    {
+      "check": "runtime_merge_semantics",
+      "method": "Read the final public admission/transport/dispatch paths and merged service/node implementation. Checked transport-IP pre-body admission, per-batch accounting, worker and response-body permit ownership, same-node public submission tokens, dedicated verifier capacity, existing PrivateSpend route gates, capability discovery/dispatch consistency, exact unsent sync-request rollback, retained body deadlines/retry counts/byte reservations, and single owned announce-preparation completion. Reviewed legacy signer-tag/private-descriptor refusal changes and the formal-checker binding additions within this bounded source scope.",
+      "result": "NO_ACTIONABLE_FINDING"
+    },
+    {
+      "check": "authority_and_consumer_semantics",
+      "method": "Read exact deployed parent/config authentication before import; exact overlay/config composition; review hash/schema/scope checks; inherited artifact, five-proof/thirty-negative and H0 execution calls; strict final receipt identities and false authority flags; crypto-profile helper pins and before/after snapshots; security-audit scope classifier; one source and four final-artifact workflow gates; exact workflow equality; and formatting-only debt composition. The pending review boundary was observed rejecting before acceptance.",
+      "result": "NO_ACTIONABLE_FINDING"
+    },
+    {
+      "check": "successor_rejection_controls",
+      "command": "TMPDIR=/private/tmp/hegemon-v0113-ship-integration python3 -I -B scripts/test_check_v0113_release_successor.py --source-root . --predecessor-root /private/tmp/hegemon-transport-recovery-20261105/successor-pin-controls/authenticated-predecessor-complete",
+      "log_sha256": "1e724de3a7176619ace5bdffabf7e1170dabf07e92c2c648e9dbdbc7f033827d",
+      "result": "PASS",
+      "scope": "Validator controls include explicitly synthetic review/receipt fixtures and mocked review-loader boundaries. These are negative/unit test evidence only, not binary execution or qualification receipts.",
+      "tests": 57
+    },
+    {
+      "check": "preparation_routing_controls",
+      "command": "python3 -I -B scripts/test_prepare_v0113_release.py",
+      "result": "PASS",
+      "scope": "Pure workflow generation, exact gate routing and soft-failure rejection controls; no CI jobs executed.",
+      "tests": 6
+    },
+    {
+      "check": "formatting_policy_controls",
+      "command": "python3 -I -B scripts/test_check_v0113_formatting.py",
+      "result": "PASS",
+      "scope": "Pure exact-migration, historical-pin and direct-module policy controls; no builds or formatting command execution by this reviewer.",
+      "tests": 6
+    }
+  ],
+  "full_network_lifecycle_verified": false,
+  "limitations": [
+    "This is an actual independent model source review, not a human review, external audit, cryptographic proof of security, or production authorization.",
+    "Acceptance is limited to the exact recorded runtime overlay and bounded source/authority/consumer paths. It does not resolve the repository-wide independent security-review or cryptographic assumption-closure gates.",
+    "No Rust builds, nodes, live hosts, current release artifacts, public network, miner rollout or full network lifecycle were executed by this reviewer.",
+    "The authenticated 598-file comparison was executed separately as review evidence while the review pin was pending. The normal unmodified v0.11.3 gate must pass after this review is pinned; this record does not claim that later gate execution.",
+    "Synthetic validator fixtures and historical source/lifecycle evidence are not current binary proof verification, current-network G8 qualification, deployment verification or a fresh genesis authorization.",
+    "Final native artifacts still require the unchanged actual artifact identity, five-proof/thirty-negative and H0 checks on each target. Full-network lifecycle, cryptographic qualification and publication/deployment decisions remain separate."
+  ],
+  "overlay_sha256": "93a0c461a93aebf6819e4b8e525bc36df141fe8d20a104f1377ed55a08281eb7",
+  "permitted_mechanical_pin_updates": [
+    "Replace SOURCE_REVIEW_SHA256=None in scripts/check_v0113_release_successor.py with the SHA-256 of this exact review file.",
+    "Replace only v0113_independent_source_review.sha256 in config/v0113-release-successor.json with that same SHA-256, then update CONFIG_SHA256 in the successor checker to the resulting exact configuration hash.",
+    "Update only the v0.11.3 configuration and successor-checker digest entries in scripts/check_release_crypto_profile.py to the resulting exact hashes. No runtime overlay, validator predicate, consumer scope or workflow change is covered by these mechanical pin updates."
+  ],
+  "production_authorized": false,
+  "review_findings": [],
+  "review_kind": "independent_model_review",
+  "reviewed_authority_pre_pin_sha256": {
+    ".github/workflows/prepare-premainnet-release.yml": "d27700051b4302220874a67e7f1fec283b849fe8a68d62e5075628337585c474",
+    "config/v0113-release-successor.json": "1a17c727a420c2a0817e513f90b38dfacb736e1caaf67c89e8ca3796d3cc3157",
+    "scripts/check_release_crypto_profile.py": "ec7e6f7a8bb7d0a4be24e05a0c2dcb7409e67dc7ec0702c0748ca9aae8a32feb",
+    "scripts/check_v0113_formatting.py": "f11d9d986278eaa3677d1ffa53b9c789828c1b421fa793be6bf1645ad21af23c",
+    "scripts/check_v0113_release_successor.py": "62b95d9368b6670d3819739c814fbfc8b1d380e877da7bfaa26222c42aef057f",
+    "scripts/prepare_premainnet_release.py": "9cbfc5a8f7eba4e1f9f14c7894ad880e82bb85bc4287f7f932a55707b8d34df4",
+    "scripts/security-audit.sh": "3fb4e33b60b5d3b681ff2a5a6ab13dc10982b02d56f42fd35bbf38cf63a7112d",
+    "scripts/test_check_v0113_formatting.py": "b7ce7204bb544a4595e1ac42fef59037fef80dd7057d304edfea7ec5f3d9754f",
+    "scripts/test_check_v0113_release_successor.py": "f88cc8aae5908be8c48cf7388f828209bb546da741f530b36fda2cf9b311eaf9",
+    "scripts/test_prepare_v0113_release.py": "085b7c4c4732a42e822fa8345f95a9c9851e05ed958efcacc954a00eedfecd83"
+  },
+  "reviewed_runtime_commit": "d283a1da545864dafb20d798ec3a5fccfa1c08b5",
+  "reviewer": "Codex /root/integration_review; separate model reviewer from the runtime and release-authority implementing agents",
+  "schema": "hegemon.v0113.independent-source-review.v1",
+  "source_scope": "exact_v0113_premainnet_source_current_binary_backend_and_h0",
+  "status": "accepted_for_scoped_premainnet_qualification"
+}

@@ -401,7 +401,8 @@ elif (p.get("production_authority") is False and p.get("private_spend_launch_aut
 elif (p.get("production_authority") is False and p.get("private_spend_launch_authority") is False
       and (p.get("mode"), p.get("authorization_scope")) in (
           ("executed-exact-source-backend-h0", "exact-current-source-current-binary-backend-and-h0-only"),
-          ("executed-exact-sync-import-source-backend-h0", "exact-sync-import-source-current-binary-backend-and-h0-only"))
+          ("executed-exact-sync-import-source-backend-h0", "exact-sync-import-source-current-binary-backend-and-h0-only"),
+          ("executed-exact-v0113-premainnet-source-backend-h0", "exact-v0113-premainnet-source-current-binary-backend-and-h0-only"))
       and p.get("actual_new_binary_proof_verification") is True
       and p.get("current_network_G8_qualified") is False
       and p.get("fresh_network_lifecycle_verified") is False

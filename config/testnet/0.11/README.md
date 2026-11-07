@@ -4,16 +4,20 @@ v0.11 is the fresh HGN-only pre-mainnet test network. It replaces v0.10.3;
 old balances and proofs do not migrate. Mainnet will use a separate v1.00
 launch and identity. Preserve old node data and wallet backups.
 
-The **v0.11.2** software update stays on this same v0.11 network, with the same
+The **v0.11.3** software update stays on this same v0.11 network, with the same
 genesis, manifest, seeds and default `~/.hegemon-node-v0.11` directory. It adds
-exact wallet balances, immature-reward maturity information and progress reporting,
-and makes wallet status faster. It includes the v0.11.1 startup replay fix.
+optional public wallet submission and retains the deployed sync, transport and
+mining maintenance fixes, v0.11.2 wallet improvements and v0.11.1 startup replay fix.
 Preserve your existing v0.11 database and wallets when upgrading; no reset or
-new genesis is required.
+new genesis is required. The default remains safe loopback RPC; installing this
+release does not enable a public submission endpoint. Existing operator RPC
+configuration is preserved for the reference-node rollout. See the
+[public wallet integration guide](../../../docs/PUBLIC_SUBMIT_WALLET_INTEGRATION.md)
+for the separate opt-in policy.
 
 ## Select the public chain first
 
-Use **tag `v0.11.2`** for source builds or download its platform archive. The original `v0.11` tag is `da7be324`; older source links to `9e580878`
+Use **tag `v0.11.3`** for source builds or download its platform archive. The original `v0.11` tag is `da7be324`; older source links to `9e580878`
 predate that joining package. These software releases select the same public chain.
 
 **Building v0.11 does not select pre-mainnet automatically.** A bare
@@ -32,7 +36,7 @@ Do not mine a separate block 1 or delete old state.
 ## Install the release package
 
 Download the archive for your platform from the
-[v0.11.2 release](https://github.com/Pauli-Group/Hegemon/releases/tag/v0.11.2),
+[v0.11.3 release](https://github.com/Pauli-Group/Hegemon/releases/tag/v0.11.3),
 compare its SHA-256 checksum with the published release checksums, then extract
 it to a new directory. The packages contain `bin/` executables, launchers and
 `config/testnet/0.11/`. Run the following commands from that extracted directory.
@@ -40,7 +44,7 @@ Python 3 is required for the launcher's release-metadata checks. On Linux and
 macOS, make sure `bin/hegemon-node` is executable. The examples use `start.py`;
 `./start.sh` and Windows `start.cmd` are convenience wrappers.
 
-The software version is **0.11.2**; the network remains **v0.11**. Each archive
+The software version is **0.11.3**; the network remains **v0.11**. Each archive
 includes `SHA256SUMS` and `bundle.json`, with the exact binary build provenance
 under `provenance/`.
 
@@ -118,8 +122,8 @@ source build, clone the release tag rather than an older commit or a moving
 branch:
 
 ```bash
-git clone --branch v0.11.2 --depth 1 https://github.com/Pauli-Group/Hegemon.git Hegemon-v0.11.2
-cd Hegemon-v0.11.2
+git clone --branch v0.11.3 --depth 1 https://github.com/Pauli-Group/Hegemon.git Hegemon-v0.11.3
+cd Hegemon-v0.11.3
 make setup
 make node
 ```
@@ -143,7 +147,7 @@ after creating and backing up your wallet. The `python3 start.py` examples in
 this guide apply to extracted release packages, not the source checkout.
 
 For an existing node already verified on this v0.11 genesis, upgrading to
-v0.11.2 is different from a first join: stop it cleanly, retain a coherent backup,
+v0.11.3 is different from a first join: stop it cleanly, retain a coherent backup,
 replace the executable, and restart with its **same** data directory and manifest.
 Do not choose a fresh directory or delete state merely to install this update.
 
@@ -256,10 +260,10 @@ review its amount, recipient and fee, then submit that retained identifier.
 Reward notes must first reach their 120-block maturity. Orphaned rewards and
 transactions must be reconciled with the canonical chain.
 
-The native CLI is the funded-send path qualified for this release. Desktop app
-coverage establishes fresh-wallet synchronization, not funded GUI sends,
-consolidation or private multisig. The live cutover exercised a 0.01 HGN payment
+The original v0.11 cutover qualified the native CLI funded-send path. Its desktop
+app coverage established fresh-wallet synchronization, not funded GUI sends,
+consolidation or private multisig. That historical cutover exercised a 0.01 HGN payment
 from a mature mining reward to the existing treasury, its 0.00001 HGN fee and
 3.98999 HGN change, with canonical inclusion on OVH, dev and a local syncing node.
 Unchanged HTLC and exact 120-block boundary qualification retain their original
-lifecycle evidence. See the [release notes](https://github.com/Pauli-Group/Hegemon/blob/v0.11.2/docs/releases/v0.11.md).
+lifecycle evidence; these are not new v0.11.3 lifecycle results. See the [historical release notes](https://github.com/Pauli-Group/Hegemon/blob/v0.11.2/docs/releases/v0.11.md).

@@ -38,10 +38,12 @@ jobs:
         run: /usr/bin/python3 -I -B scripts/test_materialize_v011_predecessor.py
       - name: ASIC adapter solution-retention regressions
         run: python3 -I -B scripts/test_bitcoin_asic_stratum.py
-      - name: Sync and import successor policy rejection controls
-        run: /usr/bin/python3 -I -B scripts/test_check_v011_sync_import_successor.py
-      - name: Sync and import formatting policy rejection controls
-        run: /usr/bin/python3 -I -B scripts/test_check_sync_import_formatting.py
+      - name: v0.11.3 successor policy rejection controls
+        run: /usr/bin/python3 -I -B scripts/test_check_v0113_release_successor.py
+      - name: v0.11.3 preparation routing regression controls
+        run: /usr/bin/python3 -I -B scripts/test_prepare_v0113_release.py
+      - name: v0.11.3 formatting policy rejection controls
+        run: /usr/bin/python3 -I -B scripts/test_check_v0113_formatting.py
 
   transaction-proof-authorization:
     needs: preparation-policy
@@ -63,7 +65,7 @@ jobs:
         run: python3 -I -B scripts/materialize_v011_predecessor.py --destination target/v011-predecessor --reserve-bytes 4294967296
 
       - name: Current successor scope rejection controls
-        run: python3 -I -B scripts/test_sync_import_successor_scope.py --source-root . --predecessor-root target/v011-predecessor
+        run: python3 -I -B scripts/test_check_v0113_release_successor.py --source-root . --predecessor-root target/v011-predecessor
 
       - name: Current successor final-consumer rejection controls
         run: python3 -I -B scripts/tests/v011_current_successor/test_successor_consumer.py --consumer scripts/check_release_crypto_profile.py --receipt-fixture scripts/tests/v011_current_successor/synthetic-final-receipt.json --artifact-manifest scripts/tests/v011_current_successor/synthetic-artifact-manifest.json --registry scripts/tests/v011_current_successor/synthetic-historical-registry.json
@@ -78,7 +80,7 @@ jobs:
         run: python3 -I -B scripts/test_check_v011_current_binary_proofs.py
 
       - name: Transaction-proof successor authorization release gate
-        run: /usr/bin/python3 -I -B scripts/check_v011_sync_import_successor.py --require-authorized --predecessor-root target/v011-predecessor
+        run: /usr/bin/python3 -I -B scripts/check_v0113_release_successor.py --require-authorized --predecessor-root target/v011-predecessor
 
       - name: Release workflow policy regression
         run: /usr/bin/python3 -I -B scripts/test_check_ci_release_gate_policy.py
@@ -105,12 +107,12 @@ jobs:
           toolchain: "1.91.1"
           components: rust-src, rustfmt
 
-      - name: Sync and import successor formatting gates
+      - name: v0.11.3 successor formatting gates
         run: |
           set -euo pipefail
-          python3 -I -B scripts/check_sync_import_formatting.py --manifest workspace
-          python3 -I -B scripts/check_sync_import_formatting.py --manifest htlc
-          python3 -I -B scripts/check_sync_import_formatting.py --manifest proof-backend
+          python3 -I -B scripts/check_v0113_formatting.py --manifest workspace
+          python3 -I -B scripts/check_v0113_formatting.py --manifest htlc
+          python3 -I -B scripts/check_v0113_formatting.py --manifest proof-backend
 
       - name: Install cargo-audit
         run: cargo install cargo-audit --version 0.22.2 --locked
@@ -179,6 +181,27 @@ jobs:
           ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::service::sync_body_backpressure::tests::body_local_full_moves_existing_slot_at_full_peer_and_global_queue_limits --no-default-features
           ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::service::sync_body_backpressure::tests::body_local_full_repeated_deferral_cannot_extend_absolute_lifetime --no-default-features
           ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::service::sync_body_backpressure::tests::body_local_full_rollback_leaves_normal_idle_retry_and_expiry_unchanged --no-default-features
+
+      - name: v0.11.3 public HTTP admission and catalog regressions
+        run: |
+          set -euo pipefail
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::public_rpc_http_tests::public_http_catalog_is_safe_plus_submit_and_privileged_calls_do_not_mutate --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::public_rpc_http_tests::public_http_existing_policies_and_auto_default_keep_their_surface --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::public_rpc_http_tests::public_http_batch_charges_each_submission_and_forwarded_headers_do_not_reset_it --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::public_rpc_http_tests::public_http_full_client_table_denies_new_client_without_eviction --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::public_rpc_http_tests::public_http_rejects_malformed_inactive_wrong_binding_and_other_action_families --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::public_rpc_http_tests::public_http_cors_is_closed_by_default_and_explicit_origin_is_exact --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::public_rpc_http_tests::public_http_disconnected_safe_read_workers_keep_bounded_reservations_until_completion --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::public_rpc_http_tests::public_http_disconnected_submit_keeps_public_permit_and_local_capacity_available --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::public_rpc_http_tests::public_http_parser_and_batch_failures_release_worker_capacity --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::public_rpc_http_tests::public_http_safe_reads_are_rate_charged_per_batch_item --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::public_rpc_http_tests::public_http_rejects_oversized_id_without_echoing_it --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::public_rpc_http_tests::public_http_rejects_noncanonical_request_envelopes_before_action_dispatch --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::public_rpc_http_tests::public_http_disconnect_during_body_collection_releases_unstarted_request --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::public_rpc_http_tests::public_http_malformed_bodies_cannot_bypass_preparse_rate_accounting --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::public_rpc_http_tests::public_http_single_requests_are_charged_exactly_once --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::public_rpc_formal_tests::public_rpc_formal_catalog_matches_registered_available_dispatch --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::public_rpc_formal_tests::public_rpc_formal_effective_surface_is_safe_plus_submit --no-default-features
 
       - name: Formal-core checker controls for PR review
         if: github.event_name == 'pull_request'
@@ -296,7 +319,7 @@ jobs:
         run: python3 -I -B scripts/materialize_v011_predecessor.py --destination target/v011-predecessor --reserve-bytes 4294967296
 
       - name: Validate final common proof authorization and affected lifecycle
-        run: python3 -I -B scripts/check_v011_sync_import_successor.py --require-authorized --predecessor-root target/v011-predecessor --artifact-manifest target/release/hegemon-release-artifacts.json --require-final-artifact
+        run: python3 -I -B scripts/check_v0113_release_successor.py --require-authorized --predecessor-root target/v011-predecessor --artifact-manifest target/release/hegemon-release-artifacts.json --require-final-artifact
 
       - name: Release PQ binary audit
         run: ./scripts/security-audit.sh --require-binary --binary-manifest target/release/hegemon-release-artifacts.json --node-bin target/release/hegemon-node --binary target/release/wallet --binary target/release/walletd --binary target/release/private-spend
@@ -338,7 +361,7 @@ jobs:
         run: python3 -I -B scripts/materialize_v011_predecessor.py --destination target/v011-predecessor --reserve-bytes 4294967296
 
       - name: Validate final common proof authorization and affected lifecycle
-        run: python3 -I -B scripts/check_v011_sync_import_successor.py --require-authorized --predecessor-root target/v011-predecessor --artifact-manifest target/x86_64-apple-darwin/release/hegemon-release-artifacts.json --require-final-artifact
+        run: python3 -I -B scripts/check_v0113_release_successor.py --require-authorized --predecessor-root target/v011-predecessor --artifact-manifest target/x86_64-apple-darwin/release/hegemon-release-artifacts.json --require-final-artifact
 
       - name: Release PQ binary audit
         run: ./scripts/security-audit.sh --require-binary --binary-manifest target/x86_64-apple-darwin/release/hegemon-release-artifacts.json --node-bin target/x86_64-apple-darwin/release/hegemon-node --binary target/x86_64-apple-darwin/release/wallet --binary target/x86_64-apple-darwin/release/walletd --binary target/x86_64-apple-darwin/release/private-spend
@@ -379,7 +402,7 @@ jobs:
         run: python3 -I -B scripts/materialize_v011_predecessor.py --destination target/v011-predecessor --reserve-bytes 4294967296
 
       - name: Validate final common proof authorization and affected lifecycle
-        run: python3 -I -B scripts/check_v011_sync_import_successor.py --require-authorized --predecessor-root target/v011-predecessor --artifact-manifest target/release/hegemon-release-artifacts.json --require-final-artifact
+        run: python3 -I -B scripts/check_v0113_release_successor.py --require-authorized --predecessor-root target/v011-predecessor --artifact-manifest target/release/hegemon-release-artifacts.json --require-final-artifact
 
       - name: Release PQ binary audit
         run: ./scripts/security-audit.sh --require-binary --binary-manifest target/release/hegemon-release-artifacts.json --node-bin target/release/hegemon-node --binary target/release/wallet --binary target/release/walletd --binary target/release/private-spend
@@ -431,7 +454,7 @@ jobs:
 
       - name: Validate final common proof authorization and affected lifecycle
         shell: bash
-        run: python3 -I -B scripts/check_v011_sync_import_successor.py --require-authorized --predecessor-root target/v011-predecessor --artifact-manifest target/release/hegemon-release-artifacts.json --require-final-artifact
+        run: python3 -I -B scripts/check_v0113_release_successor.py --require-authorized --predecessor-root target/v011-predecessor --artifact-manifest target/release/hegemon-release-artifacts.json --require-final-artifact
 
       - name: Release PQ binary audit
         shell: bash

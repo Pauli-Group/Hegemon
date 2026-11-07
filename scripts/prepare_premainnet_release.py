@@ -143,6 +143,92 @@ SYNC_IMPORT_REGRESSIONS = (
 )
 
 
+PUBLIC_RPC_REGRESSIONS = (
+    "native::public_rpc_http_tests::public_http_catalog_is_safe_plus_submit_and_privileged_calls_do_not_mutate",
+    "native::public_rpc_http_tests::public_http_existing_policies_and_auto_default_keep_their_surface",
+    "native::public_rpc_http_tests::public_http_batch_charges_each_submission_and_forwarded_headers_do_not_reset_it",
+    "native::public_rpc_http_tests::public_http_full_client_table_denies_new_client_without_eviction",
+    "native::public_rpc_http_tests::public_http_rejects_malformed_inactive_wrong_binding_and_other_action_families",
+    "native::public_rpc_http_tests::public_http_cors_is_closed_by_default_and_explicit_origin_is_exact",
+    "native::public_rpc_http_tests::public_http_disconnected_safe_read_workers_keep_bounded_reservations_until_completion",
+    "native::public_rpc_http_tests::public_http_disconnected_submit_keeps_public_permit_and_local_capacity_available",
+    "native::public_rpc_http_tests::public_http_parser_and_batch_failures_release_worker_capacity",
+    "native::public_rpc_http_tests::public_http_safe_reads_are_rate_charged_per_batch_item",
+    "native::public_rpc_http_tests::public_http_rejects_oversized_id_without_echoing_it",
+    "native::public_rpc_http_tests::public_http_rejects_noncanonical_request_envelopes_before_action_dispatch",
+    "native::public_rpc_http_tests::public_http_disconnect_during_body_collection_releases_unstarted_request",
+    "native::public_rpc_http_tests::public_http_malformed_bodies_cannot_bypass_preparse_rate_accounting",
+    "native::public_rpc_http_tests::public_http_single_requests_are_charged_exactly_once",
+    "native::public_rpc_formal_tests::public_rpc_formal_catalog_matches_registered_available_dispatch",
+    "native::public_rpc_formal_tests::public_rpc_formal_effective_surface_is_safe_plus_submit",
+)
+
+
+def adapt_v0113_successor(workflow: str) -> str:
+    """Layer current source controls over the intact historical preparation lane."""
+    old = "scripts/check_v011_sync_import_successor.py --require-authorized"
+    new = "scripts/check_v0113_release_successor.py --require-authorized"
+    old_scope = (
+        "scripts/test_sync_import_successor_scope.py --source-root . "
+        "--predecessor-root target/v011-predecessor"
+    )
+    new_scope = (
+        "scripts/test_check_v0113_release_successor.py --source-root . "
+        "--predecessor-root target/v011-predecessor"
+    )
+    old_policy = (
+        "      - name: Sync and import successor policy rejection controls\n"
+        "        run: /usr/bin/python3 -I -B scripts/test_check_v011_sync_import_successor.py\n"
+    )
+    new_policy = (
+        "      - name: v0.11.3 successor policy rejection controls\n"
+        "        run: /usr/bin/python3 -I -B scripts/test_check_v0113_release_successor.py\n"
+        "      - name: v0.11.3 preparation routing regression controls\n"
+        "        run: /usr/bin/python3 -I -B scripts/test_prepare_v0113_release.py\n"
+    )
+    if (
+        workflow.count(old) != 5
+        or workflow.count("--require-final-artifact") != 4
+        or workflow.count(old_scope) != 1
+        or workflow.count(old_policy) != 1
+    ):
+        raise ValueError("expected exact inherited source, policy and four final artifact gates")
+    workflow = workflow.replace(old, new).replace(old_scope, new_scope, 1)
+    workflow = workflow.replace(old_policy, new_policy, 1)
+    formatting = "scripts/check_sync_import_formatting.py --manifest "
+    formatting_test = "scripts/test_check_sync_import_formatting.py"
+    if workflow.count(formatting) != 3 or workflow.count(formatting_test) != 1:
+        raise ValueError("expected all three inherited formatting gates and policy controls")
+    workflow = workflow.replace(formatting, "scripts/check_v0113_formatting.py --manifest ")
+    workflow = workflow.replace(formatting_test, "scripts/test_check_v0113_formatting.py", 1)
+    workflow = workflow.replace("Sync and import formatting policy rejection controls",
+                                "v0.11.3 formatting policy rejection controls", 1)
+    workflow = workflow.replace("Sync and import successor formatting gates",
+                                "v0.11.3 successor formatting gates", 1)
+    prefix, security = workflow.split("  security-gates:\n", 1)
+    security, suffix = security.split("\n  app-no-ssh-e2e:\n", 1)
+    formal = "      - name: Formal-core checker controls for PR review\n"
+    sync = "      - name: Native sync and import liveness regressions\n"
+    rust = '          toolchain: "1.91.1"\n'
+    if (
+        any(security.count(anchor) != 1 for anchor in (rust, sync, formal))
+        or not security.index(rust) < security.index(sync) < security.index(formal)
+    ):
+        raise ValueError("review changed security step order before v0.11.3 preparation")
+    rpc = (
+        "      - name: v0.11.3 public HTTP admission and catalog regressions\n"
+        "        run: |\n"
+        "          set -euo pipefail\n"
+        + "".join(
+            f"          ./scripts/run_exact_cargo_lib_test.sh hegemon-node {name} --no-default-features\n"
+            for name in PUBLIC_RPC_REGRESSIONS
+        )
+        + "\n"
+    )
+    security = security.replace(formal, rpc + formal, 1)
+    return prefix + "  security-gates:\n" + security + "\n  app-no-ssh-e2e:\n" + suffix
+
+
 def adapt_sync_import_regressions(builds: str) -> str:
     """Run every exact sync/import repair control on all preparation events."""
     prefix, security = builds.split("  security-gates:\n", 1)
@@ -351,7 +437,7 @@ def adapt_preparation_arm_runner(builds: str) -> str:
     return builds.replace(old, new, 1)
 
 
-def expected_workflow(release: str) -> str:
+def expected_workflow(release: str, *, v0113: bool = False) -> str:
     if release.count("\njobs:\n") != 1:
         raise ValueError("release workflow must have one canonical jobs block")
     jobs = release.split("\njobs:\n", 1)[1]
@@ -371,11 +457,13 @@ def expected_workflow(release: str) -> str:
     builds = adapt_known_loser_regressions(builds)
     builds = adapt_sync_import_regressions(builds)
     output = HEADER + builds.rstrip() + "\n" + ASSEMBLE
+    if v0113:
+        output = adapt_v0113_successor(output)
     return "\n".join(line.rstrip() for line in output.splitlines()) + "\n"
 
 
-def verify_preparation(release: str, preparation: str) -> None:
-    expected = expected_workflow(release)
+def verify_preparation(release: str, preparation: str, *, v0113: bool = False) -> None:
+    expected = expected_workflow(release, v0113=v0113)
     if preparation != expected:
         diff = "".join(difflib.unified_diff(
             preparation.splitlines(keepends=True),
@@ -399,10 +487,10 @@ def main() -> None:
     output = root / ".github/workflows/prepare-premainnet-release.yml"
     try:
         if args.write:
-            output.write_text(expected_workflow(release), encoding="utf-8")
+            output.write_text(expected_workflow(release, v0113=True), encoding="utf-8")
             print(f"Generated {output.relative_to(root)}; tag workflow unchanged")
         else:
-            verify_preparation(release, output.read_text(encoding="utf-8"))
+            verify_preparation(release, output.read_text(encoding="utf-8"), v0113=True)
             print("Preparation preserves all seven jobs, runtime and final artifact replay; PR exhaustive formal checks deferred; non-PR full gates retained; publication absent")
     except (OSError, ValueError) as error:
         raise SystemExit(str(error)) from error

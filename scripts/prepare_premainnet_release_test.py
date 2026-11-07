@@ -68,6 +68,7 @@ class PreparationWorkflowTests(unittest.TestCase):
         preparation.verify_preparation(
             self.release,
             (ROOT / ".github/workflows/prepare-premainnet-release.yml").read_text(),
+            v0113=True,
         )
 
     def test_preparation_arm_runner_override_preserves_tag_workflow(self) -> None:
