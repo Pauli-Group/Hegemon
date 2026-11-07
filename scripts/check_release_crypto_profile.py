@@ -291,7 +291,28 @@ V011_AUTHORITY_SHA256 = {'config/v011-release-successor.json': '94bd9591a8232292
  'scripts/check_v011_release_successor.py': '390f5cbc69e877e29302db4af7b7382bbf6db9bdeccada01942ccba384b0fc67',
  'scripts/materialize_v011_predecessor.py': '0dc2b129332bf1276e5790a2db2682946e54f5af6b6850eaca50ca9e17b4dee5',
  'scripts/release_artifact_manifest.py': '0f41da8be0536335978ed42d2f93f930b2c9ee078f3ecbeb6293e44ce20c42cb',
- 'scripts/security-audit.sh': 'd2e5f5d954ef2de1b11399bd16549982a301fa988a38951c364cb6709e81fdc0'}
+ 'scripts/security-audit.sh': 'f338b9f1df3fa2be259fc714bb99710eec28869e5c6fcda3a9648381202d53b1'}
+
+SYNC_IMPORT_SCOPE = 'exact_sync_import_source_current_binary_backend_and_h0'
+SYNC_IMPORT_AUTHORITY_SHA256 = {
+    'config/v011-sync-import-successor-20261106.json': '9cc53dc52975d3f9cd5edd3caaaf11d971a77f773430b637377e64561aecd9d6',
+    'scripts/check_v011_sync_import_successor.py': 'ceceb9f281343f9c730422684b44819ab8e9c2ed973a551de641992153303f0f',
+}
+
+
+def sync_import_helper(root: Path):
+    """Authenticate the additive source adapter before executing its predicates."""
+    import importlib.util
+    for name, expected in SYNC_IMPORT_AUTHORITY_SHA256.items():
+        if not (root / name).is_file() or sha256_file(root / name) != expected:
+            fail('sync/import reviewed authority changed: ' + name)
+    path = root / 'scripts/check_v011_sync_import_successor.py'
+    spec = importlib.util.spec_from_file_location('_v011_sync_import_final_predicate', path)
+    if spec is None or spec.loader is None:
+        fail('cannot import reviewed sync/import successor predicate')
+    helper = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(helper)
+    return helper
 
 
 def sha256_file(file: Path) -> str:
@@ -327,6 +348,9 @@ def private_launch_snapshot(root: Path, manifest_path: Path) -> tuple:
             if not (root / name).is_file() or sha256_file(root / name) != expected:
                 fail("v0.11 reviewed authority changed: " + name)
     authority_files = [root / "scripts/check_release_crypto_profile.py", *(root / name for name in V011_AUTHORITY_SHA256)] if (root / "config/v011-release-successor.json").is_file() else []
+    if (root / 'config/v011-sync-import-successor-20261106.json').is_file():
+        sync_import_helper(root)
+        authority_files.extend(root / name for name in SYNC_IMPORT_AUTHORITY_SHA256)
     authority = tuple((str(file), sha256_file(file)) for file in (*authority_files,
         root / "scripts/check_private_spend_launch_authorization.py",
         root / "scripts/private_spend_launch_authorized_registry.json",
@@ -454,7 +478,21 @@ def validate_v011_successor_receipt(receipt, manifest, manifest_digest, registry
     return identity
 
 
+def validate_v011_sync_import_successor_receipt(receipt, manifest, manifest_digest, registry):
+    helper = sync_import_helper(SOURCE_ROOT)
+    try:
+        projected = helper.project_parent_receipt(receipt, SOURCE_ROOT)
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError) as error:
+        fail('sync/import final source attribution rejected: ' + str(error))
+    # The adapter validates the new source scope before changing only source
+    # fields on a detached object. This unchanged predicate still checks every
+    # artifact, proof, negative control, H0, network and no-authority boundary.
+    return validate_v011_current_successor_receipt(projected, manifest, manifest_digest, registry)
+
+
 def validate_private_launch_receipt(receipt: object, manifest: dict, manifest_digest: str, registry: dict) -> dict:
+    if isinstance(receipt,dict) and receipt.get('final_artifact_scope') == SYNC_IMPORT_SCOPE:
+        return validate_v011_sync_import_successor_receipt(receipt, manifest, manifest_digest, registry)
     if isinstance(receipt,dict) and receipt.get("final_artifact_scope") == "exact_current_source_current_binary_backend_and_h0":
         return validate_v011_current_successor_receipt(receipt, manifest, manifest_digest, registry)
     if isinstance(receipt,dict) and receipt.get("final_artifact_scope") == "version_and_exact_platform_shutdown_successor_public_proof_replay":
@@ -508,21 +546,27 @@ def private_launch_profile(root: Path, manifest_path: Path) -> dict:
             fail("private launch requires every legacy profile to refuse exactly")
     command = [sys.executable, "-I", "-B", str(root / "scripts/check_private_spend_launch_authorization.py"),
                "--require-authorized", "--artifact-manifest", manifest_path.relative_to(root).as_posix()]
+    if (root / 'config/v011-sync-import-successor-20261106.json').is_file():
+        sync_import_helper(root)
+        command = [sys.executable, '-I', '-B', str(root / 'scripts/check_v011_sync_import_successor.py'),
+                   '--require-authorized', '--artifact-manifest', manifest_path.relative_to(root).as_posix(),
+                   '--require-final-artifact']
     completed = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=1300 if (root / "config/v011-release-successor.json").is_file() else 180)
     if completed.returncode != 0 or completed.stderr:
         fail("private launch source authorization failed: " + (completed.stderr.strip() or str(completed.returncode)))
     lines = completed.stdout.splitlines()
     receipt = json.loads(completed.stdout)
-    if len(lines) != 1 and receipt.get("final_artifact_scope") not in ("version_and_exact_platform_shutdown_successor_public_proof_replay", "exact_current_source_current_binary_backend_and_h0"):
+    if len(lines) != 1 and receipt.get("final_artifact_scope") not in ("version_and_exact_platform_shutdown_successor_public_proof_replay", "exact_current_source_current_binary_backend_and_h0", SYNC_IMPORT_SCOPE):
         fail("private launch source authorization must return one JSON receipt")
     registry = json.loads((root / "scripts/private_spend_launch_authorized_registry.json").read_text())
     identity = validate_private_launch_receipt(receipt, manifest, manifest_digest, registry)
     if private_launch_snapshot(root, manifest_path) != before:
         fail("private launch manifest, artifacts or authority changed during validation")
-    if receipt.get("final_artifact_scope") == "exact_current_source_current_binary_backend_and_h0":
-        return {"passed":True, "mode":"executed-exact-source-backend-h0",
+    if receipt.get("final_artifact_scope") in ("exact_current_source_current_binary_backend_and_h0", SYNC_IMPORT_SCOPE):
+        sync_import = receipt.get('final_artifact_scope') == SYNC_IMPORT_SCOPE
+        return {"passed":True, "mode":"executed-exact-sync-import-source-backend-h0" if sync_import else "executed-exact-source-backend-h0",
             "target_triple":manifest["target_triple"], "production_authority":False,
-            "authorization_scope":"exact-current-source-current-binary-backend-and-h0-only",
+            "authorization_scope":"exact-sync-import-source-current-binary-backend-and-h0-only" if sync_import else "exact-current-source-current-binary-backend-and-h0-only",
             "private_spend_launch_authority":False, "current_network_G8_qualified":False,
             "fresh_network_lifecycle_verified":False, "state_admission_verified":False,
             "public_cutover_authorized":False, "identity":identity,

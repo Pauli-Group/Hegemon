@@ -1,6 +1,6 @@
 # Implement and qualify the v0.11.3 public submission policy
 
-This living ExecPlan follows `.agent/PLANS.md`. Keep Progress, Surprises & Discoveries, Decision Log and Outcomes & Retrospective current. The task is local implementation and qualification; publication, pushing tags/artifacts and deployment are separately authorized actions.
+This living ExecPlan follows `.agent/PLANS.md`. Keep Progress, Surprises & Discoveries, Decision Log and Outcomes & Retrospective current. The initial task was local implementation and qualification. On 2026-11-06 (America/Edmonton), the user explicitly authorized preparing and publishing v0.11.3, deploying to hegemon-dev and hegemon-ovh, verifying operation, and updating the website release links. That authorization covers the release and these destinations; required qualification and existing compatibility boundaries remain in force.
 
 ## Purpose / Big Picture
 
@@ -108,3 +108,16 @@ Revision 2026-11-07 UTC: the added explicit ignored fixture builder creates a ne
 
 
 Revision 2026-11-07 UTC: final lifecycle receipt `/private/tmp/hegemon-v0113-public-lifecycle-final/receipt.json` is PASS_FRESH_PUBLIC_SUBMIT_CANDIDATE_LIFECYCLE with seven controls, exact tip replay, exact retained action/proof bytes and all owned processes reaped. The normal four-binary build completed successfully after the bounded failed attempt. Final node SHA-256 remains f74a05394392eb24f1f20f9c5c9ac808b50ad146b47c8f520d2d14c86979434c. The delivery report, scoped patch, commit/source identity, actual artifact checksums and honest open-gate inventory are written to `/private/tmp/hegemon-v0113-delivery/`. Formal metadata and all relation-digest inputs remain unchanged by this final documentation revision.
+
+
+## Shipping continuation (user-authorized 2026-11-06)
+
+The user requested: “Ship it. Get the release ready. Deploy on hegemon-dev and hegemon-ovh, make sure it works. Publish and update the v0.11.2 on the website to v0.11.3”. Continue through publication and both deployments without a second approval request for the same scope. Preserve live node/wallet data, historical releases and rollback binaries.
+
+Live readback found both hosts running v0.11.2 source 1e56a5c8f97eb6f8abf3e79a728849272c42dd0d (binary SHA256 d2c35897f3355f691e1b6498fd269cbdede48542601b5027ce4d4c7852478d0a), with synchronized clocks, matching genesis/chain and common height 11292. This source descends the original v0.11.2 tag and contains additional sync-control/body-backpressure and release-runner fixes. Merge that deployed lineage into the candidate before release; never downgrade the existing fix. Rust sources merge automatically; the three formal metadata files require preserving both changed obligation sets and renewed fingerprints. The 41 literal proof-relation inputs must remain unchanged.
+
+Build and qualification lanes use isolated owned paths with one compiler job and explicit disk guards. Root coordinates release integration, Git operations, host changes and publication; the formal worker owns the three formal metadata files and formal qualification; the release worker owns additive v0.11.3 source authorization/consumer/packaging tools; an independent reviewer checks the composed runtime and new authority. Historical v0.11.2 checker/config/artifact pins remain unchanged. Independent review acceptance must be an actual review of exact inputs, never a fabricated prior approval.
+
+The current website is served from hegemon-ovh:/var/www/hegemon. Its deployed homepage contains newer visual changes than private repository main. Preserve those live bytes and change only current release references after v0.11.3 assets exist. Prepared exact-delta payload and preimage hashes are in /private/tmp/hegemon-v0113-ship-website; the private website repository gets a separate narrow source commit. Never overwrite the live homepage with the obsolete public monorepo website.
+
+Deployment order is dev then OVH, verifying loaded executable hash, v0.11.3 identity, unchanged chain/genesis/proof parameters and state path, peers/sync/mining posture, shared canonical hashes and normal progress. Save exact units/environment hashes, old executable and coherent state backup/normal shutdown evidence for rollback. Only change the approved node service; operator wallets, credential supervisors and financial flows are not release test fixtures. Current operator RPC is unsafe on loopback; preserve it pending the user's optional public-endpoint preference so mining controls remain available.

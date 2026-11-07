@@ -1,0 +1,29 @@
+{
+  "authority": "Formatting only; no additional debt path, source-release authorization, proof or deployment authority.",
+  "direct_module_checks": {
+    "edition": "2021",
+    "files": {
+      "node/src/native/service/sync_body_backpressure.rs": "f78c7b4dcb1d6d3365b8e69c65c8bf3dbcaecd98e9df02015defc50824c8c3ab",
+      "node/src/native/sync_control_backpressure_tests.rs": "eda6eec5184fc7d01b7f31110e983bbe610b462f7bbbcd9a84ee8a15a65a57af"
+    },
+    "scope": "workspace invocation requires direct rustfmt --check success; no debt allowance",
+    "toolchain": "1.91.1"
+  },
+  "historical_baseline": {
+    "path": "config/qualified-formatting-baseline.json",
+    "sha256": "76a60a213994ee887c854cdd33031667a18472611efc7cf16cb8aa802206ec02"
+  },
+  "historical_checker": {
+    "path": "scripts/check_qualified_formatting.py",
+    "sha256": "be7732c0e30f9b770ef5395be762ec9ea133d39f7fc52170d17639e2579a71a9"
+  },
+  "migration": {
+    "historical_postimage_sha256": "d1b451214cec69435049cce237e8863a84e62f0522038424091034bd30691fe6",
+    "path": "node/src/native/node_impl.rs",
+    "postimage_sha256": "c588a5dcc5987e2c3f94ca03fae643ae9425dcd0c3abe27f465f6961abbd0a65",
+    "qualified_sha256": "05f84c22738c43c937201470a27649a3d73e4b8ce9dfbc87c7d6e95abd462e3c",
+    "scope": "reviewed-node-ci-regression-delta-only"
+  },
+  "schema": "hegemon.sync-import.formatting-successor.v1",
+  "scope": "authenticated-historical-formatting-checker-with-one-exact-node-impl-postimage"
+}
