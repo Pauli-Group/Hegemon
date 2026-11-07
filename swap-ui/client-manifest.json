@@ -6,19 +6,19 @@
   "local": "index.html"
  },
  "import_map": {
-  "source": "sha256-VulSjTnZpz6cZt/biwz7UbYEvjkJ8ihaHokKttWjyuQ=",
+  "source": "sha256-mqqRK/ZePDJHnvsvYcAoU2cDgFCEfMYUDXFCUvRngSA=",
   "modules": 35
  },
  "csp": {
-  "hosted": "default-src 'self'; script-src 'self' 'sha256-VulSjTnZpz6cZt/biwz7UbYEvjkJ8ihaHokKttWjyuQ='; style-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
-  "local": "default-src 'self'; script-src 'self' 'sha256-VulSjTnZpz6cZt/biwz7UbYEvjkJ8ihaHokKttWjyuQ='; style-src 'self'; connect-src 'self' http://127.0.0.1:8788; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+  "hosted": "default-src 'self'; script-src 'self' 'sha256-mqqRK/ZePDJHnvsvYcAoU2cDgFCEfMYUDXFCUvRngSA='; style-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+  "local": "default-src 'self'; script-src 'self' 'sha256-mqqRK/ZePDJHnvsvYcAoU2cDgFCEfMYUDXFCUvRngSA='; style-src 'self'; connect-src 'self' http://127.0.0.1:8788; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
  },
  "headers": {
   "x-content-type-options": "nosniff",
   "referrer-policy": "no-referrer",
   "cache-control": "no-store"
  },
- "chain_timing_sha256": "fe3e6fd8a78d4d2191468074afcf44e679f21458d87a1fc266396548fef6924d",
+ "chain_timing_sha256": "8b2e3a6dbf87d8a74fe1dbcca5699ee703397d9330203e54c345ebef94d3ad7b",
  "files": {
   "action-journal.mjs": {
    "sha256": "778f4f3f3bd3e8e65773c9d75798011a6e34dcb2c7bac5cf12f85c984d89edd5",
@@ -69,8 +69,8 @@
    "bytes": 9742
   },
   "chain-timing.json": {
-   "sha256": "fe3e6fd8a78d4d2191468074afcf44e679f21458d87a1fc266396548fef6924d",
-   "bytes": 3108
+   "sha256": "8b2e3a6dbf87d8a74fe1dbcca5699ee703397d9330203e54c345ebef94d3ad7b",
+   "bytes": 3109
   },
   "crypto.mjs": {
    "sha256": "ce2e54157990526d7dc5b38d20cf653d2fe059ced47273adefed93713c1ba48d",
@@ -97,11 +97,11 @@
    "bytes": 5027
   },
   "guided.mjs": {
-   "sha256": "66f279656816735d1b314166cfdaa90206502d5d88ee1c5250974371f7c7ae3f",
-   "bytes": 16260
+   "sha256": "ab05815a8eb41e59431ec0e75beaf79e1abbd1c681d466365a7f083f78c753b1",
+   "bytes": 16892
   },
   "hosted.html": {
-   "sha256": "9a5f505dd25ac1d2f1267b37cee25297bb854e2fe89ff1546c7bf3b63478d638",
+   "sha256": "b5cc126e92e9b0ec553729bc271ecf8d24634686c455bb2417eede24427dc7fc",
    "bytes": 52305
   },
   "identity-flow.mjs": {
@@ -125,7 +125,7 @@
    "bytes": 3697
   },
   "index.html": {
-   "sha256": "6606aaf934fb04b5e2d090b3532cdf3a0fa6863e3080afa7e9953ea25f7e1f6e",
+   "sha256": "868927b27aa100959a4af0325afde468666893dcf74143897eba9a67a8e581e2",
    "bytes": 52604
   },
   "observer-ui.mjs": {

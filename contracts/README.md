@@ -88,7 +88,7 @@ Additional isolated pairing examples:
     python3 scripts/check_samechain_ethereum_swap.py --output "$HOME/hegemon-runs/new-same-ethereum-run"
     python3 scripts/check_samechain_cardano_swap.py --output "$HOME/hegemon-runs/new-same-cardano-run"
 
-The recorded results and important limitations are in `MULTIASSET_LOCAL_RESULTS.md` at the repository root. The role of every swap script is in `scripts/SWAP_SCRIPTS.md`; the engine that now plans and runs swaps (and its Hegemon adapter, local only) is described in `DESIGN.md` ("Two-party swap engine", "Hegemon adapter and local fixtures").
+The recorded results and important limitations are in `MULTIASSET_LOCAL_RESULTS.md` at the repository root. The role of every swap script is in `scripts/SWAP_SCRIPTS.md`; the engine that now plans and runs swaps (loopback Hegemon profiles and a separate public pre-mainnet profile) is described in `DESIGN.md` ("Two-party swap engine", "Hegemon adapter and local fixtures").
 
 The local pairing scripts also exercise read-only verification. `scripts/bitcoin_escrow_verifier.py` reconstructs the expected Bitcoin regtest script and checks its confirmed UTxO through a trusted local Bitcoin Core node. `scripts/cardano_escrow_verifier.py` checks a local UTxO's pinned validator, datum and exact assets. The Cardano UTxO query does not prove confirmation depth, and neither checker independently authenticates the counterparty's terms or the RPC provider.
 

@@ -2,8 +2,9 @@
 
 The wallet is the only component that holds keys and proves the HTLC relation, so the adapter drives it as
 a subprocess through a *profile* (see swap_engine/hegemon_wallet.py for the contract). This module also
-holds LocalHegemonProfile: a fresh, peerless Development chain with two funded wallets. There is no public
-profile here; the public testnet needs its own guards and is a separate plan (P8).
+holds LocalHegemonProfile and AttachedHegemonProfile (peerless Development chains) and
+PublicHegemonProfile (the pinned v0.11 public pre-mainnet). The public class is a separate
+guard set: it never relaxes `peers == 0` on the local profiles.
 
 How a swap leg maps onto the wallet
   fund    `lock` proves the HTLC (about a minute), `export` writes the exact signed action, the journal
@@ -250,7 +251,9 @@ class HegemonAdapter(JournaledWrites, ChainAdapter):
         except Exception as error:
             raise read_failure(error) from error
         if found is None:
-            _atomic_json(cursor_path, {'tip': tip})
+            # Only advance past blocks the scan could have confirmed. A sub-second
+            # timeout used to return None without reading, which skipped the claim.
+            _atomic_json(cursor_path, {'tip': max(created, start)})
         return found
 
     def inspect(self, leg, escrow):
@@ -597,6 +600,120 @@ class AttachedHegemonProfile(LoopbackProfile):
         super().__init__(state, config['wallet_binary'], config['rpc'], config['manifest'], {'self': config['wallet']}, {'self': config['address']},
                          _private_secret(config['passphrase_file']), _private_secret(config['handoff_passphrase_file']))
         self.pin_genesis()
+
+
+class PublicHegemonProfile:
+    """One person's wallet on the pinned v0.11 public pre-mainnet, loopback RPC only.
+
+    Separate from LoopbackProfile: this class requires peers, a tip within two blocks of the public
+    explorer, the pinned manifest and genesis, and NTP. It never adds `--development-local-candidate`.
+    Config keys match AttachedHegemonProfile plus `"profile": "public"`.
+    """
+    name = 'hegemon'
+    journal_chain = 'hegemon-pre-mainnet'
+    # Public rehearsal and smoke use 1000 atoms; the local Development profile keeps fee = 1.
+    fee = 1_000
+    prove_timeout = 1800
+
+    def __init__(self, config, *, ntp=None, probe_node=None, compare=None):
+        for key in ('rpc', 'manifest', 'wallet', 'wallet_binary', 'address', 'passphrase_file', 'handoff_passphrase_file'):
+            if not isinstance(config.get(key), str) or not config[key]:
+                raise ValueError(f'hegemon wallet config needs {key}')
+        import local_private_spend_swap as helper
+        import release_private_spend_lifecycle_io as io
+        import probe_hegemon_testnet as probe
+        self._helper, self._io, self._probe = helper, io, probe
+        self._ntp = ntp
+        self._probe_node = probe_node
+        self._compare = compare
+        release = json.loads(probe.RELEASE.read_text())
+        self._expected_genesis = release['genesis_hash']
+        self.dir = Path(config.get('state_dir') or (Path(config['wallet']).parent / 'hegemon-public-swap-state'))
+        self.dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        os.chmod(self.dir, 0o700)
+        self.wallet_binary = Path(config['wallet_binary'])
+        self.url = _loopback(config['rpc'])
+        self.manifest = Path(config['manifest'])
+        self._stores = {'self': Path(config['wallet'])}
+        self._addresses = {'self': config['address']}
+        self._wallet_pass = _private_secret(config['passphrase_file'])
+        self._handoff_pass = _private_secret(config['handoff_passphrase_file'])
+        self.genesis = None
+        self.metrics = []
+        self.pin_genesis()
+
+    def now(self):
+        return int(time.time())
+
+    def address(self, person):
+        return self._addresses[person]
+
+    def private_dir(self, person):
+        path = self.dir / 'adapter' / person
+        path.mkdir(mode=0o700, parents=True, exist_ok=True)
+        os.chmod(path.parent, 0o700)
+        os.chmod(path, 0o700)
+        return path
+
+    def handoff_secret(self, person):
+        return self._handoff_pass
+
+    def rpc(self, method, params=None):
+        return self._io.rpc(self.url, method, params if params is not None else [])
+
+    def pin_genesis(self, expected=None):
+        node, _ = self._guard()
+        found = node['genesis']
+        if expected is not None and found != expected:
+            raise RuntimeError('Hegemon genesis is not the expected one')
+        self.genesis = found
+
+    def _guard(self):
+        return self._probe.assert_public_profile(
+            self.url, genesis=self._expected_genesis, manifest=self.manifest,
+            ntp=self._ntp, probe_node=self._probe_node, compare=self._compare)
+
+    def height(self):
+        self._guard()
+        return self._io.height(self.url)
+
+    def block_hash(self, height):
+        return str(self.rpc('chain_getBlockHash', [height])).removeprefix('0x')
+
+    def wallet(self, person, command, secrets=(), label=None, expected=True, timeout=None):
+        if '--development-local-candidate' in command:
+            raise RuntimeError('the public Hegemon profile refuses Development-only wallet flags')
+        self._guard()
+        argv = ['--wallet', self._stores[person], '--manifest', self.manifest, '--genesis', self.genesis,
+                '--rpc', self.url, *command]
+        text, metrics = self._helper.wallet(self.wallet_binary, argv, [(hw.PASS_PROMPT, self._wallet_pass), *secrets], self.dir,
+                                            label or f'{person}-{command[0]}', expected=None, timeout=timeout or self.prove_timeout)
+        self.metrics.append({'label': label, 'command': command[0], **metrics})
+        if expected is not None and metrics['exit_code'] != 0:
+            raise RuntimeError(f'{command[0]} failed: ' + hw.last_error(text))
+        return text, metrics
+
+    def observe_release(self, hashlock, start_height):
+        self._guard()
+        import public_hegemon_preimage_observer as observer
+        confirmations = self._probe.hegemon_policy_confirmations()
+        try:
+            found = observer.scan_public_hegemon_preimage(
+                self.url, hashlock=hashlock, start_height=start_height,
+                confirmations=confirmations, timeout=15)
+        except TimeoutError:
+            return None
+        except ValueError as error:
+            if 'timed out' in str(error).lower():
+                return None
+            raise
+        if found is None:
+            return None
+        secret, meta = found
+        try:
+            return bytes(secret).hex(), {'block_height': meta['block_height'], 'confirmations': meta['confirmations']}
+        finally:
+            secret[:] = b'\0' * len(secret)
 
 
 TEMPLATE_DIR = Path.home() / '.local/opt/hegemon-p6/template'

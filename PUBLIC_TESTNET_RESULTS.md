@@ -1,6 +1,6 @@
 # Public testnet HTLC rehearsal results
 
-These are disposable test funds and fixture assets. Ethereum data came from a public Sepolia RPC, and Cardano data came from the public Koios preview service. The reported snapshots trust those providers; confirmation depth is not a guarantee of finality or real-fund safety. No public Hegemon node was started or synced.
+These are disposable test funds and fixture assets. Ethereum data came from a public Sepolia RPC, and Cardano data came from the public Koios preview service. The reported snapshots trust those providers; confirmation depth is not a guarantee of finality or real-fund safety. Hegemon data in the P8 section came from a loopback v0.11 pre-mainnet node compared against `https://hegemonprotocol.com/testnet/status.json`. Hegemon notes are private: only action ids, heights, hashlocks and the other chain's transaction ids are recorded.
 
 ## Native ETH and ADA
 
@@ -139,9 +139,73 @@ The first public swap driven by the swap engine (`scripts/swap_engine_cli.py`, s
 
 Both records ended `done`. Bob learned the preimage from Alice's confirmed Cardano claim through Koios `tx_cbor`. A search of both stores, the run log and the wallet configs found no copy of the preimage outside the two mode-0600 `secret` and `learned-preimage` files. This is a provider-reported testnet snapshot like the entries above, not evidence of real-funds safety. The record of the run is `.agent/SWAP_ENGINE_EXECPLAN.md`.
 
-## What has not been run on a public Hegemon network (P6 and P7)
+## Public Hegemon smoke and engine swaps (P8, 2026-11-07)
 
-No Hegemon leg has been swapped on a public network through the engine. The Hegemon adapter and its refund, missing-counterparty and late-claim scenarios were run on a private local Development chain with real wallets and local Ethereum, Bitcoin and Cardano chains; those results are in `.agent/SWAP_HEGEMON_ADAPTER_RESULTS.json` and the "Hegemon local adapter" section of `METHODS.md`. They advance local deadlines with fixture timing and say nothing about public timing, confirmation policy or finality. Public Hegemon swaps are the first item of the follow-up backlog in `.agent/SWAP_SERIES_EXECPLAN.md`.
+The operator's v0.11 node on `127.0.0.1:9944` (`hegemon-node --network pre-mainnet`, data `~/.hegemon-node-v0.11`, mining off, wallet RPC on loopback, NTP synchronized, seeds `HEGEMON_SEEDS="hegemon.pauli.group:30333,devnet.hegemonprotocol.com:30333"`) followed the explorer tip. `private-spend` SHA-256 `0a145c9daef68eab7d4b4c540c4dae1ec49f3f469cacd60cc2fbacac05f7ba7d` (default features, version 0.11.2, includes `verify-htlc`). Hegemon identity statements were not attached; the Hegemon side is unauthenticated. Amounts: 10,000 HGN atoms plus a 1,000-atom fee; 0.001 Sepolia ETH; 10,000 sats; 5 ADA. Timing: Hegemon mean 75.35 s over 3,000 blocks (heights 8274–11273), one 81,258 s stall after height 9831; `proveSeconds` stays 300; a public proof on this host was about 105 s and 1.65 GiB peak RSS. Engine expiries came from `planner.plan_with_margin` on live heads.
+
+### Smoke (labelled outside the swap policy)
+
+Ordinary Alice to Bob transfer, then two locks of 10,000 atoms. The first lock omitted `--release-secret` so Bob could not `verify-htlc`; it expired and refunded. The second lock used `--release-secret`, Bob verified, then Alice refunded after the timeout. These used the relation minimum plus a margin (timeouts 11296 and 11343), not the swap policy's ~1,000-block floor.
+
+| Step | Identifier | Observation |
+| --- | --- | --- |
+| Ordinary transfer | action `ebbf7558…d4b3fc`, attempt `b22a4711…d663ce` | Height 11278, hash `0x0000000000000211…02aa` |
+| Lock 1 (no disclose) | hashlock `f074b502…e771db`, action `28dfb19c…e20d4ca`, attempt `c477762f…57cf04` | Height 11284, timeout 11296 |
+| Lock 1 refund | action `0c9e6df4…034b7455`, attempt `7db9c2b9…c598a7f` | Height 11302 |
+| Lock 2 (disclose, verified) | hashlock `0bf695e3…f1d030`, action `60a68077…e4f3fa51`, attempt `eb956ada…7056ba` | Height 11307, hash `0x0000000000002368…979a`, timeout 11343 |
+| Lock 2 refund | action `b8fb50ff…8fc2cc6d`, attempt `78b7c3cf…adcab33f` | Height 11347, hash `0x00000000000010b3…bdcb` |
+
+A P1 `claim_gate` against lock 2 at height 11318 returned `ok: false`, reasons `["policy-rejects-claim"]`, without revealing a preimage.
+
+### HGN long / ETH short (engine, happy)
+
+Swap id `e9dd9510ee39167b`, hashlock `8cfcf6108cac1d623465f75525cde1f13afdcbb567ce2ea1477b227a41e47cd0`. Hegemon expiry 12360, Sepolia expiry 1794045181. Both roles ended `done`.
+
+| Step | Network | Transaction ID | Observation |
+| --- | --- | --- | --- |
+| Alice funds | Hegemon pre-mainnet | attempt `c8a41e7ef92bb44d2ec469419d6f9d89764d6caa6d001182d457771e2114cc6d` | Mined height 11360 |
+| Bob funds | Sepolia | `602ad280f78d38c3d6cd1af158bfba9da9369c9e55963aea3c7007c3c9978f09` | Block 12082045, contract `0x646d947f1d5e33024d66014a1869c14f18099ed9`, 0.001 ETH |
+| Alice claims | Sepolia | `34d33982cd45ae9f54fe030d5621cd2b46e1e0421b769a8dcde834fbc4dba280` | Block 12082111 |
+| Bob claims | Hegemon pre-mainnet | attempt `67ff879f28298b23b9777fbfd94ae016b12752718eefdc7d64b5643b95f16ed7` | Mined height 11367 |
+
+### ETH long / HGN short (engine, happy, other direction)
+
+Swap id `23115ed45f3df10c`, hashlock `724b4709ad05b7333c2a5223a0080cb5efdb3965e68c4d0e9684ef296424b180`. Sepolia expiry 1794187075, Hegemon expiry 12384. Alice claimed the Hegemon short leg first (preimage disclosed on Hegemon). Both roles ended `done`. Hegemon as the short leg is exposed to a stall longer than the two-hour outage allowance.
+
+| Step | Network | Transaction ID | Observation |
+| --- | --- | --- | --- |
+| Alice funds | Sepolia | `cd79858d2eec47600f3bcc2b11d8ac954fb713815ef4dc6508cf4cd9397c411b` | Block 12082457, contract `0x1a599f12c59cdfb8e403f0d99aacba3308cd263e`, 0.001 ETH |
+| Bob funds | Hegemon pre-mainnet | attempt `deec6a894a62f994ddcfbe84ed7751ba51020cb5482d5ee61a3b60179cca4d08` | Mined height 11429 |
+| Alice claims | Hegemon pre-mainnet | attempt `f5769ab4d8bfbbd90f0f77452bbfaeda659923a3c0820dc1069d444a6910f998` | Mined height 11442 |
+| Bob claims | Sepolia | `333faef2a4daafc641c900d8708801fa0a19e498670a6d473a46372a753f8064` | Block 12082513 |
+
+### HGN long / BTC short (engine, happy)
+
+Swap id `c37bd256d4bea957`, hashlock `add35e40a7f674eca4b0fd7c60a5c4a03449667e23acd46f84c046445766a6c9`. Hegemon expiry 26152, Bitcoin testnet4 expiry 159894. Both roles ended `done`.
+
+| Step | Network | Transaction ID | Observation |
+| --- | --- | --- | --- |
+| Alice funds | Hegemon pre-mainnet | attempt `a58e0277ab0417adca04b2e67ea2e6c00f70bf2ad53e74e93abf95a50fc97dd0` | Mined height 11380 |
+| Bob funds | Bitcoin testnet4 | `eb6adffdc5f40e9c73d838d73c1ea801b1ad8442af12cdf10b66724d42580e7a` vout 0 | Height 159607, 10,000 sats |
+| Alice claims | Bitcoin testnet4 | `5adc4411132c194865cfe9658dfeba4be66b117214b6eac9dc7bd2da82d4473b` | Height 159612 |
+| Bob claims | Hegemon pre-mainnet | attempt `90aee5d2b6a59f7db676cd7efebaa9c46c7b1d813ae1e61ceda087924e63b6c1` | Mined height 11404 |
+
+### HGN long / ADA short (engine, happy, resumed after a mid-submit crash)
+
+Swap id `47409b683c7122fb`, hashlock `9b98d3f7f653e750b6c98b588af40fdffe275344aecc86b06b690dad3646063c`. Hegemon expiry 12415, Cardano preview expiry 1794049338. The initiator lock was journaled, then the runner was killed while `private-spend submit` reported `SubmissionUncertain`. A later submit of the same attempt mined at height 11416; `advance` adopted the journaled transaction. Both roles ended `done`.
+
+| Step | Network | Transaction ID | Observation |
+| --- | --- | --- | --- |
+| Alice funds | Hegemon pre-mainnet | attempt `3a8fa4e1d92cd0c54ab7bad69ba9139d1f3f171be38321e30a2bb9dc8f8ff4b7` | Mined height 11416 after crash recovery |
+| Bob funds | Cardano preview | `5e127a36c2dd932edc53c896dc1e1cc636149c61cc1b95576791d8752b19c0cd` | 5 ADA |
+| Alice claims | Cardano preview | `86bda6c28a697a48617f447a236b7cae50a395252b51f22a6c1d099854a66fec` | Reveals the preimage |
+| Bob claims | Hegemon pre-mainnet | attempt `535ab97e6c59106a18358d508a9a15fb0abb522b553bbf77465a8404158bd630` | Mined height 11423 |
+
+### Late claim (P1 gate) and spent-lock refuse
+
+Against the refunded smoke lock 2 (timeout 11343) at height 11405, `claim_gate` returned `ok: false` with reasons `claim-closed`, `inside-claim-cutoff`, `policy-rejects-claim`, without a preimage. A second `claim` of the already-spent HGN/ETH Hegemon lock was `ActionRefused` (`the verified escrow is not an unspent note of this wallet`).
+
+Local Hegemon adapter results from P6 remain in `.agent/SWAP_HEGEMON_ADAPTER_RESULTS.json` and say nothing about public timing.
 
 ## Reconciliation note (P7)
 

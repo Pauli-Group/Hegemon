@@ -95,52 +95,52 @@
    "windows": {
     "1": {
      "min": 1,
-     "max": 913
+     "max": 908
     },
     "2": {
-     "min": 4,
-     "max": 1442
+     "min": 3,
+     "max": 1105
     },
     "3": {
-     "min": 8,
-     "max": 1572
+     "min": 12,
+     "max": 1488
     },
     "6": {
      "min": 36,
-     "max": 1691
+     "max": 2065
     },
     "12": {
      "min": 124,
-     "max": 2351
+     "max": 2599
     },
     "24": {
      "min": 714,
-     "max": 3735
+     "max": 3599
     },
     "48": {
      "min": 2378,
-     "max": 5379
+     "max": 6209
     },
     "96": {
      "min": 5495,
-     "max": 9461
+     "max": 9887
     },
     "144": {
      "min": 8572,
-     "max": 13449
+     "max": 13293
     },
     "288": {
      "min": 19124,
-     "max": 24330
+     "max": 24403
     }
    },
    "measurement": {
     "chain": "hegemon-pre-mainnet",
-    "measured_at": 1793935431,
-    "from_height": 7065,
-    "to_height": 10064,
+    "measured_at": 1794028327,
+    "from_height": 8274,
+    "to_height": 11273,
     "blocks": 3000,
-    "mean_seconds": 75.83,
+    "mean_seconds": 75.35,
     "outage_threshold_seconds": 7200,
     "outages": [
      {
@@ -150,10 +150,10 @@
     ],
     "largest_gaps": [
      81258,
-     913,
      908,
-     903,
-     891
+     893,
+     883,
+     777
     ]
    }
   },

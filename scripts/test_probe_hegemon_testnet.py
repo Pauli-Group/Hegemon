@@ -277,5 +277,33 @@ class PublicReferenceTest(unittest.TestCase):
                 self.assertEqual(probe.main(), 0 if basic else 1)
 
 
+class PublicProfileGuardTest(unittest.TestCase):
+    def test_public_profile_requires_ntp_peers_and_a_close_tip(self):
+        release = json.loads(probe.RELEASE.read_text())
+        node = {'height': 200, 'genesis': release['genesis_hash'], 'chain_id': release['chain_id'],
+                'peers': 8, 'syncing': False}
+        compare = {'matches': True, 'node_height': 200, 'reference_height': 200, 'height_difference': 0}
+        found, _ = probe.assert_public_profile(
+            'http://127.0.0.1:9944', genesis=release['genesis_hash'], manifest=probe.MANIFEST,
+            ntp=lambda: True, probe_node=lambda url: node, compare=lambda url, observed: compare)
+        self.assertEqual(found['height'], 200)
+        with self.assertRaisesRegex(ValueError, 'NTP'):
+            probe.assert_public_profile(
+                'http://127.0.0.1:9944', genesis=release['genesis_hash'], manifest=probe.MANIFEST,
+                ntp=lambda: False, probe_node=lambda url: node, compare=lambda url, observed: compare)
+        with self.assertRaisesRegex(ValueError, 'peers'):
+            probe.assert_public_profile(
+                'http://127.0.0.1:9944', genesis=release['genesis_hash'], manifest=probe.MANIFEST,
+                ntp=lambda: True, probe_node=lambda url: {**node, 'peers': 1},
+                compare=lambda url, observed: compare)
+        with self.assertRaisesRegex(ValueError, 'limit 2'):
+            probe.assert_public_profile(
+                'http://127.0.0.1:9944', genesis=release['genesis_hash'], manifest=probe.MANIFEST,
+                ntp=lambda: True, probe_node=lambda url: node,
+                compare=lambda url, observed: {'matches': True, 'node_height': 200, 'reference_height': 203})
+        self.assertEqual(probe.hegemon_policy_confirmations(),
+                         json.loads((probe.ROOT / 'config/swap/chain-timing.json').read_text())['chains']['hegemon']['confirmations'])
+
+
 if __name__ == '__main__':
     unittest.main()

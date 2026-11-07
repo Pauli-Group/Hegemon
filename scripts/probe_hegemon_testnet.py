@@ -10,6 +10,7 @@ import datetime
 import hashlib
 import json
 import re
+import subprocess
 import time
 import urllib.parse
 import urllib.request
@@ -29,6 +30,9 @@ REQUIRED = ('chain_getBlockHash', 'chain_getBlockActionsChunk', 'hegemon_latestB
             'hegemon_nodeConfig', 'hegemon_privateSpendParameters', 'hegemon_submitAction')
 PUBLIC_EXPLORER = 'https://hegemonprotocol.com'
 MAX_TIP_GAP = 12
+# Public swap profile (P8): stricter than the probe's readiness heuristic.
+PUBLIC_MAX_TIP_GAP = 2
+PUBLIC_MIN_PEERS = 3
 MAX_REFERENCE_AGE = 120
 MAX_REFERENCE_FUTURE = 30
 # A recently refreshed explorer response can still describe a stalled chain.
@@ -36,6 +40,65 @@ MAX_REFERENCE_FUTURE = 30
 MAX_TIP_IDLE = 20 * 60
 MAX_BLOCK_FUTURE = 120
 HASH32 = re.compile(r'0x[0-9a-fA-F]{64}\Z')
+
+
+def ntp_synchronized():
+    """True when systemd reports the clock is NTP-synchronized."""
+    try:
+        result = subprocess.run(['timedatectl', 'show', '-p', 'NTPSynchronized', '--value'],
+                                capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0 and result.stdout.strip() == 'yes'
+
+
+def hegemon_policy_confirmations(path=None):
+    """Confirmation depth for a Hegemon preimage observation, from the P1 timing file."""
+    path = Path(path) if path is not None else ROOT / 'config/swap/chain-timing.json'
+    value = json.loads(path.read_text())['chains']['hegemon']['confirmations']
+    if type(value) is not int or not 1 <= value <= 100:
+        raise ValueError('Invalid Hegemon policy confirmation depth')
+    return value
+
+
+def assert_public_profile(url, *, genesis, manifest, ntp=None, min_peers=PUBLIC_MIN_PEERS,
+                          max_gap=PUBLIC_MAX_TIP_GAP, probe_node=None, compare=None):
+    """Fail closed unless the loopback node is the pinned public pre-mainnet and follows the explorer.
+
+    This is the P8 public-swap guard. It does not weaken the Development-only local profile, which
+    still requires zero peers. Matching the explorer is not consensus or finality.
+    """
+    url = endpoint(url)
+    release = json.loads(RELEASE.read_text())
+    expected_genesis = release['genesis_hash']
+    given = genesis[2:] if isinstance(genesis, str) and genesis.startswith('0x') else genesis
+    pinned = expected_genesis[2:] if expected_genesis.startswith('0x') else expected_genesis
+    if not isinstance(given, str) or given.lower() != pinned.lower():
+        raise ValueError('Genesis is not the pinned v0.11 pre-mainnet genesis')
+    digest = hashlib.sha256(Path(manifest).read_bytes()).hexdigest()
+    if digest != release.get('network_manifest_sha256'):
+        raise ValueError('Manifest is not the pinned v0.11 network manifest')
+    if not (ntp or ntp_synchronized)():
+        raise ValueError('System clock is not NTP-synchronized')
+    node = (probe_node or probe)(url)
+    if (not isinstance(node, dict) or node.get('genesis') != expected_genesis
+            or node.get('chain_id') != release.get('chain_id')):
+        raise ValueError('Node does not match the pinned v0.11 pre-mainnet identity')
+    if type(node.get('peers')) is not int or node['peers'] < min_peers:
+        raise ValueError(f'Public Hegemon profile requires at least {min_peers} peers')
+    if node.get('syncing') is not False:
+        raise ValueError('Public Hegemon node is still syncing')
+    reference = (compare or compare_public_tip)(url, node)
+    if not isinstance(reference, dict) or reference.get('matches') is not True:
+        raise ValueError('Public explorer reference does not match')
+    node_height = reference.get('node_height', node.get('height'))
+    reference_height = reference.get('reference_height')
+    if type(node_height) is not int or type(reference_height) is not int:
+        raise ValueError('Public explorer comparison is missing heights')
+    gap = abs(node_height - reference_height)
+    if gap > max_gap:
+        raise ValueError(f'Node tip differs from explorer by {gap} blocks (limit {max_gap})')
+    return node, reference
 
 
 def endpoint(url):

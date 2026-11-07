@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 
+from probe_hegemon_testnet import hegemon_policy_confirmations
 from public_hegemon_preimage_observer import observe_public_hegemon_preimage
 from unlock_swap_backup import save_recovered_backup
 
@@ -20,7 +21,8 @@ def main():
     parser.add_argument('--hashlock', required=True)
     parser.add_argument('--start-height', type=int, required=True)
     parser.add_argument('--output-dir', type=Path, required=True)
-    parser.add_argument('--confirmations', type=int, default=2)
+    parser.add_argument('--confirmations', type=int, default=None,
+                        help='defaults to chains.hegemon.confirmations in config/swap/chain-timing.json')
     parser.add_argument('--timeout', type=int, default=600)
     args = parser.parse_args()
     os.umask(0o077)
@@ -34,7 +36,8 @@ def main():
         secret, snapshot = observe_public_hegemon_preimage(
             args.hegemon_rpc, action_id=args.action_id, hashlock=args.hashlock,
             start_height=args.start_height,
-            confirmations=args.confirmations, timeout=args.timeout)
+            confirmations=hegemon_policy_confirmations() if args.confirmations is None else args.confirmations,
+            timeout=args.timeout)
         first = getpass.getpass('New separate encrypted backup passphrase: ')
         second = getpass.getpass('Repeat encrypted backup passphrase: ')
         if (not 12 <= len(first.encode()) <= 4096

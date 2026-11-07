@@ -22,7 +22,9 @@ Wallet config (default ~/.config/hegemon/swap-wallets.json, or --wallets / HEGEM
    "cardano":  {"skey": "/path/cardano.skey", "keyhash": "<56 hex>", "address": "addr_test1..."},
    "hegemon":  {"rpc": "http://127.0.0.1:PORT", "manifest": "/path/manifest.json", "wallet": "/path/wallet.store",
                 "wallet_binary": "/path/private-spend", "address": "shca1...", "passphrase_file": "/path/0600-file",
-                "handoff_passphrase_file": "/path/0600-file"}}   (local Development chain only; see DESIGN.md)
+                "handoff_passphrase_file": "/path/0600-file"}}
+                Add "profile": "public" for the pinned v0.11 pre-mainnet (loopback RPC, peers, explorer tip).
+                Omit it for a local Development chain. See DESIGN.md.
 Run `make setup` first; operators of shared Hegemon mining hosts must also set HEGEMON_SEEDS and keep NTP/chrony on.
 """
 import argparse
@@ -73,13 +75,17 @@ def build_adapter(chain, wallets):
         from swap_engine.adapters.cardano import CardanoAdapter, PreviewProfile
         return CardanoAdapter(PreviewProfile(), wallets['cardano'])
     if chain == 'hegemon':
-        # Local Development chain only. The public Hegemon testnet has no profile until P8; a config without a
-        # `hegemon` entry is refused here rather than falling back to anything that could act.
         if 'hegemon' not in wallets:
-            fail('No hegemon entry in the wallet config. The adapter works against a local Development chain only; see DESIGN.md "Hegemon adapter".')
-        from swap_engine.adapters.hegemon_local import AttachedHegemonProfile, HegemonAdapter
+            fail('No hegemon entry in the wallet config. Use a local Development chain or set "profile": "public" for pre-mainnet; see DESIGN.md "Hegemon adapter".')
+        from swap_engine.adapters.hegemon_local import AttachedHegemonProfile, PublicHegemonProfile, HegemonAdapter
+        entry = wallets['hegemon']
         try:
-            return HegemonAdapter(AttachedHegemonProfile(wallets['hegemon']), 'self')
+            if entry.get('profile') == 'public':
+                timing = policy.load_timing()['chains']['hegemon']
+                return HegemonAdapter(PublicHegemonProfile(entry), 'self',
+                                      floor_confirmations=int(timing['confirmations']),
+                                      floor_remaining_blocks=1)
+            return HegemonAdapter(AttachedHegemonProfile(entry), 'self')
         except (ValueError, OSError, RuntimeError) as error:
             fail(f'hegemon: {error}')
     fail(f'Unknown chain {chain}')

@@ -18,7 +18,7 @@ Run Python from the repository root with `PYTHONPATH=scripts` (plus the packages
 | `swap_engine_cli.py` | current | Command line for the two-party engine: plan from the timelock policy, run, resume and inspect a swap. |
 | `swap_engine/` (`engine.py`, `store.py`, `planner.py`, `timelock_policy.py`, `identity.py`, `adapter.py`) | current | Durable store, pure transition engine, planner and policy shared with `swap-ui/timelock-policy.mjs` by test vectors. |
 | `swap_engine/adapters/{bitcoin,ethereum,cardano}.py` | current | Public-testnet adapters wrapping the drivers below. |
-| `swap_engine/adapters/hegemon_local.py`, `hegemon_stub.py`, `swap_engine/hegemon_wallet.py`, `hegemon_fake.py`, `local_hegemon.py` | current (local only) | Hegemon adapter on a private local chain with real wallets, the recorded-wallet fake used in fast tests, and the parallel-world runner. No public Hegemon adapter exists yet (see the P8 plan). |
+| `swap_engine/adapters/hegemon_local.py`, `hegemon_stub.py`, `swap_engine/hegemon_wallet.py`, `hegemon_fake.py`, `local_hegemon.py` | current | Hegemon adapter: loopback Development profiles (`peers == 0`) and a separate `PublicHegemonProfile` for the v0.11 pre-mainnet (`"profile": "public"`). The recorded-wallet fake is for fast tests; `local_hegemon.py` is the parallel-world runner. |
 | `swap_engine/adapters/local_{bitcoin,ethereum,cardano}.py`, `local_world.py`, `sim.py` | fixture | Local-chain adapters, world setup and the simulated chain used for fault-injection tests. |
 | `swap_engine/tools.py` | library | Resolve chain tool binaries (`HEGEMON_TOOL_<NAME>`, `HEGEMON_CHAIN_TOOLS`); `python3 -m swap_engine.tools` prints them. |
 | `swap_engine/ui_vectors.py`, `make_identity_vectors.py` | tool | Regenerate `config/swap/flow-vectors.json` and `config/swap/identity-vectors.json` that the JavaScript and Python implementations are both tested against. |
@@ -33,7 +33,7 @@ Run Python from the repository root with `PYTHONPATH=scripts` (plus the packages
 | `public_sepolia_driver.py`, `public_ethereum_transactions.py`, `public_ethereum_verify.py`, `public_ethereum_token_verify.py` | Sepolia signing, journalling and escrow verification against the pinned runtime. |
 | `public_cardano_driver.py`, `public_cardano_transactions.py`, `public_cardano_verify.py` | Cardano preview body building, signing and verification. |
 | `public_testnet_probe.py`, `public_testnet_submit.py`, `public_testnet_utxos.py`, `public_testnet_observers.py`, `public_swap_journal.py` | Tips and balances, journalled submission, indexers, preimage observation and the private journal that holds signed transactions before broadcast. |
-| `public_hegemon_wallet.py`, `public_hegemon_preimage_observer.py`, `probe_hegemon_testnet.py` | Bounded wallet I/O, preimage read and read-only checks for a trusted Hegemon pre-mainnet node. Used by the single-run `public_hegemon_eth_rehearsal.py`; not an engine adapter. |
+| `public_hegemon_wallet.py`, `public_hegemon_preimage_observer.py`, `probe_hegemon_testnet.py` | Bounded wallet I/O, preimage scan from canonical bytes, and read-only identity checks for a trusted Hegemon pre-mainnet node. The engine's public profile uses the observer and the probe; the older single-run rehearsal still uses the wallet helper. |
 | `htlc_counterpart.py`, `ethereum_local_anchor.py` | Loopback Ethereum and Cardano counterparts and the anchor check for local swap tests. |
 
 ## 3. Local fixtures and checks (disposable chains only)
@@ -53,7 +53,7 @@ Run Python from the repository root with `PYTHONPATH=scripts` (plus the packages
 
 | Path | Role |
 |---|---|
-| `local_swap_companion.py` | Loopback escrow companion for the hosted page: terminal-approved actions only. |
+| `local_swap_companion.py` | Loopback escrow companion for the hosted page: terminal-approved actions only. `--hegemon-public` is mutually exclusive with `--enable-hegemon-actions` and talks to the v0.11 node; local mode still requires zero peers. |
 | `bitcoin_companion_actions_check.py`, `cardano_companion_actions_check.py`, `hegemon_companion_actions_check.py`, `hegemon_companion_check.py` | Drive the companion through a disposable terminal. |
 | `bitcoin_preimage_observer.py`, `cardano_preimage_observer.py`, `hegemon_preimage_observer.py`, `bitcoin_observer_cli_check.py`, `cardano_observer_cli_check.py`, `hegemon_observer_cli_check.py` | Recover a claimed preimage on a local chain, and check each observer CLI. |
 | `watch_bitcoin_preimage.py`, `watch_cardano_preimage.py`, `watch_hegemon_preimage.py`, `watch_public_hegemon_preimage.py` | Save an observed preimage as an encrypted backup. |

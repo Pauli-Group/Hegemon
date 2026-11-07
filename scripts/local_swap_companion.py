@@ -2,8 +2,10 @@
 """Loopback-only local escrow companion.
 
 By default it only verifies escrows. Optional Hegemon Development actions
-require explicit startup opt-in and local terminal approval. The bearer token
-is stored in a user-private file and is not a wallet passphrase.
+require `--enable-hegemon-actions`. Public v0.11 pre-mainnet verify/actions use
+`--hegemon-public` (mutually exclusive with Development actions). Both need
+local terminal approval. The bearer token is stored in a user-private file
+and is not a wallet passphrase.
 """
 import argparse
 import datetime
@@ -111,6 +113,7 @@ def main():
     p.add_argument('--hegemon-rpc')
     p.add_argument('--private-spend',type=Path,default=ROOT/'target/release/private-spend')
     p.add_argument('--enable-hegemon-actions',action='store_true',help='enable locally approved Development-only wallet actions')
+    p.add_argument('--hegemon-public',action='store_true',help='use the pinned v0.11 public pre-mainnet (mutually exclusive with --enable-hegemon-actions)')
     p.add_argument('--hegemon-handoff-dir',type=Path,help='private directory for encrypted refund handoffs')
     p.add_argument('--hegemon-preimage-backup',type=Path,help='optional private exported browser backup for local claims')
     p.add_argument('--token-file',type=Path,required=True,help='0600 file inside a user-owned 0700 directory')
@@ -132,6 +135,8 @@ def main():
         local_node_identity(args.cardano_node_pid,args.cardano_socket,args.cardano_network_dir,args.cardano_genesis);private_key(args.cardano_signing_key);private_journal_directory(args.cardano_journal_dir)
     elif args.cardano_node_pid or args.cardano_genesis or args.cardano_signing_key or args.cardano_journal_dir or args.cardano_preimage_backup:p.error('Cardano wallet options require Cardano actions')
     hegemon_options=[args.hegemon_wallet,args.hegemon_manifest,args.hegemon_genesis,args.hegemon_rpc]
+    if args.hegemon_public and args.enable_hegemon_actions:
+        p.error('--hegemon-public is mutually exclusive with --enable-hegemon-actions')
     if any(hegemon_options) and not all(hegemon_options):p.error('all Hegemon wallet, manifest, genesis and RPC options are required')
     if not args.bitcoin_rpc and not args.cardano_socket and not args.ethereum_rpc and not all(hegemon_options):p.error('configure at least one local node')
     if args.ethereum_rpc:ethereum_local_head(args.ethereum_rpc)
@@ -142,7 +147,16 @@ def main():
     if args.enable_hegemon_actions:
         if not all(hegemon_options):p.error('Hegemon actions require all Hegemon options')
         private_handoff_directory(args.hegemon_handoff_dir)
-    if args.hegemon_preimage_backup and not args.enable_hegemon_actions:p.error('preimage backup requires Hegemon actions')
+    if args.hegemon_public:
+        if not all(hegemon_options):p.error('Hegemon public mode requires all Hegemon options')
+        release=json.loads((ROOT/'config/testnet/0.11/release.json').read_text())
+        if args.hegemon_genesis.removeprefix('0x')!=release['genesis_hash'].removeprefix('0x'):
+            p.error('Hegemon public mode requires the pinned v0.11 genesis')
+        if hashlib.sha256(args.hegemon_manifest.read_bytes()).hexdigest()!=release['network_manifest_sha256']:
+            p.error('Hegemon public mode requires the pinned v0.11 manifest')
+        if args.hegemon_handoff_dir:private_handoff_directory(args.hegemon_handoff_dir)
+    if args.hegemon_preimage_backup and not args.enable_hegemon_actions and not (args.hegemon_public and args.hegemon_handoff_dir):
+        p.error('preimage backup requires Hegemon actions')
     token=private_token(args.token_file)
     btc=BitcoinRPC(args.bitcoin_rpc,args.bitcoin_cookie) if args.bitcoin_rpc else None
     if args.enable_bitcoin_actions:
@@ -192,7 +206,7 @@ def main():
             if not self.authorized():return self.reply(403,{'error':'forbidden'})
             try:
                 if self.path=='/health':
-                    capabilities=(['bitcoin-regtest-verify'] if btc else [])+(['bitcoin-regtest-actions'] if args.enable_bitcoin_actions else [])+(['cardano-local-verify'] if cardano else [])+(['cardano-local-actions'] if args.enable_cardano_actions else [])+(['ethereum-local-anchor'] if args.ethereum_rpc else [])+(['hegemon-local-verify'] if all(hegemon_options) else [])+(['hegemon-local-actions'] if args.enable_hegemon_actions else [])
+                    capabilities=(['bitcoin-regtest-verify'] if btc else [])+(['bitcoin-regtest-actions'] if args.enable_bitcoin_actions else [])+(['cardano-local-verify'] if cardano else [])+(['cardano-local-actions'] if args.enable_cardano_actions else [])+(['ethereum-local-anchor'] if args.ethereum_rpc else [])+(['hegemon-public-verify'] if args.hegemon_public else ['hegemon-local-verify'] if all(hegemon_options) else [])+(['hegemon-public-actions'] if args.hegemon_public and args.hegemon_handoff_dir else ['hegemon-local-actions'] if args.enable_hegemon_actions else [])
                     return self.reply(200,{'status':'ok','capabilities':capabilities})
                 if self.path=='/bitcoin/head' and btc:
                     info=btc.call('getblockchaininfo')
@@ -209,6 +223,10 @@ def main():
                     tip=cardano.tip()
                     return self.reply(200,{'genesis':hashlib.sha256(raw).hexdigest(),'time_ms':str(start+tip['slot']*int(slot_ms)),'tip_hash':tip['hash']})
                 if self.path=='/hegemon/head' and all(hegemon_options):
+                    if args.hegemon_public:
+                        from probe_hegemon_testnet import assert_public_profile
+                        node,_=assert_public_profile(args.hegemon_rpc,genesis=args.hegemon_genesis,manifest=args.hegemon_manifest)
+                        return self.reply(200,{'genesis':node['genesis'].removeprefix('0x'),'height':str(node['height']),'profile':'public'})
                     genesis=str(rpc(args.hegemon_rpc,'chain_getBlockHash',[0])).removeprefix('0x')
                     if rpc(args.hegemon_rpc,'system_health')['peers']!=0 or genesis!=args.hegemon_genesis.removeprefix('0x'):raise ValueError('Hegemon node is not isolated')
                     return self.reply(200,{'genesis':genesis,'height':str(height(args.hegemon_rpc))})
@@ -232,6 +250,14 @@ def main():
                     result=run_cardano_action(chain=cardano,pid=args.cardano_node_pid,genesis_hash=args.cardano_genesis,signing_key=args.cardano_signing_key,journal_dir=args.cardano_journal_dir,request=data,backup=args.cardano_preimage_backup)
                     return self.reply(200,{'completed':True,'result':result})
                 if self.path=='/hegemon/action':
+                    if args.hegemon_public:
+                        if not args.hegemon_handoff_dir:raise ValueError('Hegemon public actions need a handoff directory')
+                        from probe_hegemon_testnet import assert_public_profile
+                        assert_public_profile(args.hegemon_rpc,genesis=args.hegemon_genesis,manifest=args.hegemon_manifest)
+                        base=['--wallet',args.hegemon_wallet,'--manifest',args.hegemon_manifest,'--genesis',args.hegemon_genesis,'--rpc',args.hegemon_rpc]
+                        result=run_hegemon_action(binary=args.private_spend,base_args=base,scratch=scratch.name,request=data,handoff_dir=args.hegemon_handoff_dir,preimage_backup=args.hegemon_preimage_backup,banner='Hegemon public pre-mainnet action (not an atomic swap)')
+                        assert_public_profile(args.hegemon_rpc,genesis=args.hegemon_genesis,manifest=args.hegemon_manifest)
+                        return self.reply(200,{'completed':True,'result':result})
                     if not args.enable_hegemon_actions:raise ValueError('Hegemon actions are not enabled')
                     manifest=json.loads(args.hegemon_manifest.read_text())
                     if manifest.get('profile')!='development' or manifest.get('development_candidate',{}).get('private_spend_only') is not True:raise ValueError('actions require a private-spend Development manifest')
@@ -255,12 +281,17 @@ def main():
                 else:
                     if not all(hegemon_options):raise ValueError('Hegemon verifier is not configured')
                     values=hegemon_wire_terms(data)
-                    if rpc(args.hegemon_rpc,'system_health')['peers']!=0 or str(rpc(args.hegemon_rpc,'chain_getBlockHash',[0])).removeprefix('0x')!=args.hegemon_genesis.removeprefix('0x'):raise ValueError('Hegemon node is not the configured isolated chain')
+                    if args.hegemon_public:
+                        from probe_hegemon_testnet import assert_public_profile
+                        assert_public_profile(args.hegemon_rpc,genesis=args.hegemon_genesis,manifest=args.hegemon_manifest)
+                    elif rpc(args.hegemon_rpc,'system_health')['peers']!=0 or str(rpc(args.hegemon_rpc,'chain_getBlockHash',[0])).removeprefix('0x')!=args.hegemon_genesis.removeprefix('0x'):raise ValueError('Hegemon node is not the configured isolated chain')
                     print('\nHegemon verification request (no funds will be moved):\n'+json.dumps(values,indent=2),flush=True)
                     if input('Type VERIFY to approve this local wallet read: ').strip()!='VERIFY':raise ValueError('verification declined locally')
                     phrase=getpass.getpass('Hegemon encrypted wallet passphrase (local terminal only): ')
                     if not phrase:raise ValueError('passphrase required')
-                    argv=['--wallet',args.hegemon_wallet,'--manifest',args.hegemon_manifest,'--genesis',args.hegemon_genesis,'--rpc',args.hegemon_rpc,'--development-local-candidate','verify-htlc']
+                    argv=['--wallet',args.hegemon_wallet,'--manifest',args.hegemon_manifest,'--genesis',args.hegemon_genesis,'--rpc',args.hegemon_rpc]
+                    if not args.hegemon_public:argv.append('--development-local-candidate')
+                    argv.append('verify-htlc')
                     for field in ('locked','claim','refund','hashlock','timeout','amount','min_confirmations','min_remaining_blocks'):
                         argv.extend(['--'+field.replace('_','-'),values[field]])
                     try:
@@ -269,7 +300,11 @@ def main():
                         raise ValueError('Hegemon wallet did not verify the note') from e
                     finally:del phrase
                     result=json_line(text)
-                    if result.get('verified') is not True or rpc(args.hegemon_rpc,'system_health')['peers']!=0 or str(rpc(args.hegemon_rpc,'chain_getBlockHash',[0])).removeprefix('0x')!=args.hegemon_genesis.removeprefix('0x'):raise ValueError('Hegemon verification unavailable')
+                    if args.hegemon_public:
+                        from probe_hegemon_testnet import assert_public_profile
+                        assert_public_profile(args.hegemon_rpc,genesis=args.hegemon_genesis,manifest=args.hegemon_manifest)
+                        if result.get('verified') is not True:raise ValueError('Hegemon verification unavailable')
+                    elif result.get('verified') is not True or rpc(args.hegemon_rpc,'system_health')['peers']!=0 or str(rpc(args.hegemon_rpc,'chain_getBlockHash',[0])).removeprefix('0x')!=args.hegemon_genesis.removeprefix('0x'):raise ValueError('Hegemon verification unavailable')
                     fields=('position','created_height','reference_height','confirmations')
                     if any(type(result.get(field)) is not int or result[field]<0 for field in fields):raise ValueError('invalid Hegemon verifier result')
                     result={'verified':True,**{field:str(result[field]) for field in fields}}
@@ -281,7 +316,7 @@ def main():
     server=HTTPServer(('127.0.0.1',args.port),Handler)
     def terminate(_signum,_frame):raise KeyboardInterrupt
     signal.signal(signal.SIGTERM,terminate)
-    print(f'Local companion listening on 127.0.0.1:{args.port}; token file: {args.token_file}; Hegemon actions: {args.enable_hegemon_actions}',flush=True)
+    print(f'Local companion listening on 127.0.0.1:{args.port}; token file: {args.token_file}; Hegemon actions: {args.enable_hegemon_actions}; Hegemon public: {args.hegemon_public}',flush=True)
     try:server.serve_forever()
     except KeyboardInterrupt:pass
     finally:server.server_close();scratch.cleanup()

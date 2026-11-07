@@ -8,7 +8,8 @@
  *
  * Limits, stated rather than hidden: the page cannot see engine-side files, so "preimage available" means an
  * encrypted backup for the hashlock exists in this browser; it does not know the engine's `submitted` timestamps, so
- * it cannot report a stalled submission (the CLI does); and Hegemon has no public testnet leg yet.
+ * it cannot report a stalled submission (the CLI does); and the Hegemon leg is observed only through
+ * a local companion (`readers.hegemon`) because the hosted page cannot reach a loopback node.
  */
 import {LONG, SHORT, TERMINAL, TRANSITIONS, claimGate, decide, otherLeg, ownLeg, policyLegs, swapId, termsDigest, validateTerms} from './swap-flow.mjs';
 import {checkOrdered} from './timelock-policy.mjs';
@@ -132,6 +133,11 @@ async function ethereumLeg(leg, ref, terms, readers, template) {
   return observation;
 }
 
+async function hegemonLeg(leg, ref, terms, readers) {
+  const snapshot = await readers.hegemon.escrow(ref, terms);
+  return snapshot || null;
+}
+
 async function head(chain, readers, now) {
   if (chain === 'bitcoin') return {observedAt: now, height: (await readers.bitcoin.head()).tip};
   if (chain === 'cardano') { const p = await readers.cardano.params(); return {observedAt: now, timestamp: p.system_start + p.slot}; }
@@ -141,6 +147,11 @@ async function head(chain, readers, now) {
     if (!Number.isSafeInteger(timestamp)) fail('the provider returned an invalid block');
     return {observedAt: now, timestamp};
   }
+  if (chain === 'hegemon') {
+    const h = await readers.hegemon.head();
+    if (!Number.isSafeInteger(h?.height)) fail('the Hegemon companion returned an invalid head');
+    return {observedAt: now, height: h.height};
+  }
   fail('no public testnet head for ' + chain);
 }
 
@@ -149,13 +160,17 @@ export async function buildObservation({terms, record, now, readers, template, h
   const heads = {long: null, short: null}, legs = {long: null, short: null}, errors = {};
   for (const name of [LONG, SHORT]) {
     const leg = terms.legs[name], ref = record.escrows[name];
-    if (leg.chain === 'hegemon') { errors[name] = 'Hegemon has no public testnet leg: this page cannot observe it. Use the CLI or the local companion.'; continue; }
+    if (leg.chain === 'hegemon' && !readers.hegemon) {
+      errors[name] = 'Hegemon requires a local companion on this machine; the hosted page cannot reach a loopback node.';
+      continue;
+    }
     try { heads[name] = await head(leg.chain, readers, now); } catch (error) { unreadable(errors, name, error); }
     if (ref == null) continue;
     try {
       legs[name] = leg.chain === 'bitcoin' ? await bitcoinLeg(leg, ref, terms, readers)
         : leg.chain === 'cardano' ? await cardanoLeg(leg, ref, terms, readers)
-          : await ethereumLeg(leg, ref, terms, readers, template);
+          : leg.chain === 'hegemon' ? await hegemonLeg(leg, ref, terms, readers)
+            : await ethereumLeg(leg, ref, terms, readers, template);
     } catch (error) { unreadable(errors, name, error); }
   }
   return {now, heads, legs, errors, preimage_available: hasSecret};
@@ -201,7 +216,7 @@ export function explainDecision({decision, record, terms, obs, config, id}) {
   return {...base, claimGate: gate, prefill,
     headline: `Next: ${decision.action} the ${decision.leg} leg on ${leg.chain}: ${decision.why}.`,
     next: prefill ? {type: 'wallet', section: prefill.section, text: `Use the ${leg.chain} wallet section below, or run ${cli}.`}
-      : {type: 'cli', text: leg.chain === 'hegemon' ? 'The Hegemon leg is unavailable on public testnet in this page. Use the CLI or the local companion.' : `Run ${cli}.`}};
+      : {type: 'cli', text: leg.chain === 'hegemon' ? 'The Hegemon leg requires a local companion (the hosted page cannot reach loopback). Use the CLI or scripts/local_swap_companion.py --hegemon-public.' : `Run ${cli}.`}};
 }
 
 /** Saved action records that concern this swap and are not settled. */

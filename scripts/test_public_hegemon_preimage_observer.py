@@ -103,6 +103,29 @@ class PublicHegemonObserverTest(unittest.TestCase):
         finally:
             secret[:] = b'\0' * len(secret)
 
+    def test_hashlock_scan_returns_a_confirmed_release_and_none_when_absent(self):
+        with patch.object(observer, 'probe', return_value=self.node), \
+             patch.object(observer, 'compare_public_tip', return_value=self.reference), \
+             patch.object(observer, 'rpc', side_effect=self.rpc), \
+             patch.object(observer, 'canonical_body', side_effect=self.body):
+            secret, snapshot = observer.scan_public_hegemon_preimage(
+                'http://127.0.0.1:9944', hashlock=self.hashlock, start_height=100,
+                confirmations=2, timeout=2, _clock=self.clock.now, _sleep=self.clock.sleep)
+        try:
+            self.assertEqual(secret, self.secret)
+            self.assertEqual(snapshot['block_height'], 100)
+            self.assertEqual(snapshot['action_id'], self.action_id)
+        finally:
+            secret[:] = b'\0' * len(secret)
+        self.clock = Clock()
+        with patch.object(observer, '_snapshot',
+                          return_value=(dict(self.node, height=100), self.reference)), \
+             patch.object(observer, 'rpc', side_effect=self.rpc), \
+             patch.object(observer, 'canonical_body', side_effect=self.body):
+            self.assertIsNone(observer.scan_public_hegemon_preimage(
+                'http://127.0.0.1:9944', hashlock=self.hashlock, start_height=100,
+                confirmations=2, timeout=0.05, _clock=self.clock.now, _sleep=self.clock.sleep))
+
     def test_unready_nodes_and_public_reference_are_rejected(self):
         for change in ({'syncing': True}, {'peers': 0}, {'peers': True},
                        {'private_spend_parameters_match': False},

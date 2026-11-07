@@ -1,11 +1,13 @@
 # Experimental Hegemon–Ethereum public-testnet rehearsal
 
 This test uses disposable HGN on v0.11 pre-mainnet and disposable ETH on
-Sepolia. It is not a production swap tool. It has synthetic coverage but has
-not yet completed a funded public Hegemon swap. Fixed block and time margins
+Sepolia. It is not a production swap tool. Fixed block and time margins
 are rehearsal choices, not guarantees about chain speed, confirmation or
 finality. The local Hegemon node, the public Hegemon explorer and the Sepolia
-provider are trusted. Do not use mainnet funds or valuable assets.
+provider are trusted. Do not use mainnet funds or valuable assets. New swaps
+go through the engine (`scripts/swap_engine_cli.py` with `"profile": "public"`);
+this runbook is the older single-run path kept as evidence. Public identifiers
+from the engine runs are in `PUBLIC_TESTNET_RESULTS.md`.
 
 The separate Development rehearsal starts its own isolated nodes and must not
 be pointed at the public Hegemon node. This runner never starts a node or
@@ -34,8 +36,8 @@ unless the list has been deliberately rotated. Every node and miner on the same 
 otherwise they can partition and fork. Keep NTP or chrony enabled on the host: blocks and PoW timestamps beyond the
 future-skew bound are rejected, and a drifting clock also makes the probe's 20-minute freshness check lie. Both apply
 to any Hegemon leg of a swap, public or local. This runbook is the older, single-run path: new swaps go through the
-swap engine (`scripts/SWAP_SCRIPTS.md`), and a public Hegemon adapter is the first item of the follow-up backlog in
-`.agent/SWAP_SERIES_EXECPLAN.md`. Tool versions and the `pip --target` alternative to a virtual environment are in
+swap engine (`scripts/SWAP_SCRIPTS.md`) with `"profile": "public"` in the Hegemon
+wallet config. Tool versions and the `pip --target` alternative to a virtual environment are in
 `docs/SWAP_TOOLCHAIN.md`.
 
 Work from a checkout containing this runbook and the current branch. Preserve

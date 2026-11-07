@@ -160,13 +160,22 @@ test('Ethereum legs are read through a read-only provider and verified by creati
   assert.equal(refundPrefill.fields.contract, contract, 'a later Ethereum claim or refund form is filled with the derived contract address');
 });
 
-test('Hegemon is labelled unavailable and never produces a head or an observation', async () => {
+test('Hegemon without a companion is labelled as requiring a local companion and never produces a head', async () => {
   const t = {...terms(), legs: {long: {chain: 'hegemon', amount: 5, refundee: 'shca1aaa', claimant: 'shca1bbb', expiry: 900_000}, short: terms().legs.short}};
   const out = await review({termsText: text(t), statusText: text(await status(t, {escrows: {long: null, short: null}, state: 'terms_saved'})), config, now: NOW, readers: await readers(terms()), template, hasSecret: true});
   assert.equal(out.obs.heads.long, null);
-  assert.match(out.obs.errors.long, /no public testnet leg/);
+  assert.match(out.obs.errors.long, /local companion/);
   assert.equal(out.view.decision.kind, 'wait');
-  assert.ok(out.view.notes.some(n => /Hegemon has no public testnet leg/.test(n)));
+  assert.ok(out.view.notes.some(n => /local companion/.test(n)));
+});
+
+test('Hegemon with a companion reader produces a height head', async () => {
+  const t = {...terms(), legs: {long: {chain: 'hegemon', amount: 5, refundee: 'shca1aaa', claimant: 'shca1bbb', expiry: 900_000}, short: terms().legs.short}};
+  const r = await readers(terms());
+  r.hegemon = {head: async () => ({height: 11246}), escrow: async () => null};
+  const out = await review({termsText: text(t), statusText: text(await status(t, {escrows: {long: null, short: null}, state: 'terms_saved'})), config, now: NOW, readers: r, template, hasSecret: true});
+  assert.deepEqual(out.obs.heads.long, {observedAt: NOW, height: 11246});
+  assert.equal(out.obs.errors.long, undefined);
 });
 
 test('an act decision prefills the matching wallet form and a claim reports its last safe submission time; outside the gate it refuses', async () => {

@@ -4,37 +4,37 @@ overview: New plan P8 in the swap series, run after P6 and before P7. The Hegemo
 todos:
   - id: p8-series
     content: "Revise series: add P8 to master ExecPlan, update P6/P7/P1 plans, write .agent/HEGEMON_PUBLIC_SWAPS_EXECPLAN.md"
-    status: pending
+    status: completed
   - id: p8-node
     content: Diagnose stuck local node and restart safely on loopback wallet-RPC, mining off; verify identity with probe script
-    status: pending
+    status: completed
   - id: p8-wallet-bin
     content: Build private-spend (default features), record hash, confirm branch delta is verify-htlc only
-    status: pending
+    status: completed
   - id: p8-balances
     content: Check Alice and Bob Hegemon wallet balances and lock state; resolve funding with the user if needed
-    status: pending
+    status: completed
   - id: p8-timing
     content: Measure Hegemon block timing and proof cost; update config/swap/chain-timing.json
-    status: pending
+    status: completed
   - id: p8-public-profile
     content: Add guarded public profile to Hegemon adapter, companion and observer without weakening local guards
-    status: pending
+    status: completed
   - id: p8-smoke
     content: "Public smoke tests: ordinary transfer, then lock/verify/refund at minimal amounts"
-    status: pending
+    status: completed
   - id: p8-swaps
     content: Run HGN/ETH, HGN/BTC, HGN/ADA public swaps with refund cases through the P2 engine, both directions
-    status: pending
+    status: completed
   - id: p8-ui
     content: Label or extend companion for Hegemon leg in guided flow
-    status: pending
+    status: completed
   - id: p8-docs
     content: Record public results; update DESIGN.md, METHODS.md, swap-service README and runbook notes
-    status: pending
+    status: completed
   - id: p8-revise
     content: Revise P7, P1 and P5 plans based on what was learned
-    status: pending
+    status: completed
 isProject: false
 ---
 

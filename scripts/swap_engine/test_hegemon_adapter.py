@@ -14,7 +14,7 @@ from pathlib import Path
 
 from swap_engine import engine, hegemon_wallet as hw, planner, sim, timelock_policy as policy
 from swap_engine.adapter import ActionRefused, ChainUnavailable, check_observation
-from swap_engine.adapters.hegemon_local import HegemonAdapter, terms_digest
+from swap_engine.adapters.hegemon_local import HegemonAdapter, LoopbackProfile, PublicHegemonProfile, terms_digest
 from swap_engine.hegemon_fake import FakeHegemonProfile
 from swap_engine.store import journal_ids
 
@@ -616,6 +616,117 @@ class CrashSweep(unittest.TestCase):
                 self.assertEqual(s.fair('unchanged'), [], (index, names[index - 1]))
             finally:
                 s.close()
+
+
+class LocalGuardTests(unittest.TestCase):
+    def test_loopback_still_refuses_any_peer(self):
+        profile = LoopbackProfile.__new__(LoopbackProfile)
+        profile.url = 'http://127.0.0.1:9'
+        profile.genesis = '0x' + 'ab' * 32
+
+        class FakeIO:
+            def rpc(self, url, method, params=None):
+                if method == 'system_health':
+                    return {'peers': 1, 'isSyncing': False}
+                if method == 'chain_getBlockHash':
+                    return profile.genesis
+                raise AssertionError(method)
+
+        profile._io = FakeIO()
+        with self.assertRaisesRegex(RuntimeError, 'peers'):
+            profile._guard()
+
+    def test_loopback_accepts_a_peerless_matching_genesis(self):
+        profile = LoopbackProfile.__new__(LoopbackProfile)
+        profile.url = 'http://127.0.0.1:9'
+        profile.genesis = '0x' + 'ab' * 32
+
+        class FakeIO:
+            def rpc(self, url, method, params=None):
+                if method == 'system_health':
+                    return {'peers': 0, 'isSyncing': False}
+                if method == 'chain_getBlockHash':
+                    return profile.genesis
+                raise AssertionError(method)
+
+        profile._io = FakeIO()
+        profile._guard()
+
+
+class PublicProfileTests(unittest.TestCase):
+    def private_files(self):
+        handle, root = private()
+        self.addCleanup(handle.cleanup)
+        wallet = root / 'alice.wallet'
+        wallet.write_bytes(b'wallet')
+        os.chmod(wallet, 0o600)
+        phrase = root / 'alice.pass'
+        phrase.write_bytes(b'secret-passphrase\n')
+        os.chmod(phrase, 0o600)
+        handoff = root / 'handoff.pass'
+        handoff.write_bytes(b'handoff-passphrase\n')
+        os.chmod(handoff, 0o600)
+        binary = root / 'private-spend'
+        binary.write_bytes(b'#!/bin/true\n')
+        os.chmod(binary, 0o700)
+        import probe_hegemon_testnet as probe
+        release = json.loads(probe.RELEASE.read_text())
+        node = {'height': 11200, 'genesis': release['genesis_hash'], 'chain_id': release['chain_id'],
+                'peers': 8, 'syncing': False}
+        config = {'profile': 'public', 'rpc': 'http://127.0.0.1:9944', 'manifest': str(probe.MANIFEST),
+                  'wallet': str(wallet), 'wallet_binary': str(binary), 'address': 'shca1alice',
+                  'passphrase_file': str(phrase), 'handoff_passphrase_file': str(handoff),
+                  'state_dir': str(root / 'state')}
+        return root, config, node, release, probe
+
+    def make(self, **changes):
+        root, config, node, release, probe = self.private_files()
+        node.update(changes.get('node', {}))
+        compare = changes.get('compare', {'matches': True, 'node_height': node['height'],
+                                          'reference_height': node['height'], 'height_difference': 0})
+        ntp = changes.get('ntp', lambda: True)
+        return PublicHegemonProfile(config, ntp=ntp, probe_node=lambda url: node,
+                                    compare=lambda url, observed: compare), node, release, probe, root
+
+    def test_public_profile_pins_the_release_and_refuses_a_gap_or_missing_ntp(self):
+        profile, node, release, probe, _ = self.make()
+        self.assertEqual(profile.journal_chain, 'hegemon-pre-mainnet')
+        self.assertEqual(profile.fee, 1_000)
+        self.assertEqual(profile.genesis, release['genesis_hash'])
+        with self.assertRaisesRegex(ValueError, 'NTP'):
+            self.make(ntp=lambda: False)
+        with self.assertRaisesRegex(ValueError, 'peers'):
+            self.make(node={'peers': 0})
+        with self.assertRaisesRegex(ValueError, 'limit 2'):
+            self.make(compare={'matches': True, 'node_height': 100, 'reference_height': 103, 'height_difference': -3})
+
+    def test_public_wallet_never_adds_the_development_flag(self):
+        profile, _, _, _, root = self.make()
+        captured = {}
+
+        def fake_wallet(binary, argv, secrets, directory, label, expected=None, timeout=None):
+            captured['argv'] = [str(x) for x in argv]
+            return 'synced 1\n', {'exit_code': 0, 'seconds': 0.1, 'peak_rss_kib': 1}
+
+        profile._helper.wallet = fake_wallet
+        profile.wallet('self', ['status'])
+        self.assertNotIn('--development-local-candidate', captured['argv'])
+        self.assertEqual(captured['argv'][captured['argv'].index('--rpc') + 1], 'http://127.0.0.1:9944')
+        with self.assertRaisesRegex(RuntimeError, 'Development-only'):
+            profile.wallet('self', ['--development-local-candidate', 'status'])
+
+    def test_observe_release_treats_an_empty_scan_as_unspent(self):
+        profile, _, _, _, _ = self.make()
+        calls = []
+
+        def scan(*args, **kwargs):
+            calls.append(kwargs)
+            return None
+
+        import public_hegemon_preimage_observer as observer
+        observer.scan_public_hegemon_preimage = scan
+        self.assertIsNone(profile.observe_release('ab' * 32, 100))
+        self.assertEqual(calls[0]['start_height'], 100)
 
 
 class TermsDigestTests(unittest.TestCase):

@@ -2933,7 +2933,7 @@ Test on real software: `HEGEMON_LOCAL_CHAINS=1 PYTHONPATH=.:$HOME/.local/opt/heg
 
 Mutation check: each of ten rules of `engine.py` (claim gating, refund-due, preimage hash, inflight recovery, identity checks and others) was rewritten in turn and a test had to fail; nine were killed and the tenth is equivalent, because the initiator's claim cutoff is already implied by the policy's claim-window rule.
 
-Limits: the engine does not authenticate the counterparty and does not make real-funds swaps safe. Hegemon is a stub until P6/P8. Bitcoin/Bitcoin is refused by the planner (`horizon-too-long`, `insufficient-gap`) under the real 30-day horizon. Ethereum's public RPC does not show mempool claims. The Cardano adapter needs two confirmed ADA-only outputs of at least 5 ADA for fee and collateral, and a claim's validity upper bound is capped by the profile (preview uses the expiry; the local cluster uses 20 slots because its stability window is 30 slots).
+Limits: the engine does not authenticate the counterparty and does not make real-funds swaps safe. Hegemon on a public chain needs `"profile": "public"` in the wallet config and a following loopback node (see "Hegemon public profile" below); without that entry the CLI still builds the local attached profile, which refuses any peer. Bitcoin/Bitcoin is refused by the planner (`horizon-too-long`, `insufficient-gap`) under the real 30-day horizon. Ethereum's public RPC does not show mempool claims. The Cardano adapter needs two confirmed ADA-only outputs of at least 5 ADA for fee and collateral, and a claim's validity upper bound is capped by the profile (preview uses the expiry; the local cluster uses 20 slots because its stability window is 30 slots).
 
 
 ## Hosted wallet integrations
@@ -2964,7 +2964,7 @@ Verify a deployment: `node scripts/verify_hosted_client.mjs --base <url> [--prof
 
 Verification state on this machine: Worker and D1 behaviour is tested with Node 24's in-memory SQLite behind a D1-shaped adapter; see the deployment notes in `.agent/SWAP_RELAY_IDENTITY_EXECPLAN.md` for whether `wrangler dev --local` and a deployment dry run ran. The deployment itself is the operator's step. Two Cloudflare behaviours are configured rather than assumed: `html_handling` is `none` so `/hosted.html` is not redirected, and the Worker serves only manifest files.
 
-Limits: a relay fabricating a whole offer under its own wallet is detected only through the out-of-band identity code or an earlier pin; the local (regtest) pair check does not require identities; Hegemon identities are `pending` until P6/P8; Bitcoin proofs are pasted from a wallet's message-signing function and only P2WPKH keys are accepted; keys created before this change cannot be backed up.
+Limits: a relay fabricating a whole offer under its own wallet is detected only through the out-of-band identity code or an earlier pin; the local (regtest) pair check does not require identities; Hegemon identities stay `pending` / `local:` (never proven; the wallet has no message-signature command); Bitcoin proofs are pasted from a wallet's message-signing function and only P2WPKH keys are accepted; keys created before this change cannot be backed up.
 
 ## Hegemon local adapter, fixture timing and proving cost (2026-11-06)
 
@@ -2983,6 +2983,20 @@ Legacy token legs: Hegemon against an ERC-20 or a Cardano native token is exerci
 Proving cost harness (separate branch `proving-cost-p6` of the repository, `scripts/bench_private_spend_proof.py`, kept off the swap-series branch because it sits beside the prover): it starts a copy of the template with the development node, runs `lock`, `claim` and `refund` wallet commands and records wall time, user and system CPU time and peak RSS (`wait4`, so children are counted), plus, with `--trace`, the prover's own stage timer and a half-second RSS series. `perf` is not used (`kernel.perf_event_paranoid` is 4 on the measurement host). A chain-free prover run (`cargo run --release -p transaction-circuit --features private-spend-dev-artifacts --example private_spend_candidate_artifact -- lock OUTDIR`) measures a proof without a chain; it is the way to compare prover changes, because any edit to `smallwood_engine.rs` changes `relation_digest` (the file's bytes are hashed into it) and an edited wallet is refused by a chain whose manifest pins the old digest.
 
 Operators: when running a Hegemon node or miner next to any of this, set `HEGEMON_SEEDS="hegemon.pauli.group:30333,devnet.hegemonprotocol.com:30333"` (the approved list unless it has been deliberately rotated; every miner on a network must share one list or it forks) and keep NTP or chrony running, because PoW timestamps beyond the future-skew bound are rejected. The local fixtures set `HEGEMON_SEEDS=''` on purpose: they must never reach a real peer, and each run checks for zero peers.
+
+## Hegemon public profile (2026-11-07)
+
+Series plan P8, `.agent/HEGEMON_PUBLIC_SWAPS_EXECPLAN.md`; design in DESIGN.md, "Hegemon adapter and local fixtures". This is a second profile of the same adapter, not a second engine.
+
+Point the wallet config's `hegemon` object at the production `private-spend` binary (default features, no `private-spend-dev-artifacts`), the v0.11 manifest, a loopback `http://127.0.0.1:9944` node started with `./start.sh --wallet-rpc` (mining off), and `"profile": "public"`. Plan and run through the engine CLI as for the other chains. The public profile refuses a Development node, a non-loopback URL, fewer than three peers, a tip more than two blocks behind `https://hegemonprotocol.com/testnet/status.json`, and a host whose NTP is not synchronized. Local configs without `"profile": "public"` keep `AttachedHegemonProfile` and still refuse any peer.
+
+Smoke (outside the swap policy; relation minimum plus a small margin): an ordinary transfer, then a lock with `--release-secret`, `verify-htlc` with the policy's `--min-confirmations` and `--min-remaining-blocks`, wait for the timeout, refund. A lock that omits `--release-secret` cannot be `verify-htlc`'d by the counterparty. Engine swaps use `planner.plan_with_margin` on live heads. Hegemon is the long leg against a time-based chain because a 22.6 hour stall already exceeded the policy's two-hour outage allowance; a Hegemon long / Ethereum or Cardano short plan is about 1,000 blocks (roughly 21 hours to the refund height), and Hegemon long / Bitcoin is about 14,800 blocks. Happy-path claims finish in minutes without waiting for those refund heights. `proveSeconds` stays 300: a public lock, claim or refund proof on this host was about 105 seconds and 1.65 GiB peak RSS. Public fee is 1,000 atoms; 1 HGN is 100,000,000 atoms.
+
+Preimage observation is `scripts/public_hegemon_preimage_observer.py` / `scripts/watch_public_hegemon_preimage.py` over canonical action bytes. Confirmation depth is the policy's Hegemon confirmations. A claim that a PoW reorg orphans can still leave the preimage public. The companion's public mode is `scripts/local_swap_companion.py --hegemon-public`, mutually exclusive with `--enable-hegemon-actions`.
+
+A late claim is refused by the engine's `claim_gate` (`policy-rejects-claim`) even though the Hegemon relation accepts a claim until a refund lands. Hegemon identity remains unauthenticated.
+
+Operators: the same seed list and NTP/chrony requirement as the local adapter section. Do not mine from a swap host unless asked; immature rewards need 120 blocks. Wallet RPC stays on loopback. Never commit `.pass` files, wallet stores, swap `secret` files or journals.
 
 ## Swap series verification: tiers, toolchain and CI (2026-11-06)
 

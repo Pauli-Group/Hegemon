@@ -100,3 +100,5 @@ Revision from P4 (2026-11-06):
 Update the master ExecPlan and edit P6 and P7:
 - P6: the shape of the Hegemon identity field and what the adapter must provide.
 - P7: new commands, the manifest/release process and doc updates, and whether the relay change needs its own PR.
+
+Revision from P8 (2026-11-07): public HGN/ETH and HGN/BTC engine swaps ran without a Hegemon identity scheme. Each run records that the Hegemon side is unauthenticated (`pending` / `local:`). The pair check still has no Hegemon participants to compare, so escrow terms on the other chain must equal the signed Bitcoin, Ethereum or Cardano identities, and the Hegemon claimant/refundee are not bound by a wallet signature. Handoffs stayed on files; they were not carried over the relay. The hosted Worker and D1 migration remain undeployed. A real Hegemon identity (a wallet-produced signature or opening) is still the follow-up.

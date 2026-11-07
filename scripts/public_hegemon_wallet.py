@@ -31,7 +31,7 @@ MAX_ACTION = 10 * 1024 * 1024
 ATTEMPT_ID = re.compile(r'[0-9a-f]{64}\Z')
 HASH32 = re.compile(r'0x[0-9a-fA-F]{64}\Z')
 COMMANDS = frozenset(('status', 'address', 'verify-htlc', 'lock', 'import-refund-handoff',
-                      'export', 'submit', 'claim', 'refund'))
+                      'export', 'submit', 'claim', 'refund', 'ordinary'))
 
 
 class WalletCommandError(RuntimeError):

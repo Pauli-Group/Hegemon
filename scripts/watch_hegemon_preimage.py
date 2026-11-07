@@ -7,19 +7,20 @@ import json
 import os
 from pathlib import Path
 from hegemon_preimage_observer import observe_hegemon_preimage
+from probe_hegemon_testnet import hegemon_policy_confirmations
 from unlock_swap_backup import save_recovered_backup
 
 
 def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--hegemon-rpc',required=True);p.add_argument('--hegemon-manifest',type=Path,required=True);p.add_argument('--hegemon-genesis',required=True)
-    p.add_argument('--hashlock',required=True);p.add_argument('--start-height',type=int,required=True);p.add_argument('--output-dir',type=Path,required=True);p.add_argument('--confirmations',type=int,default=2);p.add_argument('--timeout',type=int,default=120)
+    p.add_argument('--hashlock',required=True);p.add_argument('--start-height',type=int,required=True);p.add_argument('--output-dir',type=Path,required=True);p.add_argument('--confirmations',type=int,default=None,help='defaults to chains.hegemon.confirmations in config/swap/chain-timing.json');p.add_argument('--timeout',type=int,default=120)
     a=p.parse_args();os.umask(0o077)
     if not os.isatty(0):p.error('an interactive local terminal is required')
     print('Observe only your trusted, peerless Hegemon Development node. Confirmations are not finality; a revealed preimage may remain public after rollback.',flush=True)
     if input('Type OBSERVE to continue: ').strip()!='OBSERVE':raise ValueError('observation declined locally')
     secret=None;buffers=[]
     try:
-        secret,snapshot=observe_hegemon_preimage(a.hegemon_rpc,manifest=a.hegemon_manifest,genesis=a.hegemon_genesis,hashlock=a.hashlock,start_height=a.start_height,confirmations=a.confirmations,timeout=a.timeout)
+        secret,snapshot=observe_hegemon_preimage(a.hegemon_rpc,manifest=a.hegemon_manifest,genesis=a.hegemon_genesis,hashlock=a.hashlock,start_height=a.start_height,confirmations=hegemon_policy_confirmations() if a.confirmations is None else a.confirmations,timeout=a.timeout)
         first=getpass.getpass('New separate encrypted backup passphrase: ');second=getpass.getpass('Repeat encrypted backup passphrase: ')
         if len(first)<12 or len(first)>1024 or not hmac.compare_digest(first.encode(),second.encode()):raise ValueError('backup passphrases must match and contain at least 12 characters')
         phrase=bytearray(first.encode());buffers.append(phrase);del first,second

@@ -110,3 +110,5 @@ Revision from P5 (2026-11-06):
 
 Update the master ExecPlan and edit P7:
 - P7: Hegemon adapter docs, the new test targets (which are heavy and must be opt-in), runbook items (`HEGEMON_SEEDS` with the approved seed list, NTP/chrony requirement), and what must be re-planned when the public Hegemon testnet returns (the first follow-up plan after P7).
+
+Revision from P8 (2026-11-07): P7 closed with public Hegemon swaps as the follow-up. P8 is that follow-up and is executing: `.agent/HEGEMON_PUBLIC_SWAPS_EXECPLAN.md`. The local adapter (`LoopbackProfile`, `peers == 0`, `--development-local-candidate`) stays as P6 left it. P8 adds a separate `PublicHegemonProfile` and must not weaken those guards. The public CLI path is `build_adapter('hegemon')` with `"profile": "public"` in the wallet config.

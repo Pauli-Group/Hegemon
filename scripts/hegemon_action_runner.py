@@ -15,10 +15,11 @@ from unlock_swap_backup import unlock_backup
 
 
 def run_hegemon_action(*, binary, base_args, scratch, request, handoff_dir,
-                        confirm=input, password=getpass.getpass, preimage_backup=None):
+                        confirm=input, password=getpass.getpass, preimage_backup=None,
+                        banner='Hegemon local Development action (not an atomic swap)'):
     argv,handoff=build_action(request,handoff_dir)
     op=request['operation']
-    print('\nHegemon local Development action (not an atomic swap):\n'+json.dumps(request,indent=2),flush=True)
+    print('\n'+banner+':\n'+json.dumps(request,indent=2),flush=True)
     if handoff:print('Encrypted refund handoff will be saved as: '+str(handoff),flush=True)
     if op in ('claim','submit'):
         print('A claim preimage can become public on export or submission, including if a transaction is later orphaned.',flush=True)

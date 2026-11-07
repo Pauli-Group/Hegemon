@@ -41,5 +41,14 @@ class LocalCompanionTest(unittest.TestCase):
                 stdin=subprocess.DEVNULL,capture_output=True,text=True,timeout=10)
             self.assertNotEqual(process.returncode,0)
             self.assertIn('interactive local terminal',process.stderr)
+    def test_hegemon_public_and_development_actions_are_mutually_exclusive(self):
+        with tempfile.TemporaryDirectory() as d:
+            process=subprocess.run([sys.executable,'scripts/local_swap_companion.py','--token-file',str(Path(d)/'token'),
+                '--hegemon-wallet','/tmp/wallet','--hegemon-manifest','/tmp/manifest',
+                '--hegemon-genesis','a'*64,'--hegemon-rpc','http://127.0.0.1:19944',
+                '--hegemon-public','--enable-hegemon-actions','--hegemon-handoff-dir',d],
+                stdin=subprocess.DEVNULL,capture_output=True,text=True,timeout=10)
+            self.assertNotEqual(process.returncode,0)
+            self.assertIn('mutually exclusive',process.stderr)
 
 if __name__=='__main__':unittest.main()
