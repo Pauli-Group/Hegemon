@@ -1,0 +1,46 @@
+{
+  "blockers": [],
+  "bundle_path": "/private/tmp/hegemon-combined-upgrade-20261108/acceptance/public-full-20261108-06",
+  "checks": {
+    "all_16_runtime_gates_pass": true,
+    "all_55_passphrase_prompt_tails_empty": true,
+    "all_export_manifest_file_pins_match": true,
+    "all_names_match_explicit_public_allowlist": true,
+    "all_owned_reaped_exit0_rpc_closed": true,
+    "all_retained_files_regular_single_link_non_executable": true,
+    "all_seven_authority_and_hardware_flags_false": true,
+    "canonical_manifest_records_pin_matches": true,
+    "canonical_rows": 337,
+    "completed_runtime_pass": true,
+    "exact_directory_members_match_manifest": true,
+    "exporter_pin_matches_read_exporter": true,
+    "no_credential_token_found": true,
+    "no_plaintext_private_secret_key_mnemonic_assignment_found": true,
+    "only_url_host_is_loopback": true,
+    "public_json_and_cli_text_files_inspected": 62,
+    "retained_restart_and_reorg_actions_byte_identical": true,
+    "seed_named_environment_values_are_peer_lists_or_path_metadata": true,
+    "six_carrier_sha512_and_proof_sha512_match": true,
+    "six_smzl_carrier_action_frames_and_pins_match": true
+  },
+  "decision": "NO_PUBLICATION_CONTENT_BLOCKER",
+  "export_manifest_sha256": "b1cacdf4960d9742ec7ea2d63cf6d8c746c8bd4628befd702267bbef312e8c79",
+  "exporter_sha256": "9444de1cff24e7a3818f58fb8adaa16fbe16425c0b923b8b6eb59d5e83e2caaf",
+  "receipt_sha256": "8d82df16a121569a570fafbaf08a4e80060c0f6afe10488ecb66894a34cc081e",
+  "retained_bytes": 12059938,
+  "retained_file_count": 81,
+  "reviewed_at_utc": "2026-11-08T15:52:55Z",
+  "reviewer": "independent model agent /root/combined_public_evidence_review",
+  "scan_false_positives": [
+    "A broad cross-newline passphrase pattern matched the next fixed CLI status word after empty prompts; all 55 prompt tails are empty.",
+    "Four broad token-pattern matches occur inside mask-* source filenames in the complete inventory; word-boundary credential scanning is clear."
+  ],
+  "schema": "hegemon.combined-upgrade.public-bundle-review.v1",
+  "scope_limits": [
+    "Read-only inspection of only this exported public bundle and its exporter; no private actual-run directory, wallet, fixture, witness, seed file or prover scratch was opened.",
+    "Public receipt metadata contains local excluded-file paths; contents of those paths are absent from the bundle.",
+    "This is a publication-content decision within the already approved candidate branch scope, not new push, release, activation, production or hardware authority.",
+    "Finite content and framing inspection does not independently establish cryptographic zero knowledge, soundness or hermetic build provenance."
+  ],
+  "total_file_count": 82
+}

@@ -130,6 +130,12 @@ fn mine(node: &NativeNode) -> NativeBlockMeta {
         work.tx_count,
     );
     header.chain_id = node.config.chain_id();
+    // The constructor binds legacy rules; rebind the actual chain before hashing.
+    header.rules_hash = consensus_light_client::native_rules_hash(&header.chain_id, work.height);
+    header.version_commitment = native_mining_version_commitment(
+        &header.rules_hash,
+        consensus_light_client::BITCOIN80_VERSION,
+    );
     work.pre_hash = header.pre_hash();
     let seal = mine_native_rounds(work.clone(), 0, 64)
         .seal

@@ -54,6 +54,11 @@ def canonical(value):
 def sha(raw):
     return hashlib.sha256(raw).hexdigest()
 
+def diagnostic_tail(raw, limit):
+    # Bound rendered UTF-8 bytes too, including replacement of invalid input.
+    encoded = raw[-limit:].decode('utf-8', errors='replace').encode('utf-8')
+    return encoded[-limit:].decode('utf-8', errors='ignore')
+
 def strict_json(raw):
     def unique(pairs):
         out = {}
@@ -295,7 +300,11 @@ def fresh_checks(root, config, artifacts, manifest_path):
         actual_argv = [str(manifest_path.relative_to(root)) if v == '{artifact_manifest}' else v for v in argv]
         result = subprocess.run([sys.executable, *actual_argv[1:]], cwd=root, capture_output=True,
                                 timeout=command['timeout_seconds'], check=False)
-        require(result.returncode == 0 and not result.stderr, 'fresh qualification failed: ' + command['name'])
+        if result.returncode != 0 or result.stderr:
+            require(False, 'fresh qualification failed: ' + command['name']
+                    + '; exit=' + str(result.returncode)
+                    + '; stderr tail (4096 bytes):\n' + diagnostic_tail(result.stderr, 4096)
+                    + '\nstdout tail (4096 bytes):\n' + diagnostic_tail(result.stdout, 4096))
         value = strict_json(result.stdout)
         validate_check(value, command['name'], config, artifacts)
         outputs.append({'name': command['name'], 'command': command,

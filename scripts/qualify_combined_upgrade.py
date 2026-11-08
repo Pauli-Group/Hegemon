@@ -104,7 +104,10 @@ def run_command(argv, logdir, timeout=1800, exact=False, unittest=False):
         raise
     raw = stdout + stderr
     log.write_bytes(raw)
-    gate.require(process.returncode == 0, 'qualification command failed: ' + repr(argv) + '; log=' + str(log))
+    if process.returncode != 0:
+        gate.require(False, 'qualification command failed: ' + repr(argv)
+                     + '; exit=' + str(process.returncode) + '; log=' + str(log)
+                     + '; output tail (4096 bytes):\n' + gate.diagnostic_tail(raw, 4096))
     if exact:
         exact_test_output(raw)
     if unittest:

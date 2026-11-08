@@ -1,0 +1,25 @@
+{
+  "schema": "hegemon.combined-upgrade.independent-review.v1",
+  "decision": "ACCEPT_SOFTWARE_CANDIDATE_SCOPE",
+  "review_kind": "independent_model_review",
+  "reviewer": "Codex independent integration and candidate-scope reviewer (/root/combined_final_scope_review)",
+  "candidate_binding_sha256": "842d550fb7bd6b68725d4f398a6d27e821182b504e05edf134f4df8e7af3a6ac",
+  "source_inventory_sha256": "7ec3527d403a7bd1e56be420a64e8cfa2380ba7f49722ca49f024086b5897693",
+  "qualification_commands_sha256": "1bec1679002a644cd311e0fd444dae162d3cbfc88d47d61608fa10257a8c3ec1",
+  "runtime_receipt_sha256": "8d82df16a121569a570fafbaf08a4e80060c0f6afe10488ecb66894a34cc081e",
+  "production_authorized": false,
+  "mainnet_authorized": false,
+  "activation_authorized": false,
+  "public_cutover_authorized": false,
+  "deployment_verified": false,
+  "physical_asic_qualified": false,
+  "limitations": [
+    "Accepts only the exact frozen v6 software candidate source, retained run06 public local-rehearsal evidence and six reviewed future qualification commands. This is not final artifact, release, deployment or activation acceptance.",
+    "This independent bounded model review inspected source and retained bytes and executed read-only evidence predicates, wire-decoding and hash/arithmetic checks. The reviewer did not run builds, focused tests, native proof verification, nodes or the runtime rehearsal.",
+    "Required focused source suites, exact-head full CI and the ordinary artifacts' separate actual proof verification and isolated H0 checks across all required targets remain mandatory separate receipts; this decision does not assert that they passed.",
+    "Runtime evidence is a default-off Development H120 rehearsal on one host and clock. The same-owner HTLC and cloned-wallet race exercise does not establish independent refund custody, public-network operation or sustained proving throughput.",
+    "The unchanged current proof relation and locked dependencies preserve identity, not a new cryptographic soundness proof. Finite Lean/vector/source-guard and runtime evidence does not establish universal compiled Rust refinement or whole-chain, scheduler, storage or network guarantees.",
+    "Source records, reviewed harness pins, executable hashes and retained process observations are not a hermetic compiler or build-input attestation. The bounded public file-set/framing review is not a general secret-detection guarantee.",
+    "A compiled production-height change requires a replacement source freeze and affected requalification. Mainnet genesis/bootstrap, physical ASIC model/firmware qualification, final publication, operator rollout and activation remain outside this decision."
+  ]
+}

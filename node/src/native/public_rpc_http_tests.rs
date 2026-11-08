@@ -99,6 +99,65 @@ impl Drop for HttpRpc {
     }
 }
 
+struct HeldStateWriter {
+    release: Option<std::sync::mpsc::Sender<()>>,
+    worker: Option<std::thread::JoinHandle<Result<(), &'static str>>>,
+}
+
+impl HeldStateWriter {
+    async fn acquire(node: Arc<NativeNode>) -> Self {
+        let (acquired_tx, acquired_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::Builder::new()
+            .name("rpc-test-state-writer".into())
+            .spawn(move || {
+                let _state = node
+                    .state
+                    .try_write_for(Duration::from_secs(5))
+                    .ok_or("state writer acquisition timed out")?;
+                acquired_tx
+                    .send(())
+                    .map_err(|_| "state writer acquisition was cancelled")?;
+                // A timeout is a fixture failure, never a successful release.
+                release_rx
+                    .recv_timeout(Duration::from_secs(30))
+                    .map_err(|_| "state writer release was not signalled")
+            })
+            .expect("state writer fixture thread");
+        let held = Self {
+            release: Some(release_tx),
+            worker: Some(worker),
+        };
+        tokio::time::timeout(Duration::from_secs(5), acquired_rx)
+            .await
+            .expect("state writer must acquire promptly")
+            .expect("state writer acquired before HTTP work");
+        held
+    }
+
+    fn release_and_join(mut self) {
+        let released = self.release.take().unwrap().send(());
+        let result = self.worker.take().unwrap().join();
+        assert!(
+            released.is_ok(),
+            "state writer must remain held until release"
+        );
+        result
+            .expect("state writer fixture thread panicked")
+            .unwrap();
+    }
+}
+
+impl Drop for HeldStateWriter {
+    fn drop(&mut self) {
+        // Disconnect before joining so failed assertions also release the lock.
+        drop(self.release.take());
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
 fn call(id: u64, method: &str, params: Value) -> Value {
     json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params})
 }
@@ -383,7 +442,7 @@ async fn public_http_disconnected_safe_read_workers_keep_bounded_reservations_un
         None,
     )
     .await;
-    let state = rpc.node.state.write();
+    let state = HeldStateWriter::acquire(Arc::clone(&rpc.node)).await;
     let first = rpc.raw_post(call(1, "chain_getHeader", json!([]))).await;
     let second = rpc.raw_post(call(2, "chain_getHeader", json!([]))).await;
     wait_counts(&rpc.node, 2, 0).await;
@@ -414,7 +473,7 @@ async fn public_http_disconnected_safe_read_workers_keep_bounded_reservations_un
             "GET {path} must share public capacity"
         );
     }
-    drop(state);
+    state.release_and_join();
     wait_counts(&rpc.node, 0, 0).await;
     assert!(rpc
         .post(call(4, "chain_getHeader", json!([])))
@@ -427,7 +486,7 @@ async fn public_http_disconnected_safe_read_workers_keep_bounded_reservations_un
 async fn public_http_disconnected_submit_keeps_public_permit_and_local_capacity_available() {
     let rpc = HttpRpc::open("public-submit", high_limits(), None).await;
     let before = snapshot_db(&rpc.node);
-    let state = rpc.node.state.write();
+    let state = HeldStateWriter::acquire(Arc::clone(&rpc.node)).await;
     let socket = rpc
         .raw_post(call(
             1,
@@ -460,7 +519,7 @@ async fn public_http_disconnected_submit_keeps_public_permit_and_local_capacity_
     );
     drop(local);
     drop(shared);
-    drop(state);
+    state.release_and_join();
     wait_counts(&rpc.node, 0, 0).await;
     // The disconnected worker finishes through unchanged legacy source denial.
     assert_eq!(snapshot_db(&rpc.node), before);

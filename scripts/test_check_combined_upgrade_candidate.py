@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT=Path(__file__).resolve().parents[1]
 def module(name,path):
@@ -18,6 +19,37 @@ gate=module('combined_gate_tests',ROOT/'scripts/check_combined_upgrade_candidate
 prep=module('combined_preparation_tests',ROOT/'scripts/prepare_premainnet_release.py')
 
 class CandidateTests(unittest.TestCase):
+    def test_nested_failed_qualification_reports_bounded_child_reason(self):
+        command = {'name': 'restart_reorg_fresh_sync', 'timeout_seconds': 7200,
+                   'argv': ['python3', '-I', '-B', 'scripts/qualify_combined_upgrade.py',
+                            '--artifact-manifest', '{artifact_manifest}']}
+        config = {'source_inventory': [{'path': command['argv'][3]}],
+                  'qualification_commands': [command]}
+        root = Path('/public-fixture-only')
+        stdout = b'old-stdout-prefix\n' + b'x' * 10000 + b'\npublic stdout context\n'
+        stderr = b'old-stderr-prefix\n' + b'\xff' * 10000 + b'\nqualification command failed: exit=101; native panic: InsufficientWork\n'
+        for exit_code, child_stderr in ((1, stderr), (0, b'unexpected stderr')):
+            with self.subTest(exit_code=exit_code), patch.object(gate.subprocess, 'run', return_value=
+                    subprocess.CompletedProcess([], exit_code, stdout, child_stderr)), \
+                    patch.object(gate, 'validate_check') as validate:
+                with self.assertRaises(gate.CandidateError) as failed:
+                    gate.fresh_checks(root, config, {}, root / 'artifact.json')
+                validate.assert_not_called()
+            diagnostic = str(failed.exception)
+            self.assertIn('fresh qualification failed: restart_reorg_fresh_sync', diagnostic)
+            self.assertIn('exit=' + str(exit_code), diagnostic)
+            self.assertIn('public stdout context', diagnostic)
+            self.assertNotIn('old-stdout-prefix', diagnostic)
+            stderr_tail, stdout_tail = diagnostic.split('stderr tail (4096 bytes):\n', 1)[1].split('\nstdout tail (4096 bytes):\n', 1)
+            self.assertLessEqual(len(stderr_tail.encode('utf-8')), 4096)
+            self.assertLessEqual(len(stdout_tail.encode('utf-8')), 4096)
+            if exit_code:
+                self.assertIn('native panic: InsufficientWork', diagnostic)
+                self.assertIn('exit=101', diagnostic)
+                self.assertNotIn('old-stderr-prefix', diagnostic)
+            else:
+                self.assertIn('unexpected stderr', diagnostic)
+
     def test_real_source_relation_and_historical_authority(self):
         gate.authenticate(ROOT)
         self.assertEqual(gate.proof_identity(ROOT),gate.load_config(ROOT)['proof_identity'])

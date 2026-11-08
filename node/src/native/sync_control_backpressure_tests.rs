@@ -11,6 +11,65 @@ struct ControlFixture {
     _path: tempfile::TempDir,
 }
 
+struct HeldAnnounceEncoder {
+    release: Option<std::sync::mpsc::Sender<()>>,
+    worker: Option<std::thread::JoinHandle<Result<(), &'static str>>>,
+}
+
+impl HeldAnnounceEncoder {
+    async fn acquire(node: Arc<NativeNode>) -> Self {
+        let (acquired_tx, acquired_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::Builder::new()
+            .name("sync-test-announce-encoder".into())
+            .spawn(move || {
+                let _encoder = node
+                    .block_body_send_cache
+                    .try_lock_for(Duration::from_secs(5))
+                    .ok_or("announce encoder acquisition timed out")?;
+                acquired_tx
+                    .send(())
+                    .map_err(|_| "announce encoder acquisition was cancelled")?;
+                // A timeout is a fixture failure, never a successful release.
+                release_rx
+                    .recv_timeout(Duration::from_secs(30))
+                    .map_err(|_| "announce encoder release was not signalled")
+            })
+            .expect("announce encoder fixture thread");
+        let held = Self {
+            release: Some(release_tx),
+            worker: Some(worker),
+        };
+        tokio::time::timeout(Duration::from_secs(5), acquired_rx)
+            .await
+            .expect("announce encoder must acquire promptly")
+            .expect("announce encoder acquired before preparation work");
+        held
+    }
+
+    fn release_and_join(mut self) {
+        let released = self.release.take().unwrap().send(());
+        let result = self.worker.take().unwrap().join();
+        assert!(
+            released.is_ok(),
+            "announce encoder must remain held until release"
+        );
+        result
+            .expect("announce encoder fixture thread panicked")
+            .unwrap();
+    }
+}
+
+impl Drop for HeldAnnounceEncoder {
+    fn drop(&mut self) {
+        // Disconnect before joining so failed assertions also release the lock.
+        drop(self.release.take());
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
 fn control_fixture() -> ControlFixture {
     let path = tempfile::tempdir().unwrap();
     let mut config = test_config(path.path(), 0x207f_ffff, "safe", false);
@@ -347,7 +406,7 @@ async fn sync_control_full_channel_drains_and_readmits_the_same_recovery_request
 #[tokio::test(flavor = "current_thread")]
 async fn sync_control_held_announce_encoder_keeps_runtime_ticks_and_completions_responsive() {
     let fixture = control_fixture();
-    let held_encoder = fixture.node.block_body_send_cache.lock();
+    let held_encoder = HeldAnnounceEncoder::acquire(Arc::clone(&fixture.node)).await;
     let mut cache = NativeBestAnnounceCache::default();
     let mut active = None;
     assert!(pump_native_best_announce_preparation(
@@ -380,7 +439,7 @@ async fn sync_control_held_announce_encoder_keeps_runtime_ticks_and_completions_
     })
     .await
     .expect("preparation must not block the runtime thread");
-    drop(held_encoder);
+    held_encoder.release_and_join();
     let (_cache, result) = tokio::time::timeout(Duration::from_secs(5), active.take().unwrap())
         .await
         .expect("released encoder permits preparation")

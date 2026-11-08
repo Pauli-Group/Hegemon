@@ -45,6 +45,25 @@ class ProducerTests(unittest.TestCase):
             with self.subTest(raw=raw), self.assertRaises(RuntimeError):
                 p.exact_test_output(raw)
 
+    def test_failed_command_retains_raw_log_and_bounded_panic_diagnostic(self):
+        raw = b'old-output-not-for-diagnostic\n' + b'x' * 10000 + b'\xff' * 5000 + b'\nnative panic: InsufficientWork\n'
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            with patch.object(p, 'ROOT', base), patch.object(p.subprocess, 'Popen') as popen:
+                process = popen.return_value
+                process.returncode = 101
+                process.communicate.return_value = (b'', raw)
+                with self.assertRaises(RuntimeError) as failed:
+                    p.run_command(['public-fixture-only'], base)
+            diagnostic = str(failed.exception)
+            self.assertIn('exit=101', diagnostic)
+            self.assertIn('command-000.log', diagnostic)
+            self.assertIn('native panic: InsufficientWork', diagnostic)
+            self.assertNotIn('old-output-not-for-diagnostic', diagnostic)
+            tail = diagnostic.split('output tail (4096 bytes):\n', 1)[1]
+            self.assertLessEqual(len(tail.encode('utf-8')), 4096)
+            self.assertEqual((base / 'command-000.log').read_bytes(), raw)
+
     def test_ignored_lifecycle_is_explicit_and_exact(self):
         with patch.object(p, 'run_command', return_value={}) as run:
             p.rust_test('hegemon-node', p.LIFECYCLE, Path('/unused'), True, p.FEATURES)
