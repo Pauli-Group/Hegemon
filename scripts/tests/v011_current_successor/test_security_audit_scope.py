@@ -6,6 +6,7 @@ This never executes the audit shell, binaries, builds, RPCs, or proofs.
 from __future__ import annotations
 
 import argparse
+import copy
 from contextlib import redirect_stdout
 import io
 import json
@@ -24,7 +25,29 @@ CURRENT_BACKEND_PAIRS = (
      'exact-current-source-current-binary-backend-and-h0-only'),
     ('executed-exact-sync-import-source-backend-h0',
      'exact-sync-import-source-current-binary-backend-and-h0-only'),
+    ('executed-exact-v0113-premainnet-source-backend-h0',
+     'exact-v0113-premainnet-source-current-binary-backend-and-h0-only'),
 )
+COMBINED_FALSE_FIELDS = (
+    'production_authority', 'private_spend_launch_authority', 'current_network_G8_qualified',
+    'public_cutover_authorized', 'mainnet_authorized', 'activation_authorized',
+    'physical_asic_qualified',
+)
+COMBINED_TRUE_FIELDS = ('passed', 'actual_new_binary_proof_verification',
+    'affected_lifecycle_verified')
+
+
+def combined_candidate(target='x86_64-unknown-linux-gnu'):
+    return {**dict.fromkeys(COMBINED_FALSE_FIELDS, False),
+        **dict.fromkeys(COMBINED_TRUE_FIELDS, True),
+        'mode': 'executed-combined-upgrade-software-candidate',
+        'target_triple': target, 'candidate_binding_sha256': 'a' * 64,
+        'artifact_manifest_sha256': 'b' * 64,
+        'identity': {'schema': 'hegemon.private-spend.native-launch-identity.v2',
+            'kind': 'PrivateSpend', 'network_profile': 'pre-mainnet',
+            'relation_id': 'Hegemon.PrivateSpend.BoundedPolicy.CompFF01.Packed.v4',
+            'public_words': 86, 'chain_id': 'c' * 64, 'genesis_hash': 'd' * 64,
+            'manifest_digest': 'e' * 128, 'relation_digest': 'f' * 128}}
 
 
 def current_backend(pair=CURRENT_BACKEND_PAIRS[0]):
@@ -98,7 +121,7 @@ class SecurityAuditScopeControls(unittest.TestCase):
     def test_mode_and_scope_cannot_be_crossed_or_partial(self):
         for index, pair in enumerate(CURRENT_BACKEND_PAIRS):
             payload = current_backend(pair)
-            payload['authorization_scope'] = CURRENT_BACKEND_PAIRS[1 - index][1]
+            payload['authorization_scope'] = CURRENT_BACKEND_PAIRS[(index + 1) % len(CURRENT_BACKEND_PAIRS)][1]
             with self.subTest(pair=pair, mutation='crossed'), self.assertRaises(SystemExit):
                 classify(payload)
             for field in ('mode', 'authorization_scope'):
@@ -125,6 +148,127 @@ class SecurityAuditScopeControls(unittest.TestCase):
     def test_legacy_authorized_and_review_branches_are_preserved(self):
         self.assertEqual(classify({'passed': True, 'production_authority': True, 'mode': 'executed'}), 'legacy')
         self.assertEqual(classify({'passed': True, 'production_authority': False, 'mode': 'review-unapproved-profile'}), 'review')
+
+    def test_combined_software_candidate_has_a_distinct_scope_on_all_release_targets(self):
+        for target in ('aarch64-apple-darwin', 'x86_64-apple-darwin',
+                'x86_64-unknown-linux-gnu', 'x86_64-pc-windows-msvc'):
+            with self.subTest(target=target):
+                self.assertEqual(classify(combined_candidate(target)), 'combined-software-candidate')
+
+    def test_combined_requires_strict_true_evidence(self):
+        for field in COMBINED_TRUE_FIELDS:
+            for value in (False, 1, 'true', None):
+                with self.subTest(field=field, value=value):
+                    payload = combined_candidate()
+                    payload[field] = value
+                    with self.assertRaises(SystemExit):
+                        classify(payload)
+
+    def test_combined_rejects_every_authority_upgrade_and_wrong_boundary_type(self):
+        for field in COMBINED_FALSE_FIELDS:
+            for value in (True, 0, 'false', None):
+                with self.subTest(field=field, value=value):
+                    payload = combined_candidate()
+                    payload[field] = value
+                    with self.assertRaises(SystemExit):
+                        classify(payload)
+
+    def test_combined_rejects_each_missing_required_field(self):
+        base = combined_candidate()
+        for field in base:
+            with self.subTest(missing=field):
+                payload = copy.deepcopy(base)
+                del payload[field]
+                with self.assertRaises(SystemExit):
+                    classify(payload)
+        for field in base['identity']:
+            with self.subTest(missing_identity_field=field):
+                payload = copy.deepcopy(base)
+                del payload['identity'][field]
+                with self.assertRaises(SystemExit):
+                    classify(payload)
+
+    def test_combined_rejects_malformed_binding_hashes(self):
+        for field in ('candidate_binding_sha256', 'artifact_manifest_sha256'):
+            for value in (None, True, 64, [], '', 'a' * 63, 'a' * 65, 'A' * 64, 'g' * 64):
+                with self.subTest(field=field, value=value):
+                    payload = combined_candidate()
+                    payload[field] = value
+                    with self.assertRaises(SystemExit):
+                        classify(payload)
+
+    def test_combined_rejects_malformed_target_and_identity(self):
+        for value in (None, True, 3, [], '', 'linux', 'x86_64-linux',
+                'x86_64/unknown-linux-gnu', ' x86_64-unknown-linux-gnu',
+                'x86_64-unknown-linux-gnu\n'):
+            with self.subTest(target=value):
+                payload = combined_candidate()
+                payload['target_triple'] = value
+                with self.assertRaises(SystemExit):
+                    classify(payload)
+        for value in (None, True, 86, [], '', {}):
+            with self.subTest(identity=value):
+                payload = combined_candidate()
+                payload['identity'] = value
+                with self.assertRaises(SystemExit):
+                    classify(payload)
+        for field, values in {
+                'schema': (None, True, 'other'),
+                'kind': (None, True, 'OtherSpend'),
+                'network_profile': (None, True, 'mainnet'),
+                'relation_id': (None, True, 'other'),
+                'public_words': (None, True, '86', 86.0, 87),
+                'chain_id': (None, True, 'C' * 64, 'c' * 63),
+                'genesis_hash': (None, True, 'D' * 64, 'd' * 65),
+                'manifest_digest': (None, True, 'E' * 128, 'e' * 127),
+                'relation_digest': (None, True, 'F' * 128, 'f' * 129),
+                }.items():
+            for value in values:
+                with self.subTest(identity_field=field, value=value):
+                    payload = combined_candidate()
+                    payload['identity'][field] = value
+                    with self.assertRaises(SystemExit):
+                        classify(payload)
+
+    def test_combined_mode_cannot_be_crossed_with_other_executed_scopes(self):
+        for mode in (None, True, '', 'executed', 'executed-private-spend-launch',
+                'source-only', 'H0-only', 'executed-combined-upgrade-software-candidate-extra',
+                *(pair[0] for pair in CURRENT_BACKEND_PAIRS)):
+            with self.subTest(mode=mode):
+                payload = combined_candidate()
+                payload['mode'] = mode
+                with self.assertRaises(SystemExit):
+                    classify(payload)
+        for pair in CURRENT_BACKEND_PAIRS:
+            with self.subTest(crossed_scope=pair):
+                payload = current_backend(pair)
+                payload['mode'] = 'executed-combined-upgrade-software-candidate'
+                with self.assertRaises(SystemExit):
+                    classify(payload)
+        payload = combined_candidate()
+        payload['mode'] = 'review-unapproved-profile'
+        self.assertEqual(classify(payload), 'review')
+
+    def test_combined_attestation_does_not_set_legacy_or_private_authority(self):
+        matches = re.findall(r'        if \[ "\$PROFILE_SCOPE" = legacy \]; then\n(.*?)        fi\n',
+            AUDIT_TEXT, re.S)
+        self.assertEqual(len(matches), 1)
+        flags = ('BINARY_PROFILE_AUTHORIZED', 'BINARY_PRIVATE_LAUNCH_AUTHORIZED',
+            'BINARY_CURRENT_BACKEND_ATTESTED', 'BINARY_COMBINED_SOFTWARE_CANDIDATE_ATTESTED')
+        for scope, expected in (
+                (classify(combined_candidate()), ('false', 'false', 'false', 'true')),
+                ('legacy', ('true', 'false', 'false', 'false')),
+                ('private', ('false', 'true', 'false', 'false')),
+                ('current-backend', ('false', 'false', 'true', 'false')),
+                ('review', ('false', 'false', 'false', 'false'))):
+            with self.subTest(scope=scope):
+                script = '\n'.join(flag + '=false' for flag in flags) + '\n'
+                script += 'PROFILE_SCOPE=' + shlex.quote(scope) + '\n'
+                script += 'if [ "$PROFILE_SCOPE" = legacy ]; then\n' + matches[0] + 'fi\n'
+                script += "printf '%s\\n' " + ' '.join('"$' + flag + '"' for flag in flags)
+                result = subprocess.run(['bash', '-c', script], check=True,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                self.assertEqual(tuple(result.stdout.splitlines()), expected)
 
 
     def manifest_specs(self, root, paths):

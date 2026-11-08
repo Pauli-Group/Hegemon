@@ -2,6 +2,7 @@
 """Lightweight fail-closed candidate and preparation routing mutation controls."""
 from __future__ import annotations
 import copy
+from contextlib import ExitStack, contextmanager
 import importlib.util
 import json
 import re
@@ -17,8 +18,99 @@ def module(name,path):
     spec=importlib.util.spec_from_file_location(name,path);out=importlib.util.module_from_spec(spec);spec.loader.exec_module(out);return out
 gate=module('combined_gate_tests',ROOT/'scripts/check_combined_upgrade_candidate.py')
 prep=module('combined_preparation_tests',ROOT/'scripts/prepare_premainnet_release.py')
+profile=module('combined_profile_routing_tests',ROOT/'scripts/check_release_crypto_profile.py')
+
+@contextmanager
+def profile_routing_fixture(configs, receipt):
+    """Run the actual profile consumer with file presence and mocked proof boundaries."""
+    with tempfile.TemporaryDirectory() as tmp, ExitStack() as stack:
+        root=Path(tmp).resolve()
+        for relative in configs:
+            path=root/relative;path.parent.mkdir(parents=True,exist_ok=True);path.write_text('{}')
+        registry=root/'scripts/private_spend_launch_authorized_registry.json'
+        registry.parent.mkdir(parents=True,exist_ok=True);registry.write_text('{}')
+        manifest_path=root/'target/release/artifact-manifest.json'
+        names=('hegemon-node','wallet','walletd','private-spend')
+        manifest={'artifacts':[{'binary':name} for name in names],'target_triple':'fixture-only'}
+        snapshot=(manifest,'manifest-fixture-digest',tuple(root/name for name in names),())
+        stack.enter_context(patch.object(profile,'SOURCE_ROOT',root))
+        stack.enter_context(patch.object(profile,'private_launch_snapshot',return_value=snapshot))
+        stack.enter_context(patch.object(profile,'validate_binary_profile_markers'))
+        stack.enter_context(patch.object(profile,'run_profile',return_value=None))
+        stack.enter_context(patch.object(profile,'validate_private_launch_receipt',return_value={'fixture':True}))
+        events=[]
+        helpers={name:stack.enter_context(patch.object(profile,name,
+            side_effect=lambda _root,name=name:events.append(name)))
+            for name in ('combined_helper','sync_import_helper','v0113_helper')}
+        run=stack.enter_context(patch.object(profile.subprocess,'run',return_value=
+            subprocess.CompletedProcess([],0,json.dumps(receipt),'')))
+        yield root,manifest_path,helpers,run,events
 
 class CandidateTests(unittest.TestCase):
+    def test_profile_combined_route_skips_present_historical_helpers(self):
+        configs=(profile.COMBINED_CONFIG,'config/v011-release-successor.json',
+            'config/v011-sync-import-successor-20261106.json','config/v0113-release-successor.json')
+        receipt={'final_artifact_scope':profile.COMBINED_SCOPE,'candidate_binding_sha256':'a'*64}
+        with profile_routing_fixture(configs,receipt) as (root,manifest,helpers,run,events):
+            result=profile.private_launch_profile(root,manifest)
+            self.assertEqual(events,['combined_helper'])
+            helpers['combined_helper'].assert_called_once_with(root)
+            helpers['sync_import_helper'].assert_not_called()
+            helpers['v0113_helper'].assert_not_called()
+            run.assert_called_once_with([sys.executable,'-I','-B',
+                str(root/'scripts/check_combined_upgrade_candidate.py'),'--require-authorized',
+                '--artifact-manifest','target/release/artifact-manifest.json',
+                '--require-final-artifact'],cwd=root,capture_output=True,text=True,timeout=44400)
+            self.assertEqual(result['mode'],'executed-combined-upgrade-software-candidate')
+            for field in ('production_authority','private_spend_launch_authority',
+                    'current_network_G8_qualified','public_cutover_authorized',
+                    'mainnet_authorized','activation_authorized','physical_asic_qualified'):
+                self.assertIs(result[field],False)
+
+    def test_profile_combined_helper_failure_cannot_fall_back_to_history(self):
+        configs=(profile.COMBINED_CONFIG,'config/v011-release-successor.json',
+            'config/v011-sync-import-successor-20261106.json','config/v0113-release-successor.json')
+        with profile_routing_fixture(configs,{}) as (root,manifest,helpers,run,events):
+            helpers['combined_helper'].side_effect=SystemExit('combined authentication failed')
+            with self.assertRaisesRegex(SystemExit,'combined authentication failed'):
+                profile.private_launch_profile(root,manifest)
+            helpers['combined_helper'].assert_called_once_with(root)
+            helpers['sync_import_helper'].assert_not_called()
+            helpers['v0113_helper'].assert_not_called()
+            run.assert_not_called()
+            self.assertEqual(events,[])
+
+    def test_profile_combined_executor_failure_cannot_fall_back_to_history(self):
+        configs=(profile.COMBINED_CONFIG,'config/v011-release-successor.json',
+            'config/v011-sync-import-successor-20261106.json','config/v0113-release-successor.json')
+        with profile_routing_fixture(configs,{}) as (root,manifest,helpers,run,events):
+            run.return_value=subprocess.CompletedProcess([],1,'','combined qualification failed')
+            with self.assertRaisesRegex(SystemExit,'combined qualification failed'):
+                profile.private_launch_profile(root,manifest)
+            self.assertEqual(events,['combined_helper'])
+            helpers['sync_import_helper'].assert_not_called()
+            helpers['v0113_helper'].assert_not_called()
+            self.assertEqual(run.call_count,1)
+            self.assertEqual(Path(run.call_args.args[0][3]).name,'check_combined_upgrade_candidate.py')
+
+    def test_profile_without_combined_preserves_historical_helper_order_and_priority(self):
+        sync='config/v011-sync-import-successor-20261106.json'
+        v0113='config/v0113-release-successor.json'
+        for configs,events_expected,checker in (
+                ((),[],'check_private_spend_launch_authorization.py'),
+                ((sync,),['sync_import_helper'],'check_v011_sync_import_successor.py'),
+                ((v0113,),['v0113_helper'],'check_v0113_release_successor.py'),
+                ((sync,v0113),['sync_import_helper','v0113_helper'],'check_v0113_release_successor.py')):
+            with self.subTest(configs=configs),profile_routing_fixture(
+                    ('config/v011-release-successor.json',*configs),{}) as (root,manifest,helpers,run,events):
+                profile.private_launch_profile(root,manifest)
+                self.assertEqual(events,events_expected)
+                helpers['combined_helper'].assert_not_called()
+                expected=[sys.executable,'-I','-B',str(root/'scripts'/checker),
+                    '--require-authorized','--artifact-manifest','target/release/artifact-manifest.json']
+                if configs:expected.append('--require-final-artifact')
+                run.assert_called_once_with(expected,cwd=root,capture_output=True,text=True,timeout=1300)
+
     def test_nested_failed_qualification_reports_bounded_child_reason(self):
         command = {'name': 'restart_reorg_fresh_sync', 'timeout_seconds': 7200,
                    'argv': ['python3', '-I', '-B', 'scripts/qualify_combined_upgrade.py',

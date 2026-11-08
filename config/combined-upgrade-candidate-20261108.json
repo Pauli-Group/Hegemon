@@ -27,9 +27,9 @@
     }
   ],
   "independent_review": {
-    "bytes": 2704,
-    "path": "release-evidence/combined-upgrade-20261108/independent-review-v6.json",
-    "sha256": "f53dd9e80faa366ef89b7af7b4cd0f1aa2642be3ecc7a7265ffce71a5a3ed243"
+    "bytes": 2935,
+    "path": "release-evidence/combined-upgrade-20261108/independent-review-v7.json",
+    "sha256": "210d3f59ae27b1038d69676f605ddbaadc2330ddffb2b304449b07d1c7911799"
   },
   "proof_identity": {
     "cargo_lock_sha256": "1c243bf3858f4ee22fa4441c7a2ee6d49b16d264147b0f3a2de845e760821719",
@@ -255,9 +255,9 @@
         "--artifact-manifest",
         "{artifact_manifest}",
         "--runtime-receipt",
-        "release-evidence/combined-upgrade-20261108/runtime-v6/receipt.json",
+        "release-evidence/combined-upgrade-20261108/runtime-v7/receipt.json",
         "--runtime-receipt-sha256",
-        "8d82df16a121569a570fafbaf08a4e80060c0f6afe10488ecb66894a34cc081e",
+        "08843bd62cd8cd0c7b429caae6bb92a6d2a27b5c59a4e9cff4d55d219125c302",
         "--runtime-runner-sha256",
         "d6d776dcc7becf42be69324cb1d8c26fee272b4addc174a0e32a816e04196ae5",
         "--runtime-io-sha256",
@@ -281,9 +281,9 @@
         "--artifact-manifest",
         "{artifact_manifest}",
         "--runtime-receipt",
-        "release-evidence/combined-upgrade-20261108/runtime-v6/receipt.json",
+        "release-evidence/combined-upgrade-20261108/runtime-v7/receipt.json",
         "--runtime-receipt-sha256",
-        "8d82df16a121569a570fafbaf08a4e80060c0f6afe10488ecb66894a34cc081e",
+        "08843bd62cd8cd0c7b429caae6bb92a6d2a27b5c59a4e9cff4d55d219125c302",
         "--runtime-runner-sha256",
         "d6d776dcc7becf42be69324cb1d8c26fee272b4addc174a0e32a816e04196ae5",
         "--runtime-io-sha256",
@@ -307,9 +307,9 @@
         "--artifact-manifest",
         "{artifact_manifest}",
         "--runtime-receipt",
-        "release-evidence/combined-upgrade-20261108/runtime-v6/receipt.json",
+        "release-evidence/combined-upgrade-20261108/runtime-v7/receipt.json",
         "--runtime-receipt-sha256",
-        "8d82df16a121569a570fafbaf08a4e80060c0f6afe10488ecb66894a34cc081e",
+        "08843bd62cd8cd0c7b429caae6bb92a6d2a27b5c59a4e9cff4d55d219125c302",
         "--runtime-runner-sha256",
         "d6d776dcc7becf42be69324cb1d8c26fee272b4addc174a0e32a816e04196ae5",
         "--runtime-io-sha256",
@@ -333,9 +333,9 @@
         "--artifact-manifest",
         "{artifact_manifest}",
         "--runtime-receipt",
-        "release-evidence/combined-upgrade-20261108/runtime-v6/receipt.json",
+        "release-evidence/combined-upgrade-20261108/runtime-v7/receipt.json",
         "--runtime-receipt-sha256",
-        "8d82df16a121569a570fafbaf08a4e80060c0f6afe10488ecb66894a34cc081e",
+        "08843bd62cd8cd0c7b429caae6bb92a6d2a27b5c59a4e9cff4d55d219125c302",
         "--runtime-runner-sha256",
         "d6d776dcc7becf42be69324cb1d8c26fee272b4addc174a0e32a816e04196ae5",
         "--runtime-io-sha256",
@@ -359,9 +359,9 @@
         "--artifact-manifest",
         "{artifact_manifest}",
         "--runtime-receipt",
-        "release-evidence/combined-upgrade-20261108/runtime-v6/receipt.json",
+        "release-evidence/combined-upgrade-20261108/runtime-v7/receipt.json",
         "--runtime-receipt-sha256",
-        "8d82df16a121569a570fafbaf08a4e80060c0f6afe10488ecb66894a34cc081e",
+        "08843bd62cd8cd0c7b429caae6bb92a6d2a27b5c59a4e9cff4d55d219125c302",
         "--runtime-runner-sha256",
         "d6d776dcc7becf42be69324cb1d8c26fee272b4addc174a0e32a816e04196ae5",
         "--runtime-io-sha256",
@@ -385,9 +385,9 @@
         "--artifact-manifest",
         "{artifact_manifest}",
         "--runtime-receipt",
-        "release-evidence/combined-upgrade-20261108/runtime-v6/receipt.json",
+        "release-evidence/combined-upgrade-20261108/runtime-v7/receipt.json",
         "--runtime-receipt-sha256",
-        "8d82df16a121569a570fafbaf08a4e80060c0f6afe10488ecb66894a34cc081e",
+        "08843bd62cd8cd0c7b429caae6bb92a6d2a27b5c59a4e9cff4d55d219125c302",
         "--runtime-runner-sha256",
         "d6d776dcc7becf42be69324cb1d8c26fee272b4addc174a0e32a816e04196ae5",
         "--runtime-io-sha256",
@@ -412,10 +412,10 @@
     },
     {
       "after_mode": "100644",
-      "after_sha256": "6a50fccf8e5f488226275eec56070a2c45890388aa92f434c02797a289043b24",
+      "after_sha256": "665c430a7a4f9d0da39c25793672772dcc3a2b1f8adcc6bd121c63808f30e060",
       "before_mode": null,
       "before_sha256": null,
-      "bytes": 13875,
+      "bytes": 15192,
       "path": ".agent/COMBINED_UPGRADE_EXECPLAN.md"
     },
     {
@@ -500,7 +500,7 @@
     },
     {
       "after_mode": "100644",
-      "after_sha256": "0abce4fa500b90e44f9b530bb6c3662d394b905f4a117caea369cd6f3aad6095",
+      "after_sha256": "5f62dbb8a66c31961e455a6e642410cfcccebef1ec5e96c68beaac0392e24cce",
       "before_mode": "100644",
       "before_sha256": "9d3861fd3c7777a770612d82835ac6faddb6d3983f2f2fa3a2e0d943a9100c93",
       "bytes": 2088358,
@@ -1148,10 +1148,10 @@
     },
     {
       "after_mode": "100755",
-      "after_sha256": "ffa05924f6819c67c99fe4bba306489b108e970aad5c19682bb1b6ce1509489c",
+      "after_sha256": "b240bef3e87e1190e60e5e43a972a6d5675aed137c6528aa16166962f10c5ac2",
       "before_mode": "100755",
       "before_sha256": "99b601ac4e0b4befdb31f0465fc59e4444c73d0280813b6860c3192454a24395",
-      "bytes": 43811,
+      "bytes": 43869,
       "path": "scripts/check_release_crypto_profile.py"
     },
     {
@@ -1227,6 +1227,14 @@
       "path": "scripts/qualify_combined_upgrade.py"
     },
     {
+      "after_mode": "100755",
+      "after_sha256": "def6bcb5329eb8f18e30103344a1e966f67214424d675ea958791436174d8ca6",
+      "before_mode": "100755",
+      "before_sha256": "3fb4e33b60b5d3b681ff2a5a6ab13dc10982b02d56f42fd35bbf38cf63a7112d",
+      "bytes": 27440,
+      "path": "scripts/security-audit.sh"
+    },
+    {
       "after_mode": "100644",
       "after_sha256": "aeb20bcc43d288eae7bedde4ea5151e1fac5bbeb091b48e418bb09ec42c1d3f7",
       "before_mode": "100644",
@@ -1252,10 +1260,10 @@
     },
     {
       "after_mode": "100644",
-      "after_sha256": "3a306c75c143398c66f4a1703eddeb535684e193f39c85b32a0c9100f255cae7",
+      "after_sha256": "8779ce1223762bc7291b16f96e8197b6b629a5d5962d1643c5394e8ce35f6e54",
       "before_mode": null,
       "before_sha256": null,
-      "bytes": 16176,
+      "bytes": 22694,
       "path": "scripts/test_check_combined_upgrade_candidate.py"
     },
     {
@@ -1281,6 +1289,14 @@
       "before_sha256": null,
       "bytes": 12709,
       "path": "scripts/test_qualify_combined_upgrade.py"
+    },
+    {
+      "after_mode": "100644",
+      "after_sha256": "6ec072b3774a3ce86f2ada25e76fb6bc8dec6e9e10e651b1627d4c290872e70a",
+      "before_mode": "100644",
+      "before_sha256": "490215c111438a163b3b93b7c78297fdfb29d39e73e69982d217996e316a17b5",
+      "bytes": 17579,
+      "path": "scripts/tests/v011_current_successor/test_security_audit_scope.py"
     },
     {
       "after_mode": "100644",
@@ -1373,10 +1389,10 @@
       "sha256": "82ff8b39301828a2af45557ac38b068933caf3b5bde5e74faee27babddd73710"
     },
     {
-      "bytes": 13875,
+      "bytes": 15192,
       "mode": "100644",
       "path": ".agent/COMBINED_UPGRADE_EXECPLAN.md",
-      "sha256": "6a50fccf8e5f488226275eec56070a2c45890388aa92f434c02797a289043b24"
+      "sha256": "665c430a7a4f9d0da39c25793672772dcc3a2b1f8adcc6bd121c63808f30e060"
     },
     {
       "bytes": 8249,
@@ -14954,7 +14970,7 @@
       "bytes": 2088358,
       "mode": "100644",
       "path": "config/formal-security-blueprint.json",
-      "sha256": "0abce4fa500b90e44f9b530bb6c3662d394b905f4a117caea369cd6f3aad6095"
+      "sha256": "5f62dbb8a66c31961e455a6e642410cfcccebef1ec5e96c68beaac0392e24cce"
     },
     {
       "bytes": 858157,
@@ -38165,10 +38181,10 @@
       "sha256": "be7732c0e30f9b770ef5395be762ec9ea133d39f7fc52170d17639e2579a71a9"
     },
     {
-      "bytes": 43811,
+      "bytes": 43869,
       "mode": "100755",
       "path": "scripts/check_release_crypto_profile.py",
-      "sha256": "ffa05924f6819c67c99fe4bba306489b108e970aad5c19682bb1b6ce1509489c"
+      "sha256": "b240bef3e87e1190e60e5e43a972a6d5675aed137c6528aa16166962f10c5ac2"
     },
     {
       "bytes": 12846,
@@ -38663,10 +38679,10 @@
       "sha256": "3a31612eff3a09cf41e94b447fe409d6eee943501f7f86dd89265ab394d82440"
     },
     {
-      "bytes": 25431,
+      "bytes": 27440,
       "mode": "100755",
       "path": "scripts/security-audit.sh",
-      "sha256": "3fb4e33b60b5d3b681ff2a5a6ab13dc10982b02d56f42fd35bbf38cf63a7112d"
+      "sha256": "def6bcb5329eb8f18e30103344a1e966f67214424d675ea958791436174d8ca6"
     },
     {
       "bytes": 1470,
@@ -38735,10 +38751,10 @@
       "sha256": "ef4968d63b3408e861c02623bae44f02ebb9693bd84942a62d670a5904f7c7f3"
     },
     {
-      "bytes": 16176,
+      "bytes": 22694,
       "mode": "100644",
       "path": "scripts/test_check_combined_upgrade_candidate.py",
-      "sha256": "3a306c75c143398c66f4a1703eddeb535684e193f39c85b32a0c9100f255cae7"
+      "sha256": "8779ce1223762bc7291b16f96e8197b6b629a5d5962d1643c5394e8ce35f6e54"
     },
     {
       "bytes": 8337,
@@ -39077,10 +39093,10 @@
       "sha256": "568e21fd22888ea116dacd3e52c608fcdc87e92ad0825a4a49ea84a421e26654"
     },
     {
-      "bytes": 9869,
+      "bytes": 17579,
       "mode": "100644",
       "path": "scripts/tests/v011_current_successor/test_security_audit_scope.py",
-      "sha256": "490215c111438a163b3b93b7c78297fdfb29d39e73e69982d217996e316a17b5"
+      "sha256": "6ec072b3774a3ce86f2ada25e76fb6bc8dec6e9e10e651b1627d4c290872e70a"
     },
     {
       "bytes": 8413,
@@ -40373,6 +40389,6 @@
       "sha256": "2979ff748a39a72e0181c8f82aff4f2da29f69ced72d6dd5e49ddf0c9cd27b64"
     }
   ],
-  "source_inventory_sha256": "7ec3527d403a7bd1e56be420a64e8cfa2380ba7f49722ca49f024086b5897693",
+  "source_inventory_sha256": "2b0f9b541776de69466d782562639f068eaf4e474d6e4eec8c5bd8cdb4dcea56",
   "status": "frozen"
 }

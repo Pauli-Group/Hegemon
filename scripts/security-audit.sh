@@ -155,6 +155,7 @@ BINARY_PROFILE_CHECKED=false
 BINARY_PROFILE_AUTHORIZED=false
 BINARY_PRIVATE_LAUNCH_AUTHORIZED=false
 BINARY_CURRENT_BACKEND_ATTESTED=false
+BINARY_COMBINED_SOFTWARE_CANDIDATE_ATTESTED=false
 
 if [ -n "${HEGEMON_LEAN_RELEASE_PQ_BINARY_POLICY_VECTORS:-}" ]; then
     echo "=== Step 0: Lean Release PQ Binary Policy Vector Check ==="
@@ -388,7 +389,7 @@ if [ "$REQUIRE_BINARY" = true ]; then
         PROFILE_ARGS=(--manifest "$BINARY_MANIFEST" --require-executed) && \
         { [ "$ALLOW_UNAPPROVED_PROFILE" = false ] || PROFILE_ARGS+=(--allow-unapproved-profile); } && \
         PROFILE_RESULT=$(release_crypto_profile) && \
-        PROFILE_SCOPE=$(python3 -c 'import json, sys
+        PROFILE_SCOPE=$(python3 -c 'import json, re, sys
 p = json.load(sys.stdin)
 if p.get("passed") is not True:
     raise SystemExit("release profile did not pass")
@@ -398,6 +399,27 @@ elif (p.get("production_authority") is False and p.get("private_spend_launch_aut
       and p.get("mode") == "executed-private-spend-launch"
       and p.get("authorization_scope") == "source-owned-current86-private-spend-launch"):
     print("private")
+elif (p.get("mode") == "executed-combined-upgrade-software-candidate"
+      and all(p.get(field) is False for field in (
+          "production_authority", "private_spend_launch_authority", "current_network_G8_qualified",
+          "public_cutover_authorized", "mainnet_authorized", "activation_authorized", "physical_asic_qualified"))
+      and p.get("actual_new_binary_proof_verification") is True
+      and p.get("affected_lifecycle_verified") is True
+      and all(isinstance(p.get(field), str) and re.fullmatch("[0-9a-f]{64}", p[field])
+              for field in ("candidate_binding_sha256", "artifact_manifest_sha256"))
+      and isinstance(p.get("target_triple"), str)
+      and re.fullmatch("[A-Za-z0-9_]+(?:-[A-Za-z0-9_]+){2,3}", p["target_triple"])
+      and isinstance(p.get("identity"), dict)
+      and p["identity"].get("schema") == "hegemon.private-spend.native-launch-identity.v2"
+      and p["identity"].get("kind") == "PrivateSpend"
+      and p["identity"].get("network_profile") == "pre-mainnet"
+      and p["identity"].get("relation_id") == "Hegemon.PrivateSpend.BoundedPolicy.CompFF01.Packed.v4"
+      and type(p["identity"].get("public_words")) is int and p["identity"]["public_words"] == 86
+      and all(isinstance(p["identity"].get(field), str)
+              and re.fullmatch("[0-9a-f]{%d}" % length, p["identity"][field])
+              for field, length in (("chain_id", 64), ("genesis_hash", 64),
+                                    ("manifest_digest", 128), ("relation_digest", 128)))):
+    print("combined-software-candidate")
 elif (p.get("production_authority") is False and p.get("private_spend_launch_authority") is False
       and (p.get("mode"), p.get("authorization_scope")) in (
           ("executed-exact-source-backend-h0", "exact-current-source-current-binary-backend-and-h0-only"),
@@ -423,6 +445,8 @@ else:
             BINARY_PRIVATE_LAUNCH_AUTHORIZED=true
         elif [ "$PROFILE_SCOPE" = current-backend ]; then
             BINARY_CURRENT_BACKEND_ATTESTED=true
+        elif [ "$PROFILE_SCOPE" = combined-software-candidate ]; then
+            BINARY_COMBINED_SOFTWARE_CANDIDATE_ATTESTED=true
         fi
     else
         echo -e "${RED}❌ RELEASE ARTIFACT ATTESTATION FAILED${NC}"
@@ -503,6 +527,8 @@ if [ "$BINARY_PRIVATE_LAUNCH_AUTHORIZED" = true ]; then
     echo -e "${GREEN}✅ Current private CompFF01 profile attested; legacy global profile authority remains false${NC}"
 elif [ "$BINARY_CURRENT_BACKEND_ATTESTED" = true ]; then
     echo -e "${GREEN}✅ Exact current-source binary backend proofs and H0 attested; fresh-network G8 and launch authority remain false${NC}"
+elif [ "$BINARY_COMBINED_SOFTWARE_CANDIDATE_ATTESTED" = true ]; then
+    echo -e "${GREEN}✅ Combined software candidate proofs, H0 and affected lifecycle attested; production, launch, activation, mainnet, public cutover and physical ASIC authority remain false${NC}"
 elif [ "$BINARY_PROFILE_AUTHORIZED" = true ]; then
     echo -e "${GREEN}✅ Compiled V4/Gamma SmallWood profile attested${NC}"
 elif [ "$BINARY_PROFILE_CHECKED" = true ] && [ "$ALLOW_UNAPPROVED_PROFILE" = true ]; then

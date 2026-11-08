@@ -618,23 +618,24 @@ def private_launch_profile(root: Path, manifest_path: Path) -> dict:
         validate_binary_profile_markers(binary, item["binary"])
         if run_profile(binary, item["binary"], allow_unapproved_profile=True) is not None:
             fail("private launch requires every legacy profile to refuse exactly")
-    command = [sys.executable, "-I", "-B", str(root / "scripts/check_private_spend_launch_authorization.py"),
-               "--require-authorized", "--artifact-manifest", manifest_path.relative_to(root).as_posix()]
-    if (root / 'config/v011-sync-import-successor-20261106.json').is_file():
-        sync_import_helper(root)
-        command = [sys.executable, '-I', '-B', str(root / 'scripts/check_v011_sync_import_successor.py'),
-                   '--require-authorized', '--artifact-manifest', manifest_path.relative_to(root).as_posix(),
-                   '--require-final-artifact']
-    if (root / 'config/v0113-release-successor.json').is_file():
-        v0113_helper(root)
-        command = [sys.executable, '-I', '-B', str(root / 'scripts/check_v0113_release_successor.py'),
-                   '--require-authorized', '--artifact-manifest', manifest_path.relative_to(root).as_posix(),
-                   '--require-final-artifact']
     if (root / COMBINED_CONFIG).is_file():
         combined_helper(root)
         command = [sys.executable, '-I', '-B', str(root / 'scripts/check_combined_upgrade_candidate.py'),
                    '--require-authorized', '--artifact-manifest', manifest_path.relative_to(root).as_posix(),
                    '--require-final-artifact']
+    else:
+        command = [sys.executable, "-I", "-B", str(root / "scripts/check_private_spend_launch_authorization.py"),
+                   "--require-authorized", "--artifact-manifest", manifest_path.relative_to(root).as_posix()]
+        if (root / 'config/v011-sync-import-successor-20261106.json').is_file():
+            sync_import_helper(root)
+            command = [sys.executable, '-I', '-B', str(root / 'scripts/check_v011_sync_import_successor.py'),
+                       '--require-authorized', '--artifact-manifest', manifest_path.relative_to(root).as_posix(),
+                       '--require-final-artifact']
+        if (root / 'config/v0113-release-successor.json').is_file():
+            v0113_helper(root)
+            command = [sys.executable, '-I', '-B', str(root / 'scripts/check_v0113_release_successor.py'),
+                       '--require-authorized', '--artifact-manifest', manifest_path.relative_to(root).as_posix(),
+                       '--require-final-artifact']
     completed = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=44400 if (root / COMBINED_CONFIG).is_file() else (1300 if (root / "config/v011-release-successor.json").is_file() else 180))
     if completed.returncode != 0 or completed.stderr:
         fail("private launch source authorization failed: " + (completed.stderr.strip() or str(completed.returncode)))

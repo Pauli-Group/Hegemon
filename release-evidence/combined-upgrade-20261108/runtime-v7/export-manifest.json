@@ -1,0 +1,677 @@
+{
+  "bounds": {
+    "max_file_bytes": 16777216,
+    "max_files": 256,
+    "max_log_bytes": 8388608,
+    "max_total_bytes": 268435456,
+    "timeout_seconds": 120
+  },
+  "copied_bytes": 7105309,
+  "excluded": [
+    "wallets and passphrases",
+    "private keys and peer identity seeds",
+    "witnesses and prover scratch",
+    "database contents",
+    "external source/manifest/binaries/fixtures",
+    "unpinned node logs and journals"
+  ],
+  "export_file_count_including_manifest": 82,
+  "exporter_sha256": "9444de1cff24e7a3818f58fb8adaa16fbe16425c0b923b8b6eb59d5e83e2caaf",
+  "file_count": 81,
+  "files": [
+    {
+      "bytes": 675217,
+      "path": "canonical-audit.json",
+      "references": [
+        "final canonical audit"
+      ],
+      "sha256": "27925b91d1e566cadb4181b4cb78b8a78ab6bda7137c97470d624998015e4009"
+    },
+    {
+      "bytes": 177290,
+      "path": "claim-after-reorg.action",
+      "references": [
+        "unchanged reorg action"
+      ],
+      "sha256": "9eafdcd024c868d6c33f354c57a91589c2b4cdab16d156ff2e30b65810a9ab18"
+    },
+    {
+      "bytes": 177290,
+      "path": "claim-lock.action",
+      "references": [
+        "proofs.claim-lock.action"
+      ],
+      "sha256": "248ea937b2662ea8a79d8047eab020c903fa1d0b806796f130e5e1e8ea4483b3"
+    },
+    {
+      "bytes": 177065,
+      "path": "claim-lock.carrier.hgps",
+      "references": [
+        "proofs.claim-lock.carrier"
+      ],
+      "sha256": "0cb583bd793e58a0e2ff92b4a74d48b300fa78015f5068917185ac7b1899b50f"
+    },
+    {
+      "bytes": 171281,
+      "path": "claim-lock.proof.smzl",
+      "references": [
+        "proofs.claim-lock.proof"
+      ],
+      "sha256": "0c72f4859141dbacf53e98ae3fe4747c092f308bdd494a27826a7051f5a1b543"
+    },
+    {
+      "bytes": 177290,
+      "path": "claim.action",
+      "references": [
+        "proofs.claim.action"
+      ],
+      "sha256": "9eafdcd024c868d6c33f354c57a91589c2b4cdab16d156ff2e30b65810a9ab18"
+    },
+    {
+      "bytes": 177065,
+      "path": "claim.carrier.hgps",
+      "references": [
+        "proofs.claim.carrier"
+      ],
+      "sha256": "39171b175721644dc45a160fda80aaf0e78adee379e2a91d6f2146818233be34"
+    },
+    {
+      "bytes": 171281,
+      "path": "claim.proof.smzl",
+      "references": [
+        "proofs.claim.proof"
+      ],
+      "sha256": "e61a92227799bba7aec62a29b41e6fd28e61eb02c41ab86ff689259d91bf7870"
+    },
+    {
+      "bytes": 12790,
+      "path": "cli-001-status.log",
+      "references": [
+        "cli_commands.status"
+      ],
+      "sha256": "b64f06aed64b75c6152b28430705c209e0114e3c2ee5b09a10fc5642ee45d906"
+    },
+    {
+      "bytes": 12551,
+      "path": "cli-002-status.log",
+      "references": [
+        "cli_commands.status"
+      ],
+      "sha256": "a6e671cf37ddcf6156c70d0529876b98c2d3cffe2daa86e88eedd54f67ecae16"
+    },
+    {
+      "bytes": 12668,
+      "path": "cli-003-status.log",
+      "references": [
+        "cli_commands.status"
+      ],
+      "sha256": "280f4d5b90f97a0006f88b77d0123c7c676fbdb3f5385351744e3099e6ad99dd"
+    },
+    {
+      "bytes": 3388,
+      "path": "cli-004-encrypted-bootstrap-recover.log",
+      "references": [
+        "encrypted recovery CLI log",
+        "cli_commands.encrypted-bootstrap-recover"
+      ],
+      "sha256": "b273da3994be732622471a3c4f6ac01986cf57e902df887f96d29bbc9a578f46"
+    },
+    {
+      "bytes": 12869,
+      "path": "cli-005-status.log",
+      "references": [
+        "cli_commands.status"
+      ],
+      "sha256": "2f313b45f4985bf0350833042142a6eaef9d20ac159a26190d41a5075243fdb8"
+    },
+    {
+      "bytes": 424,
+      "path": "cli-006-recovered-empty-attempt-journal.log",
+      "references": [
+        "cli_commands.recovered-empty-attempt-journal"
+      ],
+      "sha256": "17a9b86feba4c9f5905a59e23a3f07b9b2c4757e409b7e7d50128e6a25ad4e4e"
+    },
+    {
+      "bytes": 500,
+      "path": "cli-007-treasury-ordinary.log",
+      "references": [
+        "cli_commands.treasury-ordinary"
+      ],
+      "sha256": "178e37877d56c582422681b86bc9a4320e45ad6b69edee2f23c4df0720fcc1ee"
+    },
+    {
+      "bytes": 424,
+      "path": "cli-008-treasury-ordinary-export.log",
+      "references": [
+        "cli_commands.treasury-ordinary-export"
+      ],
+      "sha256": "831f97b412f575cd57955e44c24501bf6db0de5ec582c72ae7811aa9188193c0"
+    },
+    {
+      "bytes": 521,
+      "path": "cli-009-treasury-ordinary-retained-attempt.log",
+      "references": [
+        "cli_commands.treasury-ordinary-retained-attempt"
+      ],
+      "sha256": "9b27f83ae713defbc9d84d4fa6dbcf400994e621d1cbb9204c1a728c6df7b679"
+    },
+    {
+      "bytes": 424,
+      "path": "cli-010-treasury-ordinary-reexport-after-restart.log",
+      "references": [
+        "cli_commands.treasury-ordinary-reexport-after-restart"
+      ],
+      "sha256": "17a9b86feba4c9f5905a59e23a3f07b9b2c4757e409b7e7d50128e6a25ad4e4e"
+    },
+    {
+      "bytes": 532,
+      "path": "cli-011-treasury-ordinary-submit.log",
+      "references": [
+        "cli_commands.treasury-ordinary-submit"
+      ],
+      "sha256": "32afcb281cff3fb470f756ebc706766675378f576e97f9149cba39db8772039c"
+    },
+    {
+      "bytes": 12986,
+      "path": "cli-012-status.log",
+      "references": [
+        "cli_commands.status"
+      ],
+      "sha256": "5b4fe8fbe6db1371a9ff9ab994f66488c9db8f59840f74143aadce6b49123e15"
+    },
+    {
+      "bytes": 12948,
+      "path": "cli-013-status.log",
+      "references": [
+        "cli_commands.status"
+      ],
+      "sha256": "37243e5a4a7bb6c63177244a4e19e90def8e8c5e14e02c4b1dcd01f8fe8e2790"
+    },
+    {
+      "bytes": 12948,
+      "path": "cli-014-status.log",
+      "references": [
+        "cli_commands.status"
+      ],
+      "sha256": "851681566b177b3712da99997e87a7a88c33eb80ba1d03a5716d374c90712357"
+    },
+    {
+      "bytes": 500,
+      "path": "cli-015-claim-lock.log",
+      "references": [
+        "cli_commands.claim-lock"
+      ],
+      "sha256": "4b64c581b3616b64783fa1bd8f84d2eeb16bf66105535fa5f601246b94e2148e"
+    },
+    {
+      "bytes": 424,
+      "path": "cli-016-claim-lock-export.log",
+      "references": [
+        "cli_commands.claim-lock-export"
+      ],
+      "sha256": "1e4611b4b84b14a4a53ffdb04e181906a1a24c075d18da90592f61f4051f1622"
+    },
+    {
+      "bytes": 532,
+      "path": "cli-017-claim-lock-submit.log",
+      "references": [
+        "cli_commands.claim-lock-submit"
+      ],
+      "sha256": "f221577eee2195404137fb34a050ecbd9a2fdef1fe5dda60330aa5b066e051f2"
+    },
+    {
+      "bytes": 13389,
+      "path": "cli-018-status.log",
+      "references": [
+        "cli_commands.status"
+      ],
+      "sha256": "6869e2cf5be6227e893ee7e97421055aaf8b533d2d5c710a165612dfa1564244"
+    },
+    {
+      "bytes": 13351,
+      "path": "cli-019-status.log",
+      "references": [
+        "cli_commands.status"
+      ],
+      "sha256": "bcf63d362d1ec53e2569226373fc48a6cafa1f5d35f9e194a0aca63f46279fcd"
+    },
+    {
+      "bytes": 13351,
+      "path": "cli-020-status.log",
+      "references": [
+        "cli_commands.status"
+      ],
+      "sha256": "ae0b7330f450eec816cbd9f0d2368a94245b80a63ba740719304ab179f3fde31"
+    },
+    {
+      "bytes": 13351,
+      "path": "cli-021-status.log",
+      "references": [
+        "cli_commands.status"
+      ],
+      "sha256": "c8748f837480a6b45735ee0468f89dc98a10a63290a7552a4542b800b00e03d5"
+    },
+    {
+      "bytes": 901,
+      "path": "cli-022-wrong-preimage-attempts-before.log",
+      "references": [
+        "cli_commands.wrong-preimage-attempts-before"
+      ],
+      "sha256": "deacf565204d4af57cf600aedf39b134c6ff0a37fa93f665d62c7ecbaae3942b"
+    },
+    {
+      "bytes": 529,
+      "path": "cli-023-wrong-preimage.log",
+      "references": [
+        "cli_commands.wrong-preimage"
+      ],
+      "sha256": "5b0a55600931a0848d4e8cb02d7e79f0547c5812b8d7f19d127bf5c8ee8b1a5c"
+    },
+    {
+      "bytes": 901,
+      "path": "cli-024-wrong-preimage-attempts-after.log",
+      "references": [
+        "cli_commands.wrong-preimage-attempts-after"
+      ],
+      "sha256": "fa802d54463f6e7e84a37fc40a4a089b3e0befd96f34916e1d589af30551fd7a"
+    },
+    {
+      "bytes": 462,
+      "path": "cli-025-early-refund-attempts-before.log",
+      "references": [
+        "cli_commands.early-refund-attempts-before"
+      ],
+      "sha256": "339e245fc1ecf7b1ea5d4a20294b2605f3c461997840cd16ea176d68a2ab1cb5"
+    },
+    {
+      "bytes": 495,
+      "path": "cli-026-early-refund.log",
+      "references": [
+        "cli_commands.early-refund"
+      ],
+      "sha256": "4b4cda1ba9bfd0e3b60fd253e44a64b0309efc30e82709a5caf3e98341dfdba5"
+    },
+    {
+      "bytes": 424,
+      "path": "cli-027-early-refund-attempts-after.log",
+      "references": [
+        "cli_commands.early-refund-attempts-after"
+      ],
+      "sha256": "e0d38c3af12bee6aee6acb97b8f4a880400e3f6c84a9413be5b3a21c2d627e34"
+    },
+    {
+      "bytes": 12795,
+      "path": "cli-028-status.log",
+      "references": [
+        "cli_commands.status"
+      ],
+      "sha256": "85e28a59a15a6378243fab2bf9d87456b1c367d5f238eb0d76c2323be9957590"
+    },
+    {
+      "bytes": 13975,
+      "path": "cli-029-status.log",
+      "references": [
+        "cli_commands.status"
+      ],
+      "sha256": "5a538238e327a52723cc8686e2b53ea213ebc87f04323ccf3a353a1024594eda"
+    },
+    {
+      "bytes": 534,
+      "path": "cli-030-claim.log",
+      "references": [
+        "cli_commands.claim"
+      ],
+      "sha256": "0927eecd9ecdc3da9388b3a18ab9677d8d8d86050ded90d4291ccc73a7df81b6"
+    },
+    {
+      "bytes": 424,
+      "path": "cli-031-claim-export.log",
+      "references": [
+        "cli_commands.claim-export"
+      ],
+      "sha256": "82e390caa49e5b6bec969006651e61ce458d3ef5994487a2102642adc87a03db"
+    },
+    {
+      "bytes": 500,
+      "path": "cli-032-competing-refund.log",
+      "references": [
+        "cli_commands.competing-refund"
+      ],
+      "sha256": "7456545d94228be4639cc5810d2f1c4e8356e9d96959e335ea0d5d8d19ffd94c"
+    },
+    {
+      "bytes": 424,
+      "path": "cli-033-competing-refund-export.log",
+      "references": [
+        "cli_commands.competing-refund-export"
+      ],
+      "sha256": "c72f846c9d9cb1bd2a8b8ea5887df97e684989c84f4c62a1c8be97fc251b4b7f"
+    },
+    {
+      "bytes": 532,
+      "path": "cli-034-claim-first-submit.log",
+      "references": [
+        "cli_commands.claim-first-submit"
+      ],
+      "sha256": "a0f3f15616c77bb22419db8d2443d3e7590e073a0011d2a21f3ac00654881d88"
+    },
+    {
+      "bytes": 14166,
+      "path": "cli-035-status.log",
+      "references": [
+        "cli_commands.status"
+      ],
+      "sha256": "8e33afd9374d83ff223c88b0ef374b88eb5266cc93e94fc4520152ee53995b3b"
+    },
+    {
+      "bytes": 14342,
+      "path": "cli-036-claim-wallet-canonical-reorg-rollback.log",
+      "references": [
+        "cli_commands.claim-wallet-canonical-reorg-rollback"
+      ],
+      "sha256": "3a68e9255f5495b05bf81ceebd0259f4e637ff9fab2006c7c3fcb72e2f30dab1"
+    },
+    {
+      "bytes": 424,
+      "path": "cli-037-claim-reexport-after-reorg.log",
+      "references": [
+        "cli_commands.claim-reexport-after-reorg"
+      ],
+      "sha256": "324b90e2d27c4d50478f51fd38e0d66a7fffdadf797f057ea55b135f760ecadb"
+    },
+    {
+      "bytes": 532,
+      "path": "cli-038-claim-submit.log",
+      "references": [
+        "cli_commands.claim-submit"
+      ],
+      "sha256": "960039fd3954ceabe0a142eb0a931d9f15fddf78bf39f1c5ea86aeb34a674bac"
+    },
+    {
+      "bytes": 14281,
+      "path": "cli-039-status.log",
+      "references": [
+        "cli_commands.status"
+      ],
+      "sha256": "57818831a9a0045df53a726d51e199ebf97858d4431be543935c9ce9a8b6df1c"
+    },
+    {
+      "bytes": 1138,
+      "path": "cli-040-claim-reminded-journal.log",
+      "references": [
+        "cli_commands.claim-reminded-journal"
+      ],
+      "sha256": "58036fd8898360342549b78eb6c68f6363c53b975cd48986e3579f2f4abb3576"
+    },
+    {
+      "bytes": 14243,
+      "path": "cli-041-status.log",
+      "references": [
+        "cli_commands.status"
+      ],
+      "sha256": "3eb3bd2ae7e52641b058ac6b4b66eb56a6e8cbdc718d185d11c1ad66225ad5ed"
+    },
+    {
+      "bytes": 14243,
+      "path": "cli-042-status.log",
+      "references": [
+        "cli_commands.status"
+      ],
+      "sha256": "6b0b9fe785c14e3ac6225abae89c0893e0eb183b49add153b6fbf574dd825b2b"
+    },
+    {
+      "bytes": 500,
+      "path": "cli-043-refund-lock.log",
+      "references": [
+        "cli_commands.refund-lock"
+      ],
+      "sha256": "3e441e08dde9ed918c7b65c4222b06061c6b97328395e4a34f82aba9ea15a7ac"
+    },
+    {
+      "bytes": 424,
+      "path": "cli-044-refund-lock-export.log",
+      "references": [
+        "cli_commands.refund-lock-export"
+      ],
+      "sha256": "2c3d79b5de7faba0d47e637861c7a1e1df0ef7223526533fabeae4ea727f3773"
+    },
+    {
+      "bytes": 532,
+      "path": "cli-045-refund-lock-submit.log",
+      "references": [
+        "cli_commands.refund-lock-submit"
+      ],
+      "sha256": "31e1eb950bf14556876bb8ce9e12fd019a4738f22a79728ab64850096bd42dc4"
+    },
+    {
+      "bytes": 14678,
+      "path": "cli-046-status.log",
+      "references": [
+        "cli_commands.status"
+      ],
+      "sha256": "51e1211725bb551ced631ecf8c556b55dd5a0e1d03673bba03fa12e809a00f39"
+    },
+    {
+      "bytes": 14640,
+      "path": "cli-047-status.log",
+      "references": [
+        "cli_commands.status"
+      ],
+      "sha256": "69ccec1f9caab29ee9c3151fc6742a1bee7b82560c7a34d9a323680e0e709e7a"
+    },
+    {
+      "bytes": 15305,
+      "path": "cli-048-status.log",
+      "references": [
+        "cli_commands.status"
+      ],
+      "sha256": "763952fa4fb05c5dbf37539b22d6c2107af7da128aea17fe05cb1be36bf952c9"
+    },
+    {
+      "bytes": 500,
+      "path": "cli-049-refund.log",
+      "references": [
+        "cli_commands.refund"
+      ],
+      "sha256": "e2c51dd83db2859e063e313724880a5089cf222ce3268f691ef6b6db272e96e0"
+    },
+    {
+      "bytes": 424,
+      "path": "cli-050-refund-export.log",
+      "references": [
+        "cli_commands.refund-export"
+      ],
+      "sha256": "ce2dfe7107b87b9454aba26c8822677a91b0f859d3491a236148a62fd25ed0d7"
+    },
+    {
+      "bytes": 532,
+      "path": "cli-051-refund-submit.log",
+      "references": [
+        "cli_commands.refund-submit"
+      ],
+      "sha256": "87cc35039516fd13211d8443267dcd9e5c61d98071defb08eac7fa78e56a0552"
+    },
+    {
+      "bytes": 15456,
+      "path": "cli-052-status.log",
+      "references": [
+        "cli_commands.status"
+      ],
+      "sha256": "66125aae69c2fc29cfc390f681972a97bfe69d3313dbdbe740cf81387c540c44"
+    },
+    {
+      "bytes": 14119,
+      "path": "cli-053-status.log",
+      "references": [
+        "cli_commands.status"
+      ],
+      "sha256": "07728f4f63c4772bdf58488ec23aa9b81a598ed89a2d1961f4a1564ce2d3015a"
+    },
+    {
+      "bytes": 177290,
+      "path": "competing-refund.action",
+      "references": [
+        "proofs.competing-refund.action"
+      ],
+      "sha256": "558c366a4913d6abd2128a0da6fe546b9edcd25ef2c3f280f067884228a057f6"
+    },
+    {
+      "bytes": 177065,
+      "path": "competing-refund.carrier.hgps",
+      "references": [
+        "proofs.competing-refund.carrier"
+      ],
+      "sha256": "aa07293a68985a5920197787b1993ed9d6ca7941bc7478cdd8ea42f2fb730714"
+    },
+    {
+      "bytes": 171281,
+      "path": "competing-refund.proof.smzl",
+      "references": [
+        "proofs.competing-refund.proof"
+      ],
+      "sha256": "fb9f3e202e6abeaf49392aee8930ac9182a5fa6247ac758522cfdf423271a548"
+    },
+    {
+      "bytes": 1397737,
+      "path": "complete-candidate-inventory.json",
+      "references": [
+        "source.complete_candidate_inventory"
+      ],
+      "sha256": "3345c67fea4aa2834145378e10ce6235aac79087fccd855c64c5ff202878f329"
+    },
+    {
+      "bytes": 36785,
+      "path": "initial-native-cpu-author-catchup.json",
+      "references": [
+        "initial CPU.transcript"
+      ],
+      "sha256": "bbf917069d0fde794886921f984c25a73ad30a9bba16f6cf6b873b388130dbbd"
+    },
+    {
+      "bytes": 318909,
+      "path": "live-cpu-author-catchup.json",
+      "references": [
+        "ASERT CPU.transcript"
+      ],
+      "sha256": "1bbf885a85ccc701eb4f555b41eb5cdc673b2f7b6a2bea7ea66215693b31b19a"
+    },
+    {
+      "bytes": 7778,
+      "path": "owned-cold-fork-prefix.json",
+      "references": [
+        "cold owned-prefix metadata"
+      ],
+      "sha256": "61a60bad168f2ed8cd81ec4732c3f021bdd4a99cc4ca6abb202c7e0099b45f3d"
+    },
+    {
+      "bytes": 729502,
+      "path": "receipt.json",
+      "references": [
+        "externally pinned completed receipt"
+      ],
+      "sha256": "08843bd62cd8cd0c7b429caae6bb92a6d2a27b5c59a4e9cff4d55d219125c302"
+    },
+    {
+      "bytes": 177290,
+      "path": "refund-lock.action",
+      "references": [
+        "proofs.refund-lock.action"
+      ],
+      "sha256": "e0f5be6541e2be7a17b0139955e30d2491591ab4df7f8dc1e16531d4c28d7b1d"
+    },
+    {
+      "bytes": 177065,
+      "path": "refund-lock.carrier.hgps",
+      "references": [
+        "proofs.refund-lock.carrier"
+      ],
+      "sha256": "4cc088dd3ca029a3de8e2f7a72fe6cd33f308edb1d86313f14f499a7fc279227"
+    },
+    {
+      "bytes": 171281,
+      "path": "refund-lock.proof.smzl",
+      "references": [
+        "proofs.refund-lock.proof"
+      ],
+      "sha256": "6d7055fe794a320dc4dceadf984649c867af5beda6373cfef1ed64f13d526eaa"
+    },
+    {
+      "bytes": 177290,
+      "path": "refund.action",
+      "references": [
+        "proofs.refund.action"
+      ],
+      "sha256": "96ebdd1b282d8a5c223edbffa2c73c591f28b6af2244511b5cdd788d26fa1e16"
+    },
+    {
+      "bytes": 177065,
+      "path": "refund.carrier.hgps",
+      "references": [
+        "proofs.refund.carrier"
+      ],
+      "sha256": "4e52d0fc5a0bf4174704946ca9f4ba9de9365d6f5d91358bee5df4093032e12c"
+    },
+    {
+      "bytes": 171281,
+      "path": "refund.proof.smzl",
+      "references": [
+        "proofs.refund.proof"
+      ],
+      "sha256": "1e4c695d9d0041927303a47d6dc0a38e42f6c316ee7c455b656f1a4275e04063"
+    },
+    {
+      "bytes": 83689,
+      "path": "source-inventory.json",
+      "references": [
+        "source.inventory_sha256"
+      ],
+      "sha256": "0bc7a7ca82ac03e842190b99f1a1f2ac5cdb6351fed41bfa9a394a47f3ea1a34"
+    },
+    {
+      "bytes": 177290,
+      "path": "treasury-ordinary-after-restart.action",
+      "references": [
+        "retained restart action"
+      ],
+      "sha256": "cb469de47ce3e54fa9b349550d787967e481dc1265bf56db5f4827c68eb75413"
+    },
+    {
+      "bytes": 177290,
+      "path": "treasury-ordinary.action",
+      "references": [
+        "proofs.treasury-ordinary.action"
+      ],
+      "sha256": "cb469de47ce3e54fa9b349550d787967e481dc1265bf56db5f4827c68eb75413"
+    },
+    {
+      "bytes": 177065,
+      "path": "treasury-ordinary.carrier.hgps",
+      "references": [
+        "proofs.treasury-ordinary.carrier"
+      ],
+      "sha256": "350a2ef6316586d19b2662e64bd1fa1d0b7c0d8e4f8bb52563f2cd9108fbaf98"
+    },
+    {
+      "bytes": 171281,
+      "path": "treasury-ordinary.proof.smzl",
+      "references": [
+        "proofs.treasury-ordinary.proof"
+      ],
+      "sha256": "8b7541f089bde92768cb449595afdbf290254af77ff25a53d33d6381f4294aba"
+    },
+    {
+      "bytes": 13050,
+      "path": "unchanged-action-reorg-resubmission.json",
+      "references": [
+        "unchanged action reorg.transcript"
+      ],
+      "sha256": "865ad4ba95a7493b1da4ecc4ec2d99d23a3be584d1429ac41db519f529243ae9"
+    }
+  ],
+  "files_canonical_sha256": "b1c92d7b1f1c7febe1dbf4575df360c7b7005da98def2a325c074b47d9d2778b",
+  "qualification_claim": false,
+  "receipt_sha256": "08843bd62cd8cd0c7b429caae6bb92a6d2a27b5c59a4e9cff4d55d219125c302",
+  "schema": "hegemon.combined-upgrade.public-evidence-export.v1",
+  "status": "PASS_EXPORT_COMPLETE"
+}
