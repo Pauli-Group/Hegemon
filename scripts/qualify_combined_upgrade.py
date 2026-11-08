@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -81,8 +82,31 @@ def unittest_output(raw):
                  'exact nonignored adapter test did not actually execute once')
 
 
+def qualification_argv(argv):
+    if os.name != 'nt' or not argv or argv[0] != 'bash':
+        return argv
+    # A bare bash on Windows can select the WSL launcher. Resolve the shell
+    # from Git itself without changing PATH or accepting a different Bash.
+    git_executable = shutil.which('git.exe') or shutil.which('git')
+    message = 'Windows qualification requires Git for Windows Bash adjacent to the installed Git executable'
+    gate.require(git_executable is not None, message + ': Git was not found')
+    git = Path(git_executable)
+    gate.require(git.is_absolute(), message + ': Git path is not absolute')
+    if git.parent.name.lower() == 'bin' and git.parent.parent.name.lower() in ('mingw64', 'mingw32'):
+        git_root = git.parent.parent.parent
+    elif git.parent.name.lower() in ('cmd', 'bin'):
+        git_root = git.parent.parent
+    else:
+        gate.require(False, message + ': unsupported Git executable layout: ' + str(git))
+    for bash in (git_root / 'bin' / 'bash.exe', git_root / 'usr' / 'bin' / 'bash.exe'):
+        if bash.is_file():
+            return [str(bash), *argv[1:]]
+    gate.require(False, message + ': bash.exe is missing under ' + str(git_root))
+
+
 def run_command(argv, logdir, timeout=1800, exact=False, unittest=False):
     # No shell, no inherited simulation hooks, and no receipt-only PASS path.
+    argv = qualification_argv(argv)
     env = {k: v for k, v in os.environ.items() if not k.startswith('HEGEMON_')}
     env.update(CARGO_TERM_COLOR='never', CARGO_INCREMENTAL='0')
     started = time.time()

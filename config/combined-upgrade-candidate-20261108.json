@@ -27,9 +27,9 @@
     }
   ],
   "independent_review": {
-    "bytes": 2935,
-    "path": "release-evidence/combined-upgrade-20261108/independent-review-v7.json",
-    "sha256": "210d3f59ae27b1038d69676f605ddbaadc2330ddffb2b304449b07d1c7911799"
+    "bytes": 3097,
+    "path": "release-evidence/combined-upgrade-20261108/independent-review-v8.json",
+    "sha256": "4d6690baf210bc873fedfd5fea267323c6516d891cbe77e93592ec6a1d5d214f"
   },
   "proof_identity": {
     "cargo_lock_sha256": "1c243bf3858f4ee22fa4441c7a2ee6d49b16d264147b0f3a2de845e760821719",
@@ -255,9 +255,9 @@
         "--artifact-manifest",
         "{artifact_manifest}",
         "--runtime-receipt",
-        "release-evidence/combined-upgrade-20261108/runtime-v7/receipt.json",
+        "release-evidence/combined-upgrade-20261108/runtime-v8/receipt.json",
         "--runtime-receipt-sha256",
-        "08843bd62cd8cd0c7b429caae6bb92a6d2a27b5c59a4e9cff4d55d219125c302",
+        "7d51991e799c93762d93b74e19381856a177dda5c33a4c5541607716a1668cee",
         "--runtime-runner-sha256",
         "d6d776dcc7becf42be69324cb1d8c26fee272b4addc174a0e32a816e04196ae5",
         "--runtime-io-sha256",
@@ -281,9 +281,9 @@
         "--artifact-manifest",
         "{artifact_manifest}",
         "--runtime-receipt",
-        "release-evidence/combined-upgrade-20261108/runtime-v7/receipt.json",
+        "release-evidence/combined-upgrade-20261108/runtime-v8/receipt.json",
         "--runtime-receipt-sha256",
-        "08843bd62cd8cd0c7b429caae6bb92a6d2a27b5c59a4e9cff4d55d219125c302",
+        "7d51991e799c93762d93b74e19381856a177dda5c33a4c5541607716a1668cee",
         "--runtime-runner-sha256",
         "d6d776dcc7becf42be69324cb1d8c26fee272b4addc174a0e32a816e04196ae5",
         "--runtime-io-sha256",
@@ -307,9 +307,9 @@
         "--artifact-manifest",
         "{artifact_manifest}",
         "--runtime-receipt",
-        "release-evidence/combined-upgrade-20261108/runtime-v7/receipt.json",
+        "release-evidence/combined-upgrade-20261108/runtime-v8/receipt.json",
         "--runtime-receipt-sha256",
-        "08843bd62cd8cd0c7b429caae6bb92a6d2a27b5c59a4e9cff4d55d219125c302",
+        "7d51991e799c93762d93b74e19381856a177dda5c33a4c5541607716a1668cee",
         "--runtime-runner-sha256",
         "d6d776dcc7becf42be69324cb1d8c26fee272b4addc174a0e32a816e04196ae5",
         "--runtime-io-sha256",
@@ -333,9 +333,9 @@
         "--artifact-manifest",
         "{artifact_manifest}",
         "--runtime-receipt",
-        "release-evidence/combined-upgrade-20261108/runtime-v7/receipt.json",
+        "release-evidence/combined-upgrade-20261108/runtime-v8/receipt.json",
         "--runtime-receipt-sha256",
-        "08843bd62cd8cd0c7b429caae6bb92a6d2a27b5c59a4e9cff4d55d219125c302",
+        "7d51991e799c93762d93b74e19381856a177dda5c33a4c5541607716a1668cee",
         "--runtime-runner-sha256",
         "d6d776dcc7becf42be69324cb1d8c26fee272b4addc174a0e32a816e04196ae5",
         "--runtime-io-sha256",
@@ -359,9 +359,9 @@
         "--artifact-manifest",
         "{artifact_manifest}",
         "--runtime-receipt",
-        "release-evidence/combined-upgrade-20261108/runtime-v7/receipt.json",
+        "release-evidence/combined-upgrade-20261108/runtime-v8/receipt.json",
         "--runtime-receipt-sha256",
-        "08843bd62cd8cd0c7b429caae6bb92a6d2a27b5c59a4e9cff4d55d219125c302",
+        "7d51991e799c93762d93b74e19381856a177dda5c33a4c5541607716a1668cee",
         "--runtime-runner-sha256",
         "d6d776dcc7becf42be69324cb1d8c26fee272b4addc174a0e32a816e04196ae5",
         "--runtime-io-sha256",
@@ -385,9 +385,9 @@
         "--artifact-manifest",
         "{artifact_manifest}",
         "--runtime-receipt",
-        "release-evidence/combined-upgrade-20261108/runtime-v7/receipt.json",
+        "release-evidence/combined-upgrade-20261108/runtime-v8/receipt.json",
         "--runtime-receipt-sha256",
-        "08843bd62cd8cd0c7b429caae6bb92a6d2a27b5c59a4e9cff4d55d219125c302",
+        "7d51991e799c93762d93b74e19381856a177dda5c33a4c5541607716a1668cee",
         "--runtime-runner-sha256",
         "d6d776dcc7becf42be69324cb1d8c26fee272b4addc174a0e32a816e04196ae5",
         "--runtime-io-sha256",
@@ -412,10 +412,10 @@
     },
     {
       "after_mode": "100644",
-      "after_sha256": "665c430a7a4f9d0da39c25793672772dcc3a2b1f8adcc6bd121c63808f30e060",
+      "after_sha256": "8bbdfd69532d36554cbbc9a4471dfd32a33bd783fce3422aa53bb0b4b7282a95",
       "before_mode": null,
       "before_sha256": null,
-      "bytes": 15192,
+      "bytes": 16514,
       "path": ".agent/COMBINED_UPGRADE_EXECPLAN.md"
     },
     {
@@ -1220,10 +1220,10 @@
     },
     {
       "after_mode": "100644",
-      "after_sha256": "35bfe4fb52e4c8300fb594cd5f593e6f716f319b68383bb8ea0404b8881481f9",
+      "after_sha256": "35fe7516d2a8a1cf77e4d6f8c1061579d524f3154260505c832263d0c6570dd0",
       "before_mode": null,
       "before_sha256": null,
-      "bytes": 30198,
+      "bytes": 31444,
       "path": "scripts/qualify_combined_upgrade.py"
     },
     {
@@ -1284,10 +1284,10 @@
     },
     {
       "after_mode": "100644",
-      "after_sha256": "393d4e442980e9bb60c3784185c799782399296aa2c407fb3ee88a2275ae2385",
+      "after_sha256": "68c79f5e9dec1d7412a043ed50af862729094f687721e10a517cce8590f8b8a4",
       "before_mode": null,
       "before_sha256": null,
-      "bytes": 12709,
+      "bytes": 18130,
       "path": "scripts/test_qualify_combined_upgrade.py"
     },
     {
@@ -1389,10 +1389,10 @@
       "sha256": "82ff8b39301828a2af45557ac38b068933caf3b5bde5e74faee27babddd73710"
     },
     {
-      "bytes": 15192,
+      "bytes": 16514,
       "mode": "100644",
       "path": ".agent/COMBINED_UPGRADE_EXECPLAN.md",
-      "sha256": "665c430a7a4f9d0da39c25793672772dcc3a2b1f8adcc6bd121c63808f30e060"
+      "sha256": "8bbdfd69532d36554cbbc9a4471dfd32a33bd783fce3422aa53bb0b4b7282a95"
     },
     {
       "bytes": 8249,
@@ -38559,10 +38559,10 @@
       "sha256": "c37455302ad34f631df1938b0ee7980af8bb8a57930ba38c05a6fe86941c145f"
     },
     {
-      "bytes": 30198,
+      "bytes": 31444,
       "mode": "100644",
       "path": "scripts/qualify_combined_upgrade.py",
-      "sha256": "35bfe4fb52e4c8300fb594cd5f593e6f716f319b68383bb8ea0404b8881481f9"
+      "sha256": "35fe7516d2a8a1cf77e4d6f8c1061579d524f3154260505c832263d0c6570dd0"
     },
     {
       "bytes": 26639,
@@ -38985,10 +38985,10 @@
       "sha256": "8b56f899ca106761182bb623188d56f794f020c185f57119e98e1bbd2a6902e6"
     },
     {
-      "bytes": 12709,
+      "bytes": 18130,
       "mode": "100644",
       "path": "scripts/test_qualify_combined_upgrade.py",
-      "sha256": "393d4e442980e9bb60c3784185c799782399296aa2c407fb3ee88a2275ae2385"
+      "sha256": "68c79f5e9dec1d7412a043ed50af862729094f687721e10a517cce8590f8b8a4"
     },
     {
       "bytes": 11781,
@@ -40389,6 +40389,6 @@
       "sha256": "2979ff748a39a72e0181c8f82aff4f2da29f69ced72d6dd5e49ddf0c9cd27b64"
     }
   ],
-  "source_inventory_sha256": "2b0f9b541776de69466d782562639f068eaf4e474d6e4eec8c5bd8cdb4dcea56",
+  "source_inventory_sha256": "365cfb83e6ee1204e100dcbaf8f7e4519188ace2a224c3c61f6dbc1edbfb3bdb",
   "status": "frozen"
 }

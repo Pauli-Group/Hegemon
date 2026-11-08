@@ -1,0 +1,26 @@
+{
+  "schema": "hegemon.combined-upgrade.independent-review.v1",
+  "decision": "ACCEPT_SOFTWARE_CANDIDATE_SCOPE",
+  "review_kind": "independent_model_review",
+  "reviewer": "Codex independent integration and candidate-scope reviewer (/root/combined_final_scope_review)",
+  "candidate_binding_sha256": "5aa263c318ad84068aa9067868354e1df312f18b37fc11046a6367a88e0c8777",
+  "source_inventory_sha256": "365cfb83e6ee1204e100dcbaf8f7e4519188ace2a224c3c61f6dbc1edbfb3bdb",
+  "qualification_commands_sha256": "4d79f3da8fb56f608e5083356ad5afccc0fdb2d4b4586dab4521f311ee2c75e3",
+  "runtime_receipt_sha256": "7d51991e799c93762d93b74e19381856a177dda5c33a4c5541607716a1668cee",
+  "production_authorized": false,
+  "mainnet_authorized": false,
+  "activation_authorized": false,
+  "public_cutover_authorized": false,
+  "deployment_verified": false,
+  "physical_asic_qualified": false,
+  "limitations": [
+    "Accepts only the exact frozen v8 software source, exported actual08 local-rehearsal evidence and six reviewed future qualification commands. This is a new v8 scope decision, not relabeled v7 acceptance or final artifact, release, deployment or activation acceptance.",
+    "This independent bounded model review used source and exported public data, read-only evidence predicates, wire decoding and hash/arithmetic checks. The reviewer did not run builds, tests, native proofs, nodes or the rehearsal and did not open private fixture, raw-run, wallet/database, seed or witness files.",
+    "New exact-head full CI and all required four targets' actual ordinary final proof verification, isolated H0 checks and six affected suite executions remain mandatory separate receipts; this decision does not assert that those v8 gates passed.",
+    "The Windows Git Bash resolver was reviewed through source and mock-test inspection. This same-host runtime rehearsal does not exercise that Windows branch; actual new-head Windows execution is still required.",
+    "Runtime evidence is a default-off Development H120 rehearsal on one host and clock. Same-owner HTLC and cloned-wallet race evidence does not establish independent refund custody, public-network operation or sustained proving throughput.",
+    "Executable identities are bound to public recorded hashes and actual argv in this public-only final pass; external executable files were not rehashed here. Source/harness records and process observations are not hermetic compiler or build-input attestation.",
+    "Unchanged proof inputs and locked dependencies preserve identity, not a new soundness proof. Finite formal/vector/source/runtime evidence does not establish general compiled Rust refinement or whole-chain/network guarantees. Bounded public framing inspection is not universal secret detection, and separate content review is not claimed as this reviewer's work.",
+    "A compiled activation-height change requires a replacement freeze and affected requalification. Release publication, operator rollout, mainnet genesis/bootstrap, deployment, activation and physical ASIC model/firmware qualification remain outside this decision."
+  ]
+}

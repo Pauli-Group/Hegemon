@@ -6,14 +6,101 @@ import json
 from pathlib import Path, PureWindowsPath
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 spec = importlib.util.spec_from_file_location('producer', Path(__file__).with_name('qualify_combined_upgrade.py'))
 p = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(p)
 
 
+def windows_paths_with_files(files):
+    class InstalledWindowsPath(PureWindowsPath):
+        def is_file(self):
+            return str(self) in files
+    return InstalledWindowsPath
+
+
 class ProducerTests(unittest.TestCase):
+    def test_windows_bash_resolves_from_standard_git_layouts(self):
+        root = PureWindowsPath('C:/Program Files/Git')
+        bash = str(root / 'bin/bash.exe')
+        argv = ['bash', 'scripts/check_asert_formal.sh']
+        for layout in ('cmd/git.exe', 'bin/git.exe', 'mingw64/bin/git.exe', 'mingw32/bin/git.exe'):
+            with self.subTest(layout=layout):
+                with patch.object(p.os, 'name', 'nt'), \
+                        patch.object(p, 'Path', windows_paths_with_files({bash})), \
+                        patch.object(p.shutil, 'which', return_value=str(root / layout)) as which:
+                    self.assertEqual(p.qualification_argv(argv), [bash, argv[1]])
+                which.assert_called_once_with('git.exe')
+                self.assertEqual(argv, ['bash', 'scripts/check_asert_formal.sh'])
+
+    def test_windows_bash_accepts_git_lookup_and_git_usr_bin_layout(self):
+        root = PureWindowsPath('D:/Installed Git')
+        git = str(root / 'cmd/git.exe')
+        bash = str(root / 'usr/bin/bash.exe')
+        with patch.object(p.os, 'name', 'nt'), \
+                patch.object(p, 'Path', windows_paths_with_files({bash})), \
+                patch.object(p.shutil, 'which', side_effect=(None, git)) as which:
+            self.assertEqual(p.qualification_argv(['bash', 'fixture.sh']), [bash, 'fixture.sh'])
+        self.assertEqual(which.call_args_list, [call('git.exe'), call('git')])
+
+    def test_windows_command_launch_records_explicit_git_bash_and_preserves_arguments(self):
+        root = PureWindowsPath('C:/Program Files/Git')
+        bash = str(root / 'bin/bash.exe')
+        argv = ['bash', 'scripts/check_asert_formal.sh', 'literal argument with spaces']
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            with patch.object(p, 'ROOT', base), patch.object(p.os, 'name', 'nt'), \
+                    patch.object(p, 'Path', windows_paths_with_files({bash})), \
+                    patch.object(p.shutil, 'which', return_value=str(root / 'cmd/git.exe')), \
+                    patch.object(p.subprocess, 'CREATE_NEW_PROCESS_GROUP', 512, create=True), \
+                    patch.object(p.subprocess, 'Popen') as popen:
+                process = popen.return_value
+                process.returncode = 0
+                process.communicate.return_value = (b'synthetic shell output\r\n', b'')
+                result = p.run_command(argv, base, timeout=901)
+            self.assertEqual(popen.call_args.args[0], [bash, *argv[1:]])
+            self.assertEqual(result['argv'], [bash, *argv[1:]])
+            self.assertNotEqual(result['argv'][0], 'bash')
+            self.assertEqual(popen.call_args.kwargs['creationflags'], 512)
+            self.assertNotIn('shell', popen.call_args.kwargs)
+            self.assertEqual(popen.call_args.kwargs['env'].get('PATH'), p.os.environ.get('PATH'))
+            process.communicate.assert_called_once_with(timeout=901)
+            self.assertEqual((base / result['log']).read_bytes(), b'synthetic shell output\r\n')
+        self.assertEqual(argv, ['bash', 'scripts/check_asert_formal.sh', 'literal argument with spaces'])
+
+    def test_windows_missing_git_bash_fails_before_process_launch(self):
+        git = 'C:/Program Files/Git/cmd/git.exe'
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            with patch.object(p.os, 'name', 'nt'), \
+                    patch.object(p, 'Path', windows_paths_with_files(set())), \
+                    patch.object(p.shutil, 'which', return_value=git), \
+                    patch.object(p.subprocess, 'Popen') as popen:
+                with self.assertRaisesRegex(RuntimeError, 'Git for Windows Bash.*bash.exe is missing'):
+                    p.run_command(['bash', 'scripts/check_asert_formal.sh'], base)
+            popen.assert_not_called()
+            self.assertEqual(list(base.iterdir()), [])
+
+    def test_windows_missing_or_unrecognized_git_does_not_fall_back_to_wsl(self):
+        for git in (None, 'Git/cmd/git.exe', 'C:/Windows/System32/git.exe'):
+            with self.subTest(git=git):
+                with patch.object(p.os, 'name', 'nt'), \
+                        patch.object(p, 'Path', windows_paths_with_files(set())), \
+                        patch.object(p.shutil, 'which', return_value=git) as which:
+                    with self.assertRaisesRegex(RuntimeError, 'Windows qualification requires Git for Windows Bash'):
+                        p.qualification_argv(['bash', 'scripts/check_asert_formal.sh'])
+                self.assertTrue(all(entry.args[0] in ('git.exe', 'git') for entry in which.call_args_list))
+
+    def test_posix_and_nonbash_commands_preserve_original_argv(self):
+        for platform, argv in (('posix', ['bash', 'scripts/check_asert_formal.sh']),
+                ('nt', ['cargo', 'check']), ('nt', ['C:/Program Files/Git/bin/bash.exe', 'fixture.sh']),
+                ('nt', [])):
+            with self.subTest(platform=platform, argv=argv):
+                with patch.object(p.os, 'name', platform), patch.object(p.shutil, 'which') as which:
+                    self.assertIs(p.qualification_argv(argv), argv)
+                which.assert_not_called()
+
     def test_unittest_crlf_success_and_nonexact_or_failed_results(self):
         p.unittest_output(b'.\r\n----------------------------------------------------------------------\r\nRan 1 test in 0.01s\r\n\r\nOK\r\n')
         p.unittest_output(b'.\nRan 1 test in 0.01s\n\nOK\n')

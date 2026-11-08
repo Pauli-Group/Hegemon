@@ -1,0 +1,261 @@
+{
+  "action_sha256": "a2eade0619b59ef02b42297da8de43ce62af8f96c867d09bb6b6e11ac8dc60eb",
+  "actual_independent_adoption": {
+    "header": {
+      "chainId": "0xa6ddd1817d8c6987d584214ea5e393cbd0f96d138acc0aa216db4f7618be30f0",
+      "cumulativeWork": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000054bb9f94",
+      "daBlobLen": 4,
+      "daChunkCount": 2,
+      "daChunkSize": 1024,
+      "daRoot": "0xc2ef72b7d99eeb184f7f2d57cce3f28ccee45c6c91ef2ea6d8c70a819809b3c3212c719ac735cb3b59914c05e4c3b4a7",
+      "daSampleCount": 4,
+      "digest": {
+        "logs": []
+      },
+      "extrinsicsRoot": "0x1bf3c0934f4978afc7f26ab101d8056aaa8ec04d35e4d40990e14d49ce4e74f3",
+      "headerMmrLen": 318,
+      "headerMmrRoot": "0x122f2a359bcff14301f07cdbe90c461286f82140064420c34d123fcd062a195f",
+      "kernelRoot": "0xc635167beb366100d847781206f8c7640d30f0df6fd068c46b82ad9fab60bdaca3a66e2bef330f98f1c5b6a95491f0c7",
+      "messageCount": 0,
+      "messageRoot": "0x71c0958a44cea9e2a023fbfbb14e065d621fe6452c75d34ebb299a846172915b4ed441a41a527e154f48a803e6cfb96c",
+      "miningVersion": 536870944,
+      "nonce": "0xe2602f0100000000000000000000000000000000000000000000000000000000",
+      "nullifierRoot": "0x9f43711f94a1b90522bc65c323abf73d106c3dcf9413c606cb90cf3522ad3c8b6bc7335f5a7b08ec644688b6c20e27f9",
+      "number": "0x13e",
+      "parentHash": "0x000000a125faa863b332181cf48b9c9ad76ac02ddece97c0b7be9d7a3d06ec9f",
+      "powBits": 503393513,
+      "rulesHash": "0xec304529f49e7ddc777e0ca78b189acec753d4fb18aafe15761e686ea3596b7f",
+      "stateRoot": "0x1d6f3c65c8bc2ed3737d11a0ecfb08d0453507f4675ad4cf6981493412653286"
+    },
+    "nodes": [
+      "A",
+      "B",
+      "F"
+    ],
+    "observed_clock_ms": [
+      1794169334994,
+      1794169334995,
+      1794169334997
+    ],
+    "status": {
+      "best_hash": "0x000000b0a273d4d1e543a102f8053f1009650a456a9c764bea27d2c35d9735fb",
+      "height": 318,
+      "nullifier_root": "0x9f43711f94a1b90522bc65c323abf73d106c3dcf9413c606cb90cf3522ad3c8b6bc7335f5a7b08ec644688b6c20e27f9",
+      "state_root": "0x2a8a72dffb6beeff14bdf83547cba1705c22dc905a78e34efdada47daebc71a643db3c869586c5512f4642735beac5c6",
+      "supply_digest": 157100002000
+    }
+  },
+  "all_reference_and_nullifier_checks_unchanged": true,
+  "attempt_id": "200d8bef5cbfacbb7e1e55b01afbe64ea92877e41657e89440144258a8b5aa5d",
+  "candidate": "claim",
+  "canonical_reference_hash": "0x0000011bd58fc21df2dd1cec3b772dbbfd18858dfe100356416791370a2ed2fe",
+  "canonical_reference_height": 315,
+  "carrier_sha256": "bf5d2abfd7b4d5b14a3891aecfd38c19c1caa784c346acee5e530010d7eb7d54",
+  "cold_prefix": {
+    "path": "owned-cold-fork-prefix.json",
+    "reference": {
+      "best_hash": "0x0000011bd58fc21df2dd1cec3b772dbbfd18858dfe100356416791370a2ed2fe",
+      "height": 315,
+      "nullifier_root": "0x9f43711f94a1b90522bc65c323abf73d106c3dcf9413c606cb90cf3522ad3c8b6bc7335f5a7b08ec644688b6c20e27f9",
+      "state_root": "0x2a8a72dffb6beeff14bdf83547cba1705c22dc905a78e34efdada47daebc71a643db3c869586c5512f4642735beac5c6",
+      "supply_digest": 155900002000
+    },
+    "sha256": "cfe2fa2dc8dea6adc32d1ce63b0d551ff355e49a6722aea934582ac9dbac7e19"
+  },
+  "fork_work_exceeds_old": true,
+  "higher_work_fork": {
+    "header": {
+      "chainId": "0xa6ddd1817d8c6987d584214ea5e393cbd0f96d138acc0aa216db4f7618be30f0",
+      "cumulativeWork": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000054bb9f94",
+      "daBlobLen": 4,
+      "daChunkCount": 2,
+      "daChunkSize": 1024,
+      "daRoot": "0xc2ef72b7d99eeb184f7f2d57cce3f28ccee45c6c91ef2ea6d8c70a819809b3c3212c719ac735cb3b59914c05e4c3b4a7",
+      "daSampleCount": 4,
+      "digest": {
+        "logs": []
+      },
+      "extrinsicsRoot": "0x1bf3c0934f4978afc7f26ab101d8056aaa8ec04d35e4d40990e14d49ce4e74f3",
+      "headerMmrLen": 318,
+      "headerMmrRoot": "0x122f2a359bcff14301f07cdbe90c461286f82140064420c34d123fcd062a195f",
+      "kernelRoot": "0xc635167beb366100d847781206f8c7640d30f0df6fd068c46b82ad9fab60bdaca3a66e2bef330f98f1c5b6a95491f0c7",
+      "messageCount": 0,
+      "messageRoot": "0x71c0958a44cea9e2a023fbfbb14e065d621fe6452c75d34ebb299a846172915b4ed441a41a527e154f48a803e6cfb96c",
+      "miningVersion": 536870944,
+      "nonce": "0xe2602f0100000000000000000000000000000000000000000000000000000000",
+      "nullifierRoot": "0x9f43711f94a1b90522bc65c323abf73d106c3dcf9413c606cb90cf3522ad3c8b6bc7335f5a7b08ec644688b6c20e27f9",
+      "number": "0x13e",
+      "parentHash": "0x000000a125faa863b332181cf48b9c9ad76ac02ddece97c0b7be9d7a3d06ec9f",
+      "powBits": 503393513,
+      "rulesHash": "0xec304529f49e7ddc777e0ca78b189acec753d4fb18aafe15761e686ea3596b7f",
+      "stateRoot": "0x1d6f3c65c8bc2ed3737d11a0ecfb08d0453507f4675ad4cf6981493412653286"
+    },
+    "nodes": [
+      "F"
+    ],
+    "observed_clock_ms": [
+      1794169286922
+    ],
+    "status": {
+      "best_hash": "0x000000b0a273d4d1e543a102f8053f1009650a456a9c764bea27d2c35d9735fb",
+      "height": 318,
+      "nullifier_root": "0x9f43711f94a1b90522bc65c323abf73d106c3dcf9413c606cb90cf3522ad3c8b6bc7335f5a7b08ec644688b6c20e27f9",
+      "state_root": "0x2a8a72dffb6beeff14bdf83547cba1705c22dc905a78e34efdada47daebc71a643db3c869586c5512f4642735beac5c6",
+      "supply_digest": 157100002000
+    }
+  },
+  "identical_action_resubmitted": true,
+  "old_inclusion": {
+    "action_sha256": "a2eade0619b59ef02b42297da8de43ce62af8f96c867d09bb6b6e11ac8dc60eb",
+    "block_hash": "0x000000f11b733078065065c8255890bf003cfb02acac8bd724db5d8d7a3b11f8",
+    "canonical_body_sha256": "d14e2463a701666bd4e260b3dd788ed4dadc81827b1f0375497aa5ec6659c64b",
+    "exact_pending_and_mined_bytes": true,
+    "height": 316,
+    "node_agreement": {
+      "header": {
+        "chainId": "0xa6ddd1817d8c6987d584214ea5e393cbd0f96d138acc0aa216db4f7618be30f0",
+        "cumulativeWork": "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000530a3193",
+        "daBlobLen": 4,
+        "daChunkCount": 2,
+        "daChunkSize": 1024,
+        "daRoot": "0xc2ef72b7d99eeb184f7f2d57cce3f28ccee45c6c91ef2ea6d8c70a819809b3c3212c719ac735cb3b59914c05e4c3b4a7",
+        "daSampleCount": 4,
+        "digest": {
+          "logs": []
+        },
+        "extrinsicsRoot": "0xeef1da28dc1fe42bde4f832bb656461463f1635d521f36a96ec492eb18a33887",
+        "headerMmrLen": 316,
+        "headerMmrRoot": "0x2c03ddb8c2b8ec137ce18c23a76b12ea0e408b7ff49911c096182ebaffea60f1",
+        "kernelRoot": "0xc635167beb366100d847781206f8c7640d30f0df6fd068c46b82ad9fab60bdaca3a66e2bef330f98f1c5b6a95491f0c7",
+        "messageCount": 0,
+        "messageRoot": "0x71c0958a44cea9e2a023fbfbb14e065d621fe6452c75d34ebb299a846172915b4ed441a41a527e154f48a803e6cfb96c",
+        "miningVersion": 536870944,
+        "nonce": "0xa551290000000000000000000000000000000000000000000000000000000000",
+        "nullifierRoot": "0x9f43711f94a1b90522bc65c323abf73d106c3dcf9413c606cb90cf3522ad3c8b6bc7335f5a7b08ec644688b6c20e27f9",
+        "number": "0x13c",
+        "parentHash": "0x0000011bd58fc21df2dd1cec3b772dbbfd18858dfe100356416791370a2ed2fe",
+        "powBits": 503392001,
+        "rulesHash": "0xec304529f49e7ddc777e0ca78b189acec753d4fb18aafe15761e686ea3596b7f",
+        "stateRoot": "0x1d6f3c65c8bc2ed3737d11a0ecfb08d0453507f4675ad4cf6981493412653286"
+      },
+      "nodes": [
+        "A",
+        "B"
+      ],
+      "observed_clock_ms": [
+        1794169218233,
+        1794169218235
+      ],
+      "status": {
+        "best_hash": "0x000000f11b733078065065c8255890bf003cfb02acac8bd724db5d8d7a3b11f8",
+        "height": 316,
+        "nullifier_root": "0x9f43711f94a1b90522bc65c323abf73d106c3dcf9413c606cb90cf3522ad3c8b6bc7335f5a7b08ec644688b6c20e27f9",
+        "state_root": "0x2a8a72dffb6beeff14bdf83547cba1705c22dc905a78e34efdada47daebc71a643db3c869586c5512f4642735beac5c6",
+        "supply_digest": 156300003000
+      }
+    }
+  },
+  "old_tip": {
+    "header": {
+      "chainId": "0xa6ddd1817d8c6987d584214ea5e393cbd0f96d138acc0aa216db4f7618be30f0",
+      "cumulativeWork": "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000530a3193",
+      "daBlobLen": 4,
+      "daChunkCount": 2,
+      "daChunkSize": 1024,
+      "daRoot": "0xc2ef72b7d99eeb184f7f2d57cce3f28ccee45c6c91ef2ea6d8c70a819809b3c3212c719ac735cb3b59914c05e4c3b4a7",
+      "daSampleCount": 4,
+      "digest": {
+        "logs": []
+      },
+      "extrinsicsRoot": "0xeef1da28dc1fe42bde4f832bb656461463f1635d521f36a96ec492eb18a33887",
+      "headerMmrLen": 316,
+      "headerMmrRoot": "0x2c03ddb8c2b8ec137ce18c23a76b12ea0e408b7ff49911c096182ebaffea60f1",
+      "kernelRoot": "0xc635167beb366100d847781206f8c7640d30f0df6fd068c46b82ad9fab60bdaca3a66e2bef330f98f1c5b6a95491f0c7",
+      "messageCount": 0,
+      "messageRoot": "0x71c0958a44cea9e2a023fbfbb14e065d621fe6452c75d34ebb299a846172915b4ed441a41a527e154f48a803e6cfb96c",
+      "miningVersion": 536870944,
+      "nonce": "0xa551290000000000000000000000000000000000000000000000000000000000",
+      "nullifierRoot": "0x9f43711f94a1b90522bc65c323abf73d106c3dcf9413c606cb90cf3522ad3c8b6bc7335f5a7b08ec644688b6c20e27f9",
+      "number": "0x13c",
+      "parentHash": "0x0000011bd58fc21df2dd1cec3b772dbbfd18858dfe100356416791370a2ed2fe",
+      "powBits": 503392001,
+      "rulesHash": "0xec304529f49e7ddc777e0ca78b189acec753d4fb18aafe15761e686ea3596b7f",
+      "stateRoot": "0x1d6f3c65c8bc2ed3737d11a0ecfb08d0453507f4675ad4cf6981493412653286"
+    },
+    "nodes": [
+      "A",
+      "B"
+    ],
+    "observed_clock_ms": [
+      1794169220387,
+      1794169220389
+    ],
+    "status": {
+      "best_hash": "0x000000f11b733078065065c8255890bf003cfb02acac8bd724db5d8d7a3b11f8",
+      "height": 316,
+      "nullifier_root": "0x9f43711f94a1b90522bc65c323abf73d106c3dcf9413c606cb90cf3522ad3c8b6bc7335f5a7b08ec644688b6c20e27f9",
+      "state_root": "0x2a8a72dffb6beeff14bdf83547cba1705c22dc905a78e34efdada47daebc71a643db3c869586c5512f4642735beac5c6",
+      "supply_digest": 156300003000
+    }
+  },
+  "original_inclusion_detached": true,
+  "proof_sha256": "76b18f3ce897677ef7ec7b3123c43b21c3ce7d198482d4b62d0f60681fc53c9a",
+  "reexport_after_reorg": {
+    "path": "claim-after-reorg.action",
+    "sha256": "a2eade0619b59ef02b42297da8de43ce62af8f96c867d09bb6b6e11ac8dc60eb"
+  },
+  "reinclusion": {
+    "action_body_hash": "0xc67b10ad85a45c332acfa7eb05ab78401cde00e435bd9a53e88f4f5f5f33d230d8ee23640089173b4385f86105b1aa0d",
+    "action_sha256": "a2eade0619b59ef02b42297da8de43ce62af8f96c867d09bb6b6e11ac8dc60eb",
+    "block_hash": "0x00000002213c4b80f0e4ab9bdebfa3599fdfff3f26c27437087b9953748d119d",
+    "canonical_body_sha256": "f9b51d8c7303fd5a22d95bd6cd167a708669756998d6eab5d46ce141fd22bcbc",
+    "exact_pending_and_mined_bytes": true,
+    "height": 319,
+    "node_agreement": {
+      "header": {
+        "chainId": "0xa6ddd1817d8c6987d584214ea5e393cbd0f96d138acc0aa216db4f7618be30f0",
+        "cumulativeWork": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000005596cdef",
+        "daBlobLen": 4,
+        "daChunkCount": 2,
+        "daChunkSize": 1024,
+        "daRoot": "0xc2ef72b7d99eeb184f7f2d57cce3f28ccee45c6c91ef2ea6d8c70a819809b3c3212c719ac735cb3b59914c05e4c3b4a7",
+        "daSampleCount": 4,
+        "digest": {
+          "logs": []
+        },
+        "extrinsicsRoot": "0xba7eadae6ff3eff8376823f251a1d6f26b7784745bd543be38147cee9ea15451",
+        "headerMmrLen": 319,
+        "headerMmrRoot": "0xa2a2f185159e9e821a53838575e48fb44d38b02dc00110a854225ee37482dbb8",
+        "kernelRoot": "0xc635167beb366100d847781206f8c7640d30f0df6fd068c46b82ad9fab60bdaca3a66e2bef330f98f1c5b6a95491f0c7",
+        "messageCount": 0,
+        "messageRoot": "0x71c0958a44cea9e2a023fbfbb14e065d621fe6452c75d34ebb299a846172915b4ed441a41a527e154f48a803e6cfb96c",
+        "miningVersion": 536870912,
+        "nonce": "0xebeabf0000000000000000000000000000000000000000000000000000000000",
+        "nullifierRoot": "0x9f43711f94a1b90522bc65c323abf73d106c3dcf9413c606cb90cf3522ad3c8b6bc7335f5a7b08ec644688b6c20e27f9",
+        "number": "0x13f",
+        "parentHash": "0x000000b0a273d4d1e543a102f8053f1009650a456a9c764bea27d2c35d9735fb",
+        "powBits": 503393025,
+        "rulesHash": "0xec304529f49e7ddc777e0ca78b189acec753d4fb18aafe15761e686ea3596b7f",
+        "stateRoot": "0x1d6f3c65c8bc2ed3737d11a0ecfb08d0453507f4675ad4cf6981493412653286"
+      },
+      "nodes": [
+        "A",
+        "B",
+        "F"
+      ],
+      "observed_clock_ms": [
+        1794169355875,
+        1794169355877,
+        1794169355878
+      ],
+      "status": {
+        "best_hash": "0x00000002213c4b80f0e4ab9bdebfa3599fdfff3f26c27437087b9953748d119d",
+        "height": 319,
+        "nullifier_root": "0x9f43711f94a1b90522bc65c323abf73d106c3dcf9413c606cb90cf3522ad3c8b6bc7335f5a7b08ec644688b6c20e27f9",
+        "state_root": "0x2a8a72dffb6beeff14bdf83547cba1705c22dc905a78e34efdada47daebc71a643db3c869586c5512f4642735beac5c6",
+        "supply_digest": 157500003000
+      }
+    }
+  },
+  "wallet_mined_receipt_rolled_back": true
+}
