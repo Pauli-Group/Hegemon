@@ -411,6 +411,25 @@ def main() -> None:
 
     ci_workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     policy.check_ci_workflow(ROOT / ".github/workflows/ci.yml")
+    ci_release_binary_timeout = (
+        "  release-binaries:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    timeout-minutes: 120\n"
+    )
+    for label, replacement in (
+        ("30-minute regression", "    timeout-minutes: 30\n"),
+        ("missing", ""),
+        ("overlarge", "    timeout-minutes: 360\n"),
+        ("overlarge numeric prefix", "    timeout-minutes: 1200\n"),
+        ("duplicate", "    timeout-minutes: 120\n    timeout-minutes: 120\n"),
+        ("step-level substitution", "      timeout-minutes: 120\n"),
+    ):
+        expect_workflow_rejected(
+            "current CI release-binaries timeout " + label,
+            policy.check_ci_workflow,
+            replace_once(ci_workflow, ci_release_binary_timeout,
+                         ci_release_binary_timeout.replace("    timeout-minutes: 120\n", replacement)),
+        )
     strict_binary_commands = (
         "python3 -I -B scripts/test_check_v011_crypto_consumer.py",
         "python3 -I -B scripts/materialize_v011_predecessor.py --reserve-bytes 4294967296",

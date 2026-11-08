@@ -15,5 +15,6 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Reject research dependencies in production authority
         run: bash scripts/check_formal_crypto.sh --isolation-only

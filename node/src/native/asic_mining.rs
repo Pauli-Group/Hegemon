@@ -7,7 +7,8 @@
 
 use super::*;
 use consensus_light_client::{
-    bitcoin80_coinbase_prefix, bitcoin80_header, bitcoin80_work_hash, BITCOIN80_COINBASE_SUFFIX,
+    bitcoin80_coinbase_prefix, bitcoin80_header_with_version, bitcoin80_work_hash_with_version,
+    BITCOIN80_COINBASE_SUFFIX,
 };
 
 const BITCOIN_ASIC_JOB_TTL: Duration = Duration::from_secs(120);
@@ -72,12 +73,13 @@ fn parse_u32_field(request: &Value, name: &str) -> Result<u32> {
 
 fn job_response(job_id: &str, job: &BitcoinAsicJob) -> Result<Value> {
     let work = &job.work;
-    let header = bitcoin80_header(
+    let header = bitcoin80_header_with_version(
         &work.pre_hash,
         &work.parent_hash,
         work.timestamp_ms,
         work.pow_bits,
         [0u8; 32],
+        work.mining_version,
     )
     .map_err(|err| anyhow!("ASIC work header construction failed: {err:?}"))?;
     let target = consensus_light_client::compact_to_target(work.pow_bits)
@@ -90,7 +92,10 @@ fn job_response(job_id: &str, job: &BitcoinAsicJob) -> Result<Value> {
         "job_id": job_id,
         "height": work.height,
         "parent_hash": hex32(&work.parent_hash),
-        "version": format!("{BITCOIN80_VERSION:08x}"),
+        "version": format!("{:08x}", work.mining_version),
+        "version_rolling_mask": format!("{:08x}", if native_mining_version_rolling_active(
+            &job.chain_id, work.height
+        ) { consensus_light_client::BITCOIN80_VERSION_ROLLING_MASK } else { 0 }),
         "ntime": format!("{ntime:08x}"),
         "nbits": format!("{:08x}", work.pow_bits),
         "target": hex32(&target),
@@ -125,13 +130,52 @@ impl NativeNode {
         };
         if let Some((id, job)) = prior {
             let state = self.state.read();
-            if job.pending_generation == pending_generation && asic_job_valid_for_tip(&job, &state)
+            if job.pending_generation == pending_generation
+                && asic_job_valid_for_tip(&job, &state)
+                && validate_native_fresh_timestamp_at(
+                    job.work.timestamp_ms,
+                    native_admission_time_ms(),
+                )
+                .is_ok()
             {
                 return job_response(&id, &job);
             }
         }
 
-        let (work, pending_generation) = self.prepare_asic_work()?;
+        let (work, pending_generation) = match self.prepare_asic_work() {
+            Ok(prepared) => prepared,
+            Err(error) if error.downcast_ref::<NativeFutureTimestamp>().is_some() => {
+                // Retain original jobs and expiries during a clock rollback.
+                // No future-dated job is newly issued; the adapter may retain
+                // an already found same-parent solution until it is timely.
+                let retained_jobs = {
+                    let mut cache = self.bitcoin_asic_jobs.lock();
+                    cache.prune();
+                    cache
+                        .jobs
+                        .iter()
+                        .map(|(id, job)| (id.clone(), job.clone()))
+                        .collect::<Vec<_>>()
+                };
+                let state = self.state.read();
+                let retained_job_ids = retained_jobs
+                    .into_iter()
+                    .filter(|(_, job)| {
+                        job.chain_id == self.config.chain_id()
+                            && asic_job_valid_for_tip(job, &state)
+                    })
+                    .map(|(id, _)| id)
+                    .collect::<Vec<_>>();
+                return Ok(json!({
+                    "available": false,
+                    "reason": NATIVE_TEMPORARY_FUTURE_WORK_REASON,
+                    "reason_code": "future_timestamp",
+                    "parent_hash": hex32(&state.best.hash),
+                    "retained_job_ids": retained_job_ids,
+                }));
+            }
+            Err(error) => return Err(error),
+        };
         if self.pending_action_generation.load(Ordering::Acquire) != pending_generation {
             return Err(anyhow!(
                 "ASIC work pending-action state changed before issuance; retry"
@@ -141,6 +185,7 @@ impl NativeNode {
             let state = self.state.read();
             if !asic_job_valid_for_tip(
                 &BitcoinAsicJob {
+                    chain_id: self.config.chain_id(),
                     work: work.clone(),
                     created_at: Instant::now(),
                     pending_generation,
@@ -154,6 +199,7 @@ impl NativeNode {
         OsRng.fill_bytes(&mut random_id);
         let id = hex::encode(random_id);
         let job = BitcoinAsicJob {
+            chain_id: self.config.chain_id(),
             work,
             created_at: Instant::now(),
             pending_generation,
@@ -214,12 +260,23 @@ impl NativeNode {
                 ));
             }
         }
-        let work_hash = bitcoin80_work_hash(
+        let mining_version = if request.contains_key("mining_version") {
+            parse_u32_field(&params, "mining_version")?
+        } else {
+            BITCOIN80_VERSION
+        };
+        consensus_light_client::bitcoin80_validate_mining_version(
+            mining_version,
+            native_mining_version_rolling_active(&job.chain_id, job.work.height),
+        )
+        .map_err(|err| anyhow!("ASIC mining version invalid: {err:?}"))?;
+        let work_hash = bitcoin80_work_hash_with_version(
             &job.work.pre_hash,
             &job.work.parent_hash,
             job.work.timestamp_ms,
             job.work.pow_bits,
             nonce,
+            mining_version,
         )
         .map_err(|err| anyhow!("ASIC solution header invalid: {err:?}"))?;
         if !native_seal_meets_target(&work_hash, job.work.pow_bits) {
@@ -231,7 +288,17 @@ impl NativeNode {
             .block_import_semaphore
             .try_acquire()
             .map_err(|_| anyhow!("ASIC block import busy; retry solution"))?;
-        let imported = self.import_mined_block(&job.work, NativeSeal { nonce, work_hash })?;
+        let mut submitted_work = job.work.clone();
+        submitted_work.mining_version = mining_version;
+        let imported = self
+            .import_mined_block(&submitted_work, NativeSeal { nonce, work_hash })
+            .map_err(|error| {
+                if error.downcast_ref::<NativeFutureTimestamp>().is_some() {
+                    anyhow!(NATIVE_ASIC_FUTURE_SOLUTION_MESSAGE)
+                } else {
+                    error
+                }
+            })?;
         let Some(meta) = imported else {
             return Err(anyhow!("ASIC solution became stale during block import"));
         };

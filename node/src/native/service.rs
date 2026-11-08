@@ -21,7 +21,9 @@ pub async fn run(cli: NativeCli) -> Result<()> {
             || cli.network_manifest.is_some()
             || cli.development_candidate
         {
-            return Err(anyhow!("development candidate manifest generation accepts no other network, manifest, or candidate opt-in flags"));
+            return Err(anyhow!(
+                "development candidate manifest generation accepts no other network, manifest, or candidate opt-in flags"
+            ));
         }
         let address = cli.development_funding_address.as_deref().ok_or_else(|| {
             anyhow!("manifest generation requires --development-funding-address FULL_V8_ADDRESS")
@@ -415,7 +417,9 @@ pub(crate) fn validate_native_block_body_locator_for_chain(
     if locator.chain_id != expected_chain_id {
         return Err(anyhow!("native block body locator chain id mismatch"));
     }
-    if locator.rules_hash != HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE {
+    if locator.rules_hash
+        != consensus_light_client::native_rules_hash(&locator.chain_id, locator.height)
+    {
         return Err(anyhow!("native block body locator rules hash mismatch"));
     }
     let total_len = usize::try_from(locator.total_len)
@@ -1491,7 +1495,8 @@ impl NativeBlockBodySendCache {
             return Ok(encoded);
         }
         if meta.chain_id != self.expected_chain_id
-            || meta.rules_hash != HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE
+            || meta.rules_hash
+                != consensus_light_client::native_rules_hash(&meta.chain_id, meta.height)
         {
             return Err(anyhow!(
                 "requested native block does not use active chain/rules"
@@ -2286,7 +2291,7 @@ async fn handle_native_block_announce(
     sync_tx: &ProtocolSender,
     peer_id: PeerId,
     meta: NativeBlockMeta,
-) {
+) -> Option<NativeBlockMeta> {
     let announced_tip = NativeForkChoiceTip {
         height: meta.height,
         hash: meta.hash,
@@ -2306,13 +2311,14 @@ async fn handle_native_block_announce(
         Ok(permit) => permit,
         Err(_) => {
             warn!("native block import semaphore closed");
-            return;
+            return None;
         }
     };
     let import_node = Arc::clone(node);
     let imported = tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        import_node.import_announced_block(meta)
+        let result = import_node.import_announced_block(&meta);
+        (result, meta)
     })
     .await;
     let imported = match imported {
@@ -2325,9 +2331,18 @@ async fn handle_native_block_announce(
                 error = %err,
                 "native block announce import worker failed"
             );
-            return;
+            return None;
         }
     };
+    let (imported, meta) = imported;
+    if imported
+        .as_ref()
+        .is_err_and(native_asert_resolution_deferred)
+    {
+        debug!(peer = %hex32(&peer_id), height = announced_height,
+            "deferring native announce for bounded local ASERT ancestry work");
+        return Some(meta);
+    }
     match imported {
         Ok(true) => {
             node.observe_verified_sync_peer_tip(
@@ -2380,7 +2395,7 @@ async fn handle_native_block_announce(
                         "ignored unverified non-winning native sync announce"
                     );
                 }
-                return;
+                return None;
             }
             if let Some(observed_height) =
                 native_mining_sync_observed_peer_height(NativeMiningSyncEvidenceInput {
@@ -2422,6 +2437,7 @@ async fn handle_native_block_announce(
             );
         }
     }
+    None
 }
 
 pub(crate) fn admit_known_native_block_locator(
@@ -3203,7 +3219,7 @@ struct NativeQueuedSyncRangeLoad {
 pub(crate) struct NativeSyncRangeLoadQueue {
     waiting: VecDeque<NativeQueuedSyncRangeLoad>,
     outstanding_peers: BTreeSet<PeerId>,
-    active_peers: BTreeSet<PeerId>,
+    active_peers: BTreeMap<PeerId, NativeSyncRange>,
     active: usize,
     reserved_bytes: usize,
 }
@@ -3237,23 +3253,45 @@ impl NativeSyncRangeLoadQueue {
             return None;
         }
         let job = self.waiting.pop_front()?;
-        if !self.active_peers.insert(job.peer_id) {
+        if self.active_peers.contains_key(&job.peer_id) {
+            self.waiting.push_front(job);
             return None;
         }
+        self.active_peers.insert(job.peer_id, job.range);
         self.active = self.active.saturating_add(1);
         self.reserved_bytes = next_reserved;
         Some(job)
     }
 
-    fn finish(&mut self, peer_id: PeerId) {
-        if !self.active_peers.remove(&peer_id) {
-            return;
+    fn release_active(&mut self, peer_id: PeerId, range: NativeSyncRange) -> bool {
+        if self.active_peers.get(&peer_id) != Some(&range) {
+            return false;
         }
+        self.active_peers.remove(&peer_id);
         self.active = self.active.saturating_sub(1);
         self.reserved_bytes = self
             .reserved_bytes
             .saturating_sub(NATIVE_SYNC_RANGE_LOAD_RESERVATION_BYTES);
+        true
+    }
+
+    fn finish(&mut self, peer_id: PeerId, range: NativeSyncRange) -> bool {
+        if !self.release_active(peer_id, range) {
+            return false;
+        }
         self.outstanding_peers.remove(&peer_id);
+        true
+    }
+
+    fn finish_and_requeue(&mut self, peer_id: PeerId, range: NativeSyncRange) -> bool {
+        if !self.release_active(peer_id, range) {
+            return false;
+        }
+        // The original admission remains owned while this same range waits.
+        // Only its active worker and materialized-byte reservation are released.
+        self.waiting
+            .push_back(NativeQueuedSyncRangeLoad { peer_id, range });
+        true
     }
 
     #[cfg(test)]
@@ -3263,7 +3301,9 @@ impl NativeSyncRangeLoadQueue {
 
     #[cfg(test)]
     pub(crate) fn finish_for_test(&mut self, peer_id: PeerId) {
-        self.finish(peer_id);
+        if let Some(range) = self.active_peers.get(&peer_id).copied() {
+            self.finish(peer_id, range);
+        }
     }
 
     #[cfg(test)]
@@ -3291,6 +3331,7 @@ impl NativeSyncRangeLoadQueue {
 struct NativeSyncRangeLoadCompletion {
     peer_id: PeerId,
     range: NativeSyncRange,
+    deferred: bool,
 }
 
 fn pump_native_sync_range_load_queue(
@@ -3349,7 +3390,7 @@ fn pump_native_sync_range_load_queue(
                                 Ok(payload) => payload,
                                 Err(err) => {
                                     warn!(error = %err, "failed to encode oversized native sync locator response");
-                                    return;
+                                    return false;
                                 }
                             };
                             if let Err(err) = response_tx
@@ -3375,6 +3416,11 @@ fn pump_native_sync_range_load_queue(
                             .await;
                         }
                     }
+                    Ok(Err(err)) if native_asert_resolution_deferred(&err) => {
+                        debug!(peer = %hex32(&peer_id), from_height, to_height,
+                            "deferring outbound range for local ASERT ancestry work");
+                        return true;
+                    }
                     Ok(Err(err)) => {
                         warn!(
                             peer = %hex32(&peer_id),
@@ -3394,19 +3440,28 @@ fn pump_native_sync_range_load_queue(
                         );
                     }
                 }
+                false
             })
             .await;
-            if let Err(err) = load_task {
-                warn!(
-                    peer = %hex32(&peer_id),
-                    from_height,
-                    to_height,
-                    error = %err,
-                    "native sync range task panicked; releasing its bounded loader reservation"
-                );
-            }
+            let deferred = match load_task {
+                Ok(deferred) => deferred,
+                Err(err) => {
+                    warn!(
+                        peer = %hex32(&peer_id),
+                        from_height,
+                        to_height,
+                        error = %err,
+                        "native sync range task panicked; releasing its bounded loader reservation"
+                    );
+                    false
+                }
+            };
             let _ = completion_tx
-                .send(NativeSyncRangeLoadCompletion { peer_id, range })
+                .send(NativeSyncRangeLoadCompletion {
+                    peer_id,
+                    range,
+                    deferred,
+                })
                 .await;
         });
     }
@@ -3420,11 +3475,16 @@ fn spawn_native_block_announce_import(
     meta: NativeBlockMeta,
 ) {
     tokio::spawn(async move {
-        handle_native_block_announce(&node, &sync_tx, peer_id, meta).await;
+        let deferred = handle_native_block_announce(&node, &sync_tx, peer_id, meta).await;
         node.end_sync_import();
         node.refresh_mining_sync_gate();
         let _ = completion_tx
-            .send(NativeSyncImportCompletion::Announce { peer_id })
+            .send(match deferred {
+                Some(meta) => NativeSyncImportCompletion::Deferred {
+                    work: NativeSyncImportWork::Announce { peer_id, meta },
+                },
+                None => NativeSyncImportCompletion::Announce { peer_id },
+            })
             .await;
     });
 }
@@ -3440,16 +3500,15 @@ fn spawn_completed_native_block_announce_import(
         let decoded =
             tokio::task::spawn_blocking(move || decode_completed_native_block_body(completed))
                 .await;
-        match decoded {
-            Ok(Ok(meta)) => {
-                handle_native_block_announce(&node, &sync_tx, peer_id, meta).await;
-            }
+        let deferred = match decoded {
+            Ok(Ok(meta)) => handle_native_block_announce(&node, &sync_tx, peer_id, meta).await,
             Ok(Err(err)) => {
                 warn!(
                     peer = %hex32(&peer_id),
                     error = %err,
                     "rejecting invalid reassembled native block body"
                 );
+                None
             }
             Err(err) => {
                 warn!(
@@ -3457,12 +3516,18 @@ fn spawn_completed_native_block_announce_import(
                     error = %err,
                     "native block body decode worker failed"
                 );
+                None
             }
-        }
+        };
         node.end_sync_import();
         node.refresh_mining_sync_gate();
         let _ = completion_tx
-            .send(NativeSyncImportCompletion::Announce { peer_id })
+            .send(match deferred {
+                Some(meta) => NativeSyncImportCompletion::Deferred {
+                    work: NativeSyncImportWork::Announce { peer_id, meta },
+                },
+                None => NativeSyncImportCompletion::Announce { peer_id },
+            })
             .await;
     });
 }
@@ -3476,6 +3541,7 @@ fn spawn_known_native_block_locator_import(
     tokio::spawn(async move {
         let known_height = locator.height;
         let known_hash = locator.block_hash;
+        let mut deferred_locator = None;
         match Arc::clone(&node.block_import_semaphore)
             .acquire_owned()
             .await
@@ -3484,13 +3550,22 @@ fn spawn_known_native_block_locator_import(
                 let import_node = Arc::clone(&node);
                 let promoted = tokio::task::spawn_blocking(move || {
                     let _permit = permit;
-                    let known = import_node.header_by_hash(&known_hash)?.ok_or_else(|| {
-                        anyhow!("known native block body disappeared before import")
-                    })?;
-                    validate_known_native_block_body_locator(&known, &locator)?;
-                    import_node.promote_stored_block_if_better(known_hash)
+                    let result = (|| {
+                        let known = import_node.header_by_hash(&known_hash)?.ok_or_else(|| {
+                            anyhow!("known native block body disappeared before import")
+                        })?;
+                        validate_known_native_block_body_locator(&known, &locator)?;
+                        import_node.promote_stored_block_if_better(known_hash)
+                    })();
+                    (result, locator)
                 })
                 .await;
+                let promoted = promoted.map(|(result, locator)| {
+                    if result.as_ref().is_err_and(native_asert_resolution_deferred) {
+                        deferred_locator = Some(locator);
+                    }
+                    result
+                });
                 match promoted {
                     Ok(Ok(true)) => {
                         let (best_height, best_hash) = node.best_tip();
@@ -3514,6 +3589,10 @@ fn spawn_known_native_block_locator_import(
                             hash = %hex32(&known_hash),
                             "known native block locator no longer wins fork choice"
                         );
+                    }
+                    Ok(Err(err)) if native_asert_resolution_deferred(&err) => {
+                        debug!(peer = %hex32(&peer_id), height = known_height,
+                            "deferring known native locator for local ASERT ancestry work");
                     }
                     Ok(Err(err)) => {
                         warn!(
@@ -3540,7 +3619,12 @@ fn spawn_known_native_block_locator_import(
         node.end_sync_import();
         node.refresh_mining_sync_gate();
         let _ = completion_tx
-            .send(NativeSyncImportCompletion::Announce { peer_id })
+            .send(match deferred_locator {
+                Some(locator) => NativeSyncImportCompletion::Deferred {
+                    work: NativeSyncImportWork::KnownLocator { peer_id, locator },
+                },
+                None => NativeSyncImportCompletion::Announce { peer_id },
+            })
             .await;
     });
 }
@@ -3580,7 +3664,36 @@ pub(crate) enum NativeSyncImportWork {
     },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeSyncImportRetryIdentity {
+    Announce { height: u64, hash: [u8; 32] },
+    KnownLocator { height: u64, hash: [u8; 32] },
+}
+
 impl NativeSyncImportWork {
+    fn retry_identity(&self) -> Option<NativeSyncImportRetryIdentity> {
+        match self {
+            Self::Announce { meta, .. } => Some(NativeSyncImportRetryIdentity::Announce {
+                height: meta.height,
+                hash: meta.hash,
+            }),
+            Self::CompletedAnnounce { completed, .. } => {
+                Some(NativeSyncImportRetryIdentity::Announce {
+                    height: completed.locator.height,
+                    hash: completed.locator.block_hash,
+                })
+            }
+            Self::KnownLocator { locator, .. } => {
+                Some(NativeSyncImportRetryIdentity::KnownLocator {
+                    height: locator.height,
+                    hash: locator.block_hash,
+                })
+            }
+            // Range reports use their existing requester retry path.
+            Self::Response { .. } | Self::ChunkRange { .. } => None,
+        }
+    }
+
     pub(crate) fn peer_id(&self) -> PeerId {
         match self {
             Self::Announce { peer_id, .. }
@@ -3612,7 +3725,7 @@ impl NativeSyncImportWork {
 pub(crate) struct NativeSyncImportQueue {
     waiting: VecDeque<(usize, NativeSyncImportWork)>,
     peers: BTreeSet<PeerId>,
-    active: Option<(PeerId, usize)>,
+    active: Option<(PeerId, usize, Option<NativeSyncImportRetryIdentity>)>,
     reserved_bytes: usize,
 }
 
@@ -3647,12 +3760,52 @@ impl NativeSyncImportQueue {
         self.peers.contains(&peer_id)
     }
 
+    fn requeue_deferred(&mut self, work: NativeSyncImportWork) -> Result<()> {
+        let peer_id = work.peer_id();
+        let Some((active_peer, old_bytes, active_identity)) = self.active else {
+            return Err(anyhow!("deferred native import has no active owner"));
+        };
+        let identity = work.retry_identity();
+        if active_peer != peer_id || identity.is_none() || identity != active_identity {
+            return Err(anyhow!(
+                "deferred native import does not match its active owner"
+            ));
+        }
+        let accounting = (|| {
+            let bytes = work.reserved_bytes()?;
+            let next_reserved = self
+                .reserved_bytes
+                .checked_sub(old_bytes)
+                .and_then(|total| total.checked_add(bytes))
+                .ok_or_else(|| anyhow!("deferred native import reserved-byte overflow"))?;
+            if next_reserved > MAX_NATIVE_SYNC_IMPORT_QUEUE_BYTES {
+                return Err(anyhow!("deferred native import queue byte limit reached"));
+            }
+            Ok((bytes, next_reserved))
+        })();
+        let (bytes, next_reserved) = match accounting {
+            Ok(accounting) => accounting,
+            Err(error) => {
+                // Drop only this matching job if its decoded representation grew
+                // beyond the cap. Other admitted peers retain their reservations.
+                self.finish(peer_id);
+                return Err(error);
+            }
+        };
+        self.active = None;
+        self.reserved_bytes = next_reserved;
+        // Retain the original peer and item admission while moving its owned
+        // work behind waiting peers. This is not fresh network admission.
+        self.waiting.push_back((bytes, work));
+        Ok(())
+    }
+
     pub(crate) fn pop_front(&mut self) -> Option<NativeSyncImportWork> {
         if self.active.is_some() {
             return None;
         }
         let (bytes, work) = self.waiting.pop_front()?;
-        self.active = Some((work.peer_id(), bytes));
+        self.active = Some((work.peer_id(), bytes, work.retry_identity()));
         Some(work)
     }
 
@@ -3663,7 +3816,7 @@ impl NativeSyncImportQueue {
     pub(crate) fn remove_waiting_peer(&mut self, peer_id: PeerId) -> bool {
         if self
             .active
-            .is_some_and(|(active_peer, _)| active_peer == peer_id)
+            .is_some_and(|(active_peer, _, _)| active_peer == peer_id)
         {
             return false;
         }
@@ -3683,11 +3836,11 @@ impl NativeSyncImportQueue {
     }
 
     pub(crate) fn finish(&mut self, peer_id: PeerId) {
-        let Some((active_peer, bytes)) = self.active.take() else {
+        let Some((active_peer, bytes, identity)) = self.active.take() else {
             return;
         };
         if active_peer != peer_id {
-            self.active = Some((active_peer, bytes));
+            self.active = Some((active_peer, bytes, identity));
             return;
         }
         self.peers.remove(&peer_id);
@@ -3701,7 +3854,7 @@ impl NativeSyncImportQueue {
 
     #[cfg(test)]
     pub(crate) fn active_peer(&self) -> Option<PeerId> {
-        self.active.map(|(peer_id, _)| peer_id)
+        self.active.map(|(peer_id, _, _)| peer_id)
     }
 
     #[cfg(test)]
@@ -3729,6 +3882,9 @@ pub(super) fn native_sync_peer_announce_admission_blocked(
 }
 
 pub(super) enum NativeSyncImportCompletion {
+    Deferred {
+        work: NativeSyncImportWork,
+    },
     Announce {
         peer_id: PeerId,
     },
@@ -3757,6 +3913,7 @@ pub(super) enum NativeSyncImportCompletion {
 impl NativeSyncImportCompletion {
     fn peer_id(&self) -> PeerId {
         match self {
+            Self::Deferred { work } => work.peer_id(),
             Self::Announce { peer_id }
             | Self::Response { peer_id, .. }
             | Self::ChunkRange { peer_id, .. } => *peer_id,
@@ -4015,7 +4172,8 @@ async fn handle_native_sync_import_completion(
     completion: NativeSyncImportCompletion,
 ) {
     match completion {
-        NativeSyncImportCompletion::Announce { .. } => {}
+        NativeSyncImportCompletion::Announce { .. }
+        | NativeSyncImportCompletion::Deferred { .. } => {}
         NativeSyncImportCompletion::Response {
             peer_id,
             best_height,
@@ -4045,6 +4203,19 @@ async fn handle_native_sync_import_completion(
                     return;
                 }
             };
+            if report
+                .failure
+                .as_ref()
+                .is_some_and(|failure| failure.local_deferred)
+            {
+                node.defer_outbound_sync_request_retry(
+                    completed_request.request_target,
+                    completed_request.range,
+                );
+                node.refresh_mining_sync_gate();
+                debug!(peer = %hex32(&peer_id), "deferring native sync response for local ASERT ancestry work");
+                return;
+            }
             let progress = report.progress;
             if let Some(failure) = report.failure {
                 warn!(
@@ -4257,6 +4428,21 @@ async fn handle_native_sync_import_completion(
                     return;
                 }
             };
+            if report
+                .failure
+                .as_ref()
+                .is_some_and(|failure| failure.local_deferred)
+            {
+                let origins = block_body_transport.abort_peer(peer_id);
+                complete_native_block_body_range_origins(node.as_ref(), peer_id, &origins);
+                node.defer_outbound_sync_request_retry(
+                    completed_request.request_target,
+                    completed_request.range,
+                );
+                node.refresh_mining_sync_gate();
+                debug!(peer = %hex32(&peer_id), "deferring chunked sync response for local ASERT ancestry work");
+                return;
+            }
             let progress = report.progress;
             debug!(peer = %hex32(&peer_id), attempted = progress.attempted_blocks,
                 response_blocks = progress.response_block_count, imported = progress.imported_blocks,
@@ -4583,8 +4769,14 @@ pub(crate) async fn native_sync_loop(node: Arc<NativeNode>, mut handle: Protocol
                     warn!("native sync range load completion channel closed");
                     continue;
                 };
-                node.end_sync_response_for_peer(completed.peer_id, completed.range);
-                sync_range_load_queue.finish(completed.peer_id);
+                // Release this loader's materialized-byte reservation before
+                // retrying at the tail. Keep the node's peer/range owner while
+                // queued, so duplicate requests cannot acquire a second owner.
+                if completed.deferred {
+                    sync_range_load_queue.finish_and_requeue(completed.peer_id, completed.range);
+                } else if sync_range_load_queue.finish(completed.peer_id, completed.range) {
+                    node.end_sync_response_for_peer(completed.peer_id, completed.range);
+                }
                 pump_native_sync_range_load_queue(
                     &mut sync_range_load_queue,
                     &node,
@@ -4598,6 +4790,17 @@ pub(crate) async fn native_sync_loop(node: Arc<NativeNode>, mut handle: Protocol
                     warn!("native sync import completion channel closed");
                     continue;
                 };
+                if let NativeSyncImportCompletion::Deferred { work } = import_completion {
+                    let peer_id = work.peer_id();
+                    if let Err(error) = sync_import_queue.requeue_deferred(work) {
+                        debug!(peer = %hex32(&peer_id), error = %error,
+                            "could not retain deferred ASERT import");
+                    }
+                    pump_native_sync_import_queue(
+                        &mut sync_import_queue, &node, &sync_tx, &sync_import_completion_tx,
+                    );
+                    continue;
+                }
                 finish_native_sync_import_owner(&mut sync_import_queue, &import_completion);
                 handle_native_sync_import_completion(
                     &node,
@@ -5510,10 +5713,32 @@ pub(crate) async fn native_sync_loop(node: Arc<NativeNode>, mut handle: Protocol
     }
 }
 
+fn native_asert_resolution_deferred(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause.is::<NativeAsertResolutionDeferred>()
+            || matches!(cause.downcast_ref::<NativeChainLoadError>(),
+                    Some(NativeChainLoadError::Corrupt(inner))
+                        if native_asert_resolution_deferred(inner))
+    })
+}
+
 pub(crate) struct NativeSyncImportFailure {
+    pub(crate) local_deferred: bool,
     pub(crate) height: u64,
     pub(crate) hash: [u8; 32],
     pub(crate) error: String,
+}
+
+impl NativeSyncImportFailure {
+    fn new(height: u64, hash: [u8; 32], error: impl Into<anyhow::Error>) -> Self {
+        let error = error.into();
+        Self {
+            height,
+            hash,
+            local_deferred: native_asert_resolution_deferred(&error),
+            error: error.to_string(),
+        }
+    }
 }
 
 pub(crate) struct NativeSyncImportReport {
@@ -5761,11 +5986,7 @@ pub(crate) fn import_native_sync_response_blocks(
                 Ok(false) => {}
                 Err(err) => {
                     progress.record_terminal_error();
-                    failure = Some(NativeSyncImportFailure {
-                        height: meta.height,
-                        hash: meta.hash,
-                        error: err.to_string(),
-                    });
+                    failure = Some(NativeSyncImportFailure::new(meta.height, meta.hash, err));
                     break;
                 }
             }
@@ -5791,11 +6012,7 @@ pub(crate) fn import_native_sync_response_blocks(
             }
             Err(err) => {
                 progress.record_terminal_error();
-                failure = Some(NativeSyncImportFailure {
-                    height,
-                    hash,
-                    error: err.to_string(),
-                });
+                failure = Some(NativeSyncImportFailure::new(height, hash, err));
                 break;
             }
         }
@@ -5844,11 +6061,11 @@ pub(crate) fn import_native_sync_response_winning_branch(
                             progress.stopped_on_error = true;
                             return Some(NativeSyncImportReport {
                                 progress: *progress,
-                                failure: Some(NativeSyncImportFailure {
-                                    height: meta.height,
-                                    hash: meta.hash,
-                                    error: err.to_string(),
-                                }),
+                                failure: Some(NativeSyncImportFailure::new(
+                                    meta.height,
+                                    meta.hash,
+                                    err,
+                                )),
                             });
                         }
                     }
@@ -5859,11 +6076,7 @@ pub(crate) fn import_native_sync_response_winning_branch(
                 progress.stopped_on_error = true;
                 return Some(NativeSyncImportReport {
                     progress: *progress,
-                    failure: Some(NativeSyncImportFailure {
-                        height: meta.height,
-                        hash: meta.hash,
-                        error: err.to_string(),
-                    }),
+                    failure: Some(NativeSyncImportFailure::new(meta.height, meta.hash, err)),
                 });
             }
         }
@@ -5933,11 +6146,11 @@ pub(crate) fn import_native_sync_response_winning_branch(
                 progress.stopped_on_error = true;
                 return Some(NativeSyncImportReport {
                     progress: *progress,
-                    failure: Some(NativeSyncImportFailure {
-                        height: response_tip.height,
-                        hash: response_tip.hash,
-                        error: err.to_string(),
-                    }),
+                    failure: Some(NativeSyncImportFailure::new(
+                        response_tip.height,
+                        response_tip.hash,
+                        err,
+                    )),
                 });
             }
         }
@@ -5991,11 +6204,11 @@ pub(crate) fn import_native_sync_response_winning_branch(
             progress.stopped_on_error = true;
             Some(NativeSyncImportReport {
                 progress: *progress,
-                failure: Some(NativeSyncImportFailure {
-                    height: response_tip.height,
-                    hash: response_tip.hash,
-                    error: err.to_string(),
-                }),
+                failure: Some(NativeSyncImportFailure::new(
+                    response_tip.height,
+                    response_tip.hash,
+                    err,
+                )),
             })
         }
     }
@@ -6049,11 +6262,11 @@ pub(crate) fn import_native_sync_response_nonwinning_branch_batch(
             progress.stopped_on_error = true;
             Some(NativeSyncImportReport {
                 progress: *progress,
-                failure: Some(NativeSyncImportFailure {
-                    height: response_tip.height,
-                    hash: response_tip.hash,
-                    error: err.to_string(),
-                }),
+                failure: Some(NativeSyncImportFailure::new(
+                    response_tip.height,
+                    response_tip.hash,
+                    err,
+                )),
             })
         }
     }
@@ -6145,11 +6358,11 @@ pub(crate) fn import_native_sync_response_tip_extension(
                 progress.stopped_on_error = true;
                 return Some(NativeSyncImportReport {
                     progress: *progress,
-                    failure: Some(NativeSyncImportFailure {
-                        height: batch_tip.height,
-                        hash: batch_tip.hash,
-                        error: err.to_string(),
-                    }),
+                    failure: Some(NativeSyncImportFailure::new(
+                        batch_tip.height,
+                        batch_tip.hash,
+                        err,
+                    )),
                 });
             }
         };
@@ -7429,7 +7642,10 @@ mod locator_local_backpressure_tests {
         NativeBlockBodyLocator {
             schema_version: NATIVE_BLOCK_BODY_SCHEMA_VERSION,
             chain_id: HEGEMON_CHAIN_ID_V1,
-            rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE,
+            rules_hash: consensus_light_client::native_rules_hash(
+                &HEGEMON_CHAIN_ID_V1,
+                u64::from(seed),
+            ),
             height: u64::from(seed),
             block_hash: [seed; 32],
             parent_hash: [seed.wrapping_sub(1); 32],
@@ -7448,6 +7664,32 @@ mod locator_local_backpressure_tests {
                 to_height: next.height,
             },
             context: NativeOutboundSyncRequestContext::default(),
+        }
+    }
+
+    #[cfg(feature = "asert-rehearsal")]
+    #[test]
+    fn body_locator_rejects_early_and_late_rules_at_asert_activation() {
+        let old_rules = HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE;
+        let asert_rules = consensus_light_client::native_rules_hash(&HEGEMON_CHAIN_ID_V1, 20);
+        assert_ne!(
+            old_rules, asert_rules,
+            "rehearsal activates ASERT at height 20"
+        );
+
+        for (height, expected, forbidden) in [
+            (19, old_rules, asert_rules),
+            (20, asert_rules, old_rules),
+            (21, asert_rules, old_rules),
+        ] {
+            let mut entry = locator(height);
+            entry.rules_hash = expected;
+            assert_eq!(validate_native_block_body_locator(&entry).unwrap(), 1);
+            entry.rules_hash = forbidden;
+            let error = validate_native_block_body_locator(&entry).unwrap_err();
+            assert!(error.to_string().contains("rules hash mismatch"));
+            entry.rules_hash = [0xff; 32];
+            assert!(validate_native_block_body_locator(&entry).is_err());
         }
     }
 
@@ -7575,5 +7817,228 @@ mod locator_local_backpressure_tests {
             transport.queued_bodies_for_test(),
             MAX_NATIVE_BLOCK_BODY_QUEUE_GLOBAL
         );
+    }
+}
+
+#[cfg(test)]
+mod asert_deferral_tests {
+    use super::*;
+
+    fn locator(peer: u8, bytes: usize) -> NativeSyncImportWork {
+        NativeSyncImportWork::KnownLocator {
+            peer_id: [peer; 32],
+            locator: NativeBlockBodyLocator {
+                schema_version: NATIVE_BLOCK_BODY_SCHEMA_VERSION,
+                chain_id: HEGEMON_CHAIN_ID_V1,
+                rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE,
+                height: 1,
+                block_hash: [peer; 32],
+                parent_hash: [0; 32],
+                cumulative_work: [0; 48],
+                total_len: bytes as u64,
+                body_hash: [0; 32],
+                chunk_count: 1,
+            },
+        }
+    }
+
+    #[test]
+    fn asert_deferral_requeues_after_waiting_peer_with_same_reservations() {
+        let mut queue = NativeSyncImportQueue::default();
+        queue.enqueue(locator(1, 100)).unwrap();
+        queue.enqueue(locator(2, 200)).unwrap();
+        let work = queue.pop_front().unwrap();
+        assert_eq!(work.peer_id(), [1; 32]);
+        queue.requeue_deferred(work).unwrap();
+        assert_eq!(queue.active_peer(), None);
+        assert_eq!(queue.reserved_bytes(), 300);
+        assert_eq!(queue.waiting_len(), 2);
+        assert!(queue.enqueue(locator(1, 100)).is_err());
+        assert_eq!(queue.pop_front().unwrap().peer_id(), [2; 32]);
+        queue.finish([2; 32]);
+        assert_eq!(queue.pop_front().unwrap().peer_id(), [1; 32]);
+        queue.finish([1; 32]);
+        assert_eq!(queue.reserved_bytes(), 0);
+        assert!(!queue.has_peer_work([1; 32]));
+        assert!(!queue.has_peer_work([2; 32]));
+    }
+
+    #[test]
+    fn asert_deferred_work_still_obeys_import_byte_limit() {
+        let mut queue = NativeSyncImportQueue::default();
+        queue
+            .enqueue(locator(1, MAX_NATIVE_SYNC_IMPORT_QUEUE_BYTES))
+            .unwrap();
+        let work = queue.pop_front().unwrap();
+        assert!(queue.enqueue(locator(2, 1)).is_err());
+        queue.requeue_deferred(work).unwrap();
+        assert_eq!(queue.reserved_bytes(), MAX_NATIVE_SYNC_IMPORT_QUEUE_BYTES);
+        assert!(queue.enqueue(locator(2, 1)).is_err());
+    }
+
+    #[test]
+    fn asert_deferred_import_preserves_owner_on_identity_mismatch() {
+        let mut queue = NativeSyncImportQueue::default();
+        queue.enqueue(locator(1, 100)).unwrap();
+        let work = queue.pop_front().unwrap();
+        assert!(queue.requeue_deferred(locator(2, 100)).is_err());
+        let mut wrong_hash = locator(1, 100);
+        let NativeSyncImportWork::KnownLocator {
+            locator: wrong_locator,
+            ..
+        } = &mut wrong_hash
+        else {
+            unreachable!()
+        };
+        wrong_locator.block_hash = [3; 32];
+        assert!(queue.requeue_deferred(wrong_hash).is_err());
+        let NativeSyncImportWork::KnownLocator {
+            locator: same_block,
+            ..
+        } = locator(1, 100)
+        else {
+            unreachable!()
+        };
+        assert!(queue
+            .requeue_deferred(NativeSyncImportWork::CompletedAnnounce {
+                peer_id: [1; 32],
+                completed: NativeCompletedBlockBody::for_import_queue_budget_test(same_block, 100),
+            })
+            .is_err());
+        assert_eq!(queue.active_peer(), Some([1; 32]));
+        assert_eq!(queue.reserved_bytes(), 100);
+        assert_eq!(queue.waiting_len(), 0);
+        queue.requeue_deferred(work).unwrap();
+        assert!(queue.requeue_deferred(locator(1, 100)).is_err());
+        assert_eq!(queue.waiting_len(), 1);
+        assert_eq!(queue.reserved_bytes(), 100);
+        assert!(queue.has_peer_work([1; 32]));
+    }
+
+    #[test]
+    fn asert_deferred_import_reaccounts_growth_and_drops_only_own_overflow() {
+        let mut queue = NativeSyncImportQueue::default();
+        queue.enqueue(locator(1, 100)).unwrap();
+        queue.enqueue(locator(2, 200)).unwrap();
+        queue.pop_front().unwrap();
+        queue.requeue_deferred(locator(1, 150)).unwrap();
+        assert_eq!(queue.reserved_bytes(), 350);
+        assert_eq!(queue.pop_front().unwrap().peer_id(), [2; 32]);
+        queue.finish([2; 32]);
+        queue.enqueue(locator(2, 200)).unwrap();
+        assert_eq!(queue.pop_front().unwrap().peer_id(), [1; 32]);
+        assert!(queue
+            .requeue_deferred(locator(1, MAX_NATIVE_SYNC_IMPORT_QUEUE_BYTES))
+            .is_err());
+        assert_eq!(queue.active_peer(), None);
+        assert_eq!(queue.reserved_bytes(), 200);
+        assert_eq!(queue.waiting_len(), 1);
+        assert!(!queue.has_peer_work([1; 32]));
+        assert!(queue.has_peer_work([2; 32]));
+    }
+
+    #[test]
+    fn asert_deferred_error_survives_context_and_sync_report_conversion() {
+        let error = anyhow!(NativeAsertResolutionDeferred {
+            parent_hash: [7; 32],
+            resume_height: 123,
+        })
+        .context("bounded parent resolution");
+        assert!(native_asert_resolution_deferred(&error));
+        let wrapped = NativeChainLoadError::Corrupt(error);
+        let failure = NativeSyncImportFailure::new(124, [8; 32], wrapped);
+        assert!(failure.local_deferred);
+        assert_eq!(failure.height, 124);
+        assert!(
+            !NativeSyncImportFailure::new(124, [8; 32], anyhow!("invalid proof")).local_deferred
+        );
+    }
+    #[test]
+    fn asert_bare_chain_error_wrapper_preserves_local_deferral() {
+        let bare = anyhow!(NativeAsertResolutionDeferred {
+            parent_hash: [3; 32],
+            resume_height: 500,
+        });
+        let failure =
+            NativeSyncImportFailure::new(501, [4; 32], NativeChainLoadError::Corrupt(bare));
+        assert!(failure.local_deferred);
+    }
+
+    #[test]
+    fn asert_range_deferral_releases_loader_and_requeues_at_tail() {
+        let mut queue = NativeSyncRangeLoadQueue::default();
+        let range = NativeSyncRange {
+            from_height: 500,
+            to_height: 501,
+        };
+        queue.admit([1; 32], range).unwrap();
+        queue.admit([2; 32], range).unwrap();
+        let first = queue.pop_next().unwrap();
+        assert_eq!(first.peer_id, [1; 32]);
+        assert_eq!(
+            queue.reserved_bytes(),
+            NATIVE_SYNC_RANGE_LOAD_RESERVATION_BYTES
+        );
+        assert!(queue.finish_and_requeue(first.peer_id, first.range));
+        assert_eq!(queue.reserved_bytes(), 0);
+        assert_eq!(queue.outstanding(), 2);
+        assert!(queue.admit(first.peer_id, first.range).is_err());
+        assert_eq!(queue.pop_next().unwrap().peer_id, [2; 32]);
+        assert_eq!(queue.pop_next().unwrap().peer_id, [1; 32]);
+        assert_eq!(queue.active(), 2);
+        assert_eq!(
+            queue.reserved_bytes(),
+            NATIVE_SYNC_RANGE_LOAD_RESERVATION_BYTES * 2
+        );
+        assert!(queue.finish([1; 32], range));
+        assert!(queue.finish([2; 32], range));
+        assert_eq!(queue.outstanding(), 0);
+        assert_eq!(queue.reserved_bytes(), 0);
+    }
+
+    #[test]
+    fn asert_range_deferral_ignores_wrong_range_and_duplicate_completion() {
+        let mut queue = NativeSyncRangeLoadQueue::default();
+        let peer = [1; 32];
+        let range = NativeSyncRange {
+            from_height: 500,
+            to_height: 501,
+        };
+        let later = NativeSyncRange {
+            from_height: 502,
+            to_height: 503,
+        };
+        queue.admit(peer, range).unwrap();
+        queue.pop_next().unwrap();
+        assert!(!queue.finish_and_requeue(peer, later));
+        assert!(!queue.finish(peer, later));
+        assert_eq!(queue.active(), 1);
+        assert_eq!(
+            queue.reserved_bytes(),
+            NATIVE_SYNC_RANGE_LOAD_RESERVATION_BYTES
+        );
+        assert!(queue.finish_and_requeue(peer, range));
+        assert!(!queue.finish_and_requeue(peer, range));
+        assert!(!queue.finish(peer, range));
+        assert_eq!(queue.waiting(), 1);
+        assert_eq!(queue.active(), 0);
+        assert_eq!(queue.outstanding(), 1);
+        assert_eq!(queue.reserved_bytes(), 0);
+        assert!(queue.admit(peer, later).is_err());
+        queue.pop_next().unwrap();
+        assert!(queue.finish(peer, range));
+        queue.admit(peer, later).unwrap();
+        queue.pop_next().unwrap();
+        assert!(!queue.finish_and_requeue(peer, range));
+        assert!(!queue.finish(peer, range));
+        assert_eq!(queue.active(), 1);
+        assert_eq!(queue.outstanding(), 1);
+        assert_eq!(
+            queue.reserved_bytes(),
+            NATIVE_SYNC_RANGE_LOAD_RESERVATION_BYTES
+        );
+        assert!(queue.finish(peer, later));
+        assert_eq!(queue.outstanding(), 0);
+        assert_eq!(queue.reserved_bytes(), 0);
     }
 }

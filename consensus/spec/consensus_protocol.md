@@ -45,8 +45,10 @@ Before propagating or extending a block, miners and full nodes MUST execute the 
    - Check that `timestamp` > median time past (11-window) and `timestamp ≤ local_clock + 90s`. The future-skew bound is enforced against wall-clock milliseconds and invalid blocks are rechecked when the clock advances.
    - Verify `pow_bits` encodes a target within the permitted global min/max and that `sha256d(header) ≤ target`. A zero mantissa is invalid and the seal MUST exist on every PoW header (including reorg candidates).
 2. **Difficulty retarget consistency**
-   - For blocks where `height mod RETARGET_WINDOW = 0`, recompute the expected target from the prior 120 blocks (see
-     [Difficulty Adjustment](#difficulty-adjustment)). Reject mismatches. For intermediate heights, the parent’s `pow_bits` must be reused verbatim; drift is not allowed.
+   - Select the difficulty rule from the source-owned chain/height schedule (see
+     [Difficulty Adjustment](#difficulty-adjustment)). Recompute exact expected bits
+     from the candidate parent's own ancestry; reject mismatches. Legacy intermediate
+     heights reuse parent bits; activated ASERT heights recompute every block.
 3. **STARK proof commitments**
    - Feed the block’s execution trace into the STARK verifier. Confirm that the commitment matches the supplied
      `proof_commitment` and that the proof enforces the state transition for every transaction in the block.
@@ -71,21 +73,35 @@ Any block that fails one of these steps is invalid and should be treated as an o
 
 ## Difficulty Adjustment
 
-Every 120 blocks the network retargets difficulty using the observed timestamps of the preceding window.
+The live pre-mainnet continues to use the legacy rule until a release selects an
+ASERT activation height. The implementation in `consensus-light-client/src/pow_rules.rs`
+currently has `PREMAINNET_ASERT_ACTIVATION_HEIGHT = None`.
 
-Let:
-- `W = 120` (window length)
-- `T_target = 60 s` (target interval)
-- `target_prev` = target at the start of the window
-- `t_actual = timestamp_last − timestamp_window_start`
+The legacy rule uses `W = 10` and `T_target = 60,000 ms`. The first boundary
+(height 10) inherits launch bits so the fixed genesis timestamp is not treated
+as mined timing history. Later multiples of 10 use the parent target and the
+elapsed time between the parent and its ancestor nine steps back. Clamp that
+elapsed time to `[W*T_target/4, 4*W*T_target]`, multiply the parent target by the
+clamped span and divide by `W*T_target`, rounding down and retaining a minimum
+target of one. Preserve the historical unsigned compact re-encoding followed by
+Bitcoin positive canonical normalization and the `0x207fffff` target limit.
+Other heights inherit parent bits exactly. This preserves deployed historical
+behavior, including its nine timestamp intervals and ten-interval denominator.
 
-The provisional new target is `target_prov = target_prev × (t_actual / (W × T_target))`. Clamp this value to within `¼ × target_prev`
-and `4 × target_prev` to avoid extreme swings; implementations MUST treat the clamped span `adjusted_timespan = clamp(t_actual, ¼ × W × T_target, 4 × W × T_target)` as the only input to the retarget equation so reorgs cannot replay outlier timestamps. The final `pow_bits` equals `encode_compact(clamp(target_prov))`.
+The prepared ASERT successor applies from an announced compiled height H, keeping
+the same genesis, chain ID and wallet identities. It uses a 60-second target and
+one-hour half-life. Its fixed branch-specific reference target/height comes from
+H−1 and reference time from H−2. For current parent P, define signed milliseconds
+`delta = (P.time - time(H-2)) - 60000*(P.height - (H-1) + 1)` and signed fixed-point
+exponent `e = trunc_toward_zero(delta*65536/3600000)`. Split `e` into arithmetic
+right-shift integral part and nonnegative 16-bit fraction, evaluate the standard
+ASERT cubic integer approximation, scale the reference target, clamp to positive
+one through the Bitcoin80 limit and encode canonical compact bits. See
+[the complete ASERT specification](../../docs/consensus/ASERT_UPGRADE.md).
 
-Nodes reuse the parent target for all intermediate heights so that headers between retarget boundaries share the exact same difficulty encoding.
-
-Implementations MUST track the window start timestamp so `t_actual` is deterministic even during reorgs. Because the target is
-a header field, honest nodes will reject any block whose encoded difficulty disagrees with the deterministic computation.
+Header rules hashes MUST match the schedule for both parent and child heights.
+The original manifest rules hash remains immutable. ASERT never uses a candidate
+block's timestamp to choose that block's target and has no emergency-gap rule.
 
 ## Timestamp and Orphan Handling
 

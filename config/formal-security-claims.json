@@ -2,9 +2,9 @@
   "schema_version": 2,
   "generated_for_branch": "codex/smallwood-pq128-experiment",
   "claim_baseline": {
-    "baseline_id": "hegemon-formal-security-claims-2026-08-17-v1",
-    "baseline_claim_count": 122,
-    "baseline_claim_ids_blake3": "c27b47f4d9e82a86ad82b1a0b0d116586a35b7af47ea5755d98fd9e440d4841d",
+    "baseline_id": "hegemon-formal-security-claims-2026-11-08-treasury-candidate-v2",
+    "baseline_claim_count": 123,
+    "baseline_claim_ids_blake3": "2f1dd53c1fa6adc2737fe7fab661b05b48569ad49346d06bd96aee8a0b97ec0f",
     "tombstones": [
       {
         "claim_id": "native.miner-identity",
@@ -23,8 +23,8 @@
       "command": "cargo test --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml governance_",
       "status": "passed",
       "exit_code": 0,
-      "executed_at": "2026-11-07T06:01:37Z",
-      "policy_inputs_blake3": "2a3d93373fdea36054139ca29862865a42ef8c4139d85d662590f8ece1e4eed3",
+      "executed_at": "2026-11-08T08:13:07Z",
+      "policy_inputs_blake3": "2723e3b42c209704a1c6b7f816e88f6bd48e3fb1ce4953c387b6cc9c8b78c14c",
       "report": {
         "passed": true,
         "test_filter": "governance_",
@@ -2921,7 +2921,7 @@
       "id": "consensus.supply-digest-accounting",
       "component": "PoW supply and coinbase accounting",
       "claim_class": "lean_theorem",
-      "summary": "The Lean supply-accounting kernel proves checked native supply-digest increase/decrease, no-coinbase native no-op behavior, and native overflow rejection; generated Lean vectors are checked against consensus CoinbaseData/update_supply_digest and native-node coinbase supply helpers.",
+      "summary": "The Lean supply-accounting kernel proves checked native supply-digest increase/decrease, no-coinbase native no-op behavior, and native overflow rejection; generated Lean vectors are checked against consensus CoinbaseData/update_supply_digest and native-node coinbase supply helpers. Native monetary supply lifting is scoped to disabled treasury cadence; the active batch branch has separate bounded candidate evidence.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -2947,7 +2947,8 @@
       "assumptions": [
         "The Lean supply model represents 128-bit supply_digest arithmetic as Nat values bounded by u128::MAX and native coinbase fee totals as u64-bounded amounts.",
         "Generated Lean vectors cover consensus minted + fees - burns behavior, burn underflow, supply overflow, no-coinbase native no-op blocks, coinbase fee inclusion, and native supply overflow rejection.",
-        "The theorem covers executable supply accounting and checked Rust conformance, not full proof-system soundness, monetary policy economics, or every wallet-side reward construction path."
+        "The theorem covers executable supply accounting and checked Rust conformance, not full proof-system soundness, monetary policy economics, or every wallet-side reward construction path.",
+        "Treasury cadence scope (2026-11-08): subsidy-plus-fee, zero-coinbase and supply/canonical-publication lifting statements in the historical models apply to the disabled-policy branch and replay issued_coinbase_amount=None. Generic bounded supply arithmetic and the unchanged block subsidy schedule remain valid independently. Active 60-block treasury issuance, pending accrual and Some(actual-issued) replay use the separate consensus.treasury-batch-actual-issued candidate model; no historical theorem is claimed to prove that active branch."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Consensus/Supply.lean",
@@ -3066,7 +3067,8 @@
         "The deployed native action grammar has no independent burn action, so the exact accepted burn projection is the empty list; no-coinbase fees remain unminted under the existing supply helper.",
         "The credited composition theorem covers deterministic accounting. The archived accepted-block no-counterfeit implications retain caller-supplied knowledge-soundness, semantic-refinement and universal injectivity hypotheses for source compatibility only; they are excluded from credited roots. No cryptographic security conclusion follows merely from the accounting theorem.",
         "The retained composition uses historical V4/Gamma statements. Current circuit-12 PrivateSpend and its exact source/release identity are separate; no historical theorem or decoder activates a current proof route.",
-        "Primitive cryptographic security, privacy, monetary-policy economics beyond the current subsidy helper, and complete arbitrary native-node refinement remain outside this claim."
+        "Primitive cryptographic security, privacy, monetary-policy economics beyond the current subsidy helper, and complete arbitrary native-node refinement remain outside this claim.",
+        "Treasury cadence scope (2026-11-08): subsidy-plus-fee, zero-coinbase and supply/canonical-publication lifting statements in the historical models apply to the disabled-policy branch and replay issued_coinbase_amount=None. Generic bounded supply arithmetic and the unchanged block subsidy schedule remain valid independently. Active 60-block treasury issuance, pending accrual and Some(actual-issued) replay use the separate consensus.treasury-batch-actual-issued candidate model; no historical theorem is claimed to prove that active branch."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Consensus/SupplyInvariant.lean",
@@ -3103,7 +3105,7 @@
       "id": "native.coinbase-accounting-admission",
       "component": "native coinbase accounting admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean native coinbase-accounting admission kernel proves the executable table for zero-or-one coinbase actions, checked subsidy-plus-fee reward computation, missing amount rejection, reward mismatch rejection, and the intentional no-coinbase fee-burn policy; generated Lean vectors are checked against the production native helper used by block import and mining. The companion supply-conservation theorem proves accepted one-coinbase accounting exposes observed coinbase amount equality to the checked subsidy-plus-fee amount and packages that with claimed-supply replay, while no-coinbase accounting packages a zero modeled mint. The cross-layer supply-integrity extension now also composes accepted one-coinbase/no-coinbase accounting with the canonical no-theft/public-balance boundary in one theorem, so checked block reward accounting, public native-delta binding, per-asset conservation, and claimed-supply replay are available together under explicit production block-construction bindings.",
+      "summary": "The Lean native coinbase-accounting admission kernel proves the executable table for zero-or-one coinbase actions, checked subsidy-plus-fee reward computation, missing amount rejection, reward mismatch rejection, and the intentional no-coinbase fee-burn policy; generated Lean vectors are checked against the production native helper used by block import and mining. The companion supply-conservation theorem proves accepted one-coinbase accounting exposes observed coinbase amount equality to the checked subsidy-plus-fee amount and packages that with claimed-supply replay, while no-coinbase accounting packages a zero modeled mint. The cross-layer supply-integrity extension now also composes accepted one-coinbase/no-coinbase accounting with the canonical no-theft/public-balance boundary in one theorem, so checked block reward accounting, public native-delta binding, per-asset conservation, and claimed-supply replay are available together under explicit production block-construction bindings. Native monetary supply lifting is scoped to disabled treasury cadence; the active batch branch has separate bounded candidate evidence.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -3146,7 +3148,8 @@
         "The Lean model reuses the Consensus.Supply subsidy and checked u64 addition model for expected native coinbase amounts, then packages accepted coinbase accounting with claimed supply replay in `Hegemon.Native.CoinbaseSupplyConservation`.",
         "Generated Lean conformance vectors cover no-coinbase acceptance, valid subsidy-only and fee-inclusive coinbase rewards, multiple coinbase rejection, fee-total overflow rejection, reward overflow rejection, missing amount rejection, reward mismatch rejection, and rejection precedence.",
         "The theorem covers executable native coinbase accounting admission only. It does not prove encrypted coinbase note construction, ciphertext hash binding, monetary policy economics beyond the current subsidy helper, full action payload validation, or proof-system soundness.",
-        "The coinbase/canonical supply-integrity theorems compose accounting admission with canonical no-theft/public-balance supply conservation; they do not by themselves prove encrypted coinbase note decryptability or complete block-builder equivalence."
+        "The coinbase/canonical supply-integrity theorems compose accounting admission with canonical no-theft/public-balance supply conservation; they do not by themselves prove encrypted coinbase note decryptability or complete block-builder equivalence.",
+        "Treasury cadence scope (2026-11-08): subsidy-plus-fee, zero-coinbase and supply/canonical-publication lifting statements in the historical models apply to the disabled-policy branch and replay issued_coinbase_amount=None. Generic bounded supply arithmetic and the unchanged block subsidy schedule remain valid independently. Active 60-block treasury issuance, pending accrual and Some(actual-issued) replay use the separate consensus.treasury-batch-actual-issued candidate model; no historical theorem is claimed to prove that active branch."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/CoinbaseAccountingAdmission.lean",
@@ -6511,7 +6514,7 @@
       "id": "native.block-action-replay-publication",
       "component": "native block-action validation to replay publication boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean block-action replay publication theorems compose accepted decoded block-action validation with accepted block replay/accounting and accepted wire replay projection. They package action hash preconditions, proof that every decoded validation row was consumed, wire-projection-derived row-count equality to replay rows, wire-projection-derived imported bridge replay-count equality, canonical replay trace order, accepted action-stream facts, block commitment preconditions, expected supply equality, claimed supply equality, and state-root agreement in one production-review surface before consensus admission treats a decoded action block as replay-safe. The executable rejection table and generated vectors now bind that composition to the production helper order: block-action validation, block replay, wire replay projection, validation/wire action-count agreement, wire/replay action-count agreement, validation/wire bridge replay-count agreement, then replay/wire bridge replay-count agreement.",
+      "summary": "The Lean block-action replay publication theorems compose accepted decoded block-action validation with accepted block replay/accounting and accepted wire replay projection. They package action hash preconditions, proof that every decoded validation row was consumed, wire-projection-derived row-count equality to replay rows, wire-projection-derived imported bridge replay-count equality, canonical replay trace order, accepted action-stream facts, block commitment preconditions, expected supply equality, claimed supply equality, and state-root agreement in one production-review surface before consensus admission treats a decoded action block as replay-safe. The executable rejection table and generated vectors now bind that composition to the production helper order: block-action validation, block replay, wire replay projection, validation/wire action-count agreement, wire/replay action-count agreement, validation/wire bridge replay-count agreement, then replay/wire bridge replay-count agreement. Native monetary supply lifting is scoped to disabled treasury cadence; the active batch branch has separate bounded candidate evidence.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_composition_over_existing_conformance_gates",
       "production_eligible": true,
@@ -6536,7 +6539,8 @@
       "assumptions": [
         "The theorem composes accepted decoded block-action validation and accepted block replay predicates; the conformance gate adds no production runtime work and checks the existing Rust helper composition from generated Lean vectors.",
         "The direct row-count and imported bridge replay-count equalities are now derived by the shared-actions theorem from accepted wire replay projection plus explicit production construction equalities tying that projection to validation rows, replay rows, and bridge replay rows.",
-        "SCALE parser correctness, BLAKE3/BLAKE2/hash security and implementation equivalence, tx-leaf and recursive proof soundness, storage durability, PoW threshold validity, and complete native-node refinement remain outside this theorem."
+        "SCALE parser correctness, BLAKE3/BLAKE2/hash security and implementation equivalence, tx-leaf and recursive proof soundness, storage durability, PoW threshold validity, and complete native-node refinement remain outside this theorem.",
+        "Treasury cadence scope (2026-11-08): subsidy-plus-fee, zero-coinbase and supply/canonical-publication lifting statements in the historical models apply to the disabled-policy branch and replay issued_coinbase_amount=None. Generic bounded supply arithmetic and the unchanged block subsidy schedule remain valid independently. Active 60-block treasury issuance, pending accrual and Some(actual-issued) replay use the separate consensus.treasury-batch-actual-issued candidate model; no historical theorem is claimed to prove that active branch."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/BlockActionReplayPublication.lean",
@@ -6673,7 +6677,7 @@
       "id": "native.block-replay-refinement",
       "component": "native block replay/accounting refinement boundary",
       "claim_class": "lean_theorem",
-      "summary": "The native block replay refinement Lean claim proves the composed executable replay predicate over ordered action-stream planning, checked native supply advancement, and block commitment admission. It lifts accepted replay chains to supply equality, leaf-cursor equality, canonical commitment-plan preconditions, final nullifier uniqueness, and final consumed bridge replay-key uniqueness. The projected replay layer centralizes production-style state-to-replay-input construction, proves the direct projected ledger-state executor equivalent to accepted replay, adds a raw-decoded native replay block surface, and now packages accepted block-index reload, canonical-state reload, canonical reorg-chain admission, atomic commit manifest admission, storage durability admission, and ledger/tree replay into one canonical publication refinement surface. The pending-action byte publication theorem additionally composes exact pending-action decode, pending-action reload key/hash admission, block-action decode, action-hash admission, wire replay projection, and raw canonical publication facts into one byte-admission-to-publication package. Production bindings additionally require a connected nonwinning sync batch to replay the complete candidate side chain before any N-record sled Batch is applied, and require every canonical sync tip-extension batch block to pass the production replay helper before the atomic batch commit. Production drift regressions reject exact-decodable action-body substitution on announced import, startup replay, reorg replay, and sync block-range publication surfaces; invalid noncanonical sync batches persist no prefix. The formal-core gate also covers a combined restarted side-branch reorg candidate whose sidecar transfer/nullifier rows and disabled inbound bridge replay key fail closed before canonical publication.",
+      "summary": "The native block replay refinement Lean claim proves the composed executable replay predicate over ordered action-stream planning, checked native supply advancement, and block commitment admission. It lifts accepted replay chains to supply equality, leaf-cursor equality, canonical commitment-plan preconditions, final nullifier uniqueness, and final consumed bridge replay-key uniqueness. The projected replay layer centralizes production-style state-to-replay-input construction, proves the direct projected ledger-state executor equivalent to accepted replay, adds a raw-decoded native replay block surface, and now packages accepted block-index reload, canonical-state reload, canonical reorg-chain admission, atomic commit manifest admission, storage durability admission, and ledger/tree replay into one canonical publication refinement surface. The pending-action byte publication theorem additionally composes exact pending-action decode, pending-action reload key/hash admission, block-action decode, action-hash admission, wire replay projection, and raw canonical publication facts into one byte-admission-to-publication package. Production bindings additionally require a connected nonwinning sync batch to replay the complete candidate side chain before any N-record sled Batch is applied, and require every canonical sync tip-extension batch block to pass the production replay helper before the atomic batch commit. Production drift regressions reject exact-decodable action-body substitution on announced import, startup replay, reorg replay, and sync block-range publication surfaces; invalid noncanonical sync batches persist no prefix. The formal-core gate also covers a combined restarted side-branch reorg candidate whose sidecar transfer/nullifier rows and disabled inbound bridge replay key fail closed before canonical publication. Native monetary supply lifting is scoped to disabled treasury cadence; the active batch branch has separate bounded candidate evidence.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -6744,7 +6748,8 @@
         "The canonical publication refinement theorem is a zero-runtime-cost composition over existing production-bound reload, reorg-chain, atomic commit, durability, and ledger/tree replay predicates; it does not add a new Rust vector beyond the existing gates for those predicates.",
         "The pending-action byte publication theorem composes existing production-bound parser/admission booleans with raw canonical publication facts; it still does not prove arbitrary byte parser implementation correctness, BLAKE3/hash security, tx-leaf proof soundness, or complete native-node equivalence.",
         "The `action_byte_drift` Rust conformance gate is production evidence for decoded exact-decodable body substitution rejection at import/replay/sync boundaries; it is not a parser-internal proof for all arbitrary byte strings.",
-        "`mixed_restart_reorg_rejects_sidecar_nullifier_bridge_replay_before_publication` is a fail-closed disabled-inbound bridge regression over a restarted noncanonical side branch; it does not prove positive inbound bridge mint publication because that release path remains disabled until a PQ-clean verifier replaces the experimental verifier."
+        "`mixed_restart_reorg_rejects_sidecar_nullifier_bridge_replay_before_publication` is a fail-closed disabled-inbound bridge regression over a restarted noncanonical side branch; it does not prove positive inbound bridge mint publication because that release path remains disabled until a PQ-clean verifier replaces the experimental verifier.",
+        "Treasury cadence scope (2026-11-08): subsidy-plus-fee, zero-coinbase and supply/canonical-publication lifting statements in the historical models apply to the disabled-policy branch and replay issued_coinbase_amount=None. Generic bounded supply arithmetic and the unchanged block subsidy schedule remain valid independently. Active 60-block treasury issuance, pending accrual and Some(actual-issued) replay use the separate consensus.treasury-batch-actual-issued candidate model; no historical theorem is claimed to prove that active branch."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/AcceptedChain.lean",
@@ -8157,6 +8162,64 @@
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": []
+    },
+    {
+      "id": "consensus.treasury-batch-actual-issued",
+      "component": "candidate treasury cadence and actual-issued supply",
+      "claim_class": "lean_theorem",
+      "summary": "The additive Lean candidate model computes exact rounded per-height treasury entitlement over 60 blocks independently of miner claims, normalizes the physical primary reward at positive boundaries, rejects omitted positive due and early secondary treasury notes, and proves checked actual-issued supply advancement and overflow rejection. The replay selector preserves the historical None branch and uses checked actual issuance for Some amounts. Finite generated vectors compare the candidate model with native contextual accounting, supply and replay helpers.",
+      "status": "research_only",
+      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
+      "production_eligible": false,
+      "lean_theorems": [
+        "Hegemon.Consensus.TreasuryBatchSupply.sumShares_successor",
+        "Hegemon.Consensus.TreasuryBatchSupply.disabled_entitlement",
+        "Hegemon.Consensus.TreasuryBatchSupply.before_activation_no_reaccrual",
+        "Hegemon.Consensus.TreasuryBatchSupply.positive_due_cannot_be_omitted",
+        "Hegemon.Consensus.TreasuryBatchSupply.omitted_zero_due_issues_zero",
+        "Hegemon.Consensus.TreasuryBatchSupply.sole_positive_primary_is_treasury",
+        "Hegemon.Consensus.TreasuryBatchSupply.intermediate_forbids_secondary",
+        "Hegemon.Consensus.TreasuryBatchSupply.entitlement_partitions_exact_accrual",
+        "Hegemon.Consensus.TreasuryBatchSupply.active_supply_checked",
+        "Hegemon.Consensus.TreasuryBatchSupply.active_supply_overflow_rejects",
+        "Hegemon.Consensus.TreasuryBatchSupply.replay_disabled_is_historical",
+        "Hegemon.Consensus.TreasuryBatchSupply.replay_actual_issuance",
+        "Hegemon.Consensus.TreasuryBatchSupply.replay_actual_zero_ignores_scheduled_accrual",
+        "Hegemon.Consensus.TreasuryBatchSupply.batch_window_at_most_sixty",
+        "Hegemon.Consensus.TreasuryBatchSupply.accepted_one_binds_physical_issuance"
+      ],
+      "assumptions": [
+        "Cryptographic note admission, immutable recipient policy equality and canonical placement are explicit host predicates; the model does not derive them from arbitrary bytes.",
+        "The finite corpus covers 16 entitlement, 18 accounting and 7 replay examples. It is candidate conformance evidence, not universal compiled Rust refinement or whole-chain conservation.",
+        "Historical CoinbaseSupplyConservation, AcceptedChain, canonical publication, AcceptedSmallWoodBlockComposition and frozen RP05 package theorems are not extended to active batch issuance by this model.",
+        "No proof relation, proof backend, source package qualification, production authorization or deployment is established."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Consensus/TreasuryBatchSupply.lean",
+        "formal/lean/Hegemon/Consensus/GenerateTreasuryBatchSupplyVectors.lean",
+        "formal/core/treasury_batch_supply_vectors.json",
+        "node/src/native/treasury_formal_tests.rs",
+        "consensus/src/treasury.rs",
+        "node/src/native/block_flow.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh",
+        "DESIGN.md",
+        "METHODS.md",
+        "docs/NATIVE_SUPPLY_ACCOUNTING.md"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "bash scripts/check_formal_core.sh",
+        "cargo test -p hegemon-node lean_generated_treasury_batch_supply_vectors_match_production --lib --no-default-features -- --nocapture"
+      ],
+      "residual_risks": [
+        {
+          "id": "treasury-batch-runtime-refinement-boundary",
+          "description": "Universal compiled Rust refinement, complete chain and pending-entitlement conservation, arbitrary-byte note admission, immutable recipient-policy implementation correctness and cryptographic soundness remain open. The additive Lean model and finite candidate conformance vectors do not establish production eligibility or authorization.",
+          "status": "open",
+          "tracking": "config/highest-standard-formal-verification-matrix.json"
+        }
+      ]
     }
   ]
 }

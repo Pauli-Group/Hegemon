@@ -174,14 +174,14 @@ const REQUIRED_MECHANIZED_ASSUMPTION_TRACKS: &[(&str, &[&str])] = &[
 const EXPECTED_MECHANIZED_ASSUMPTION_PROPOSITION_BLAKE3: &str =
     "51512c473f20c40c3a88b9f2a1ba0d2e81b9a25a6591c025967b306121801657";
 const EXPECTED_FORMAL_SOURCE_TREE_BLAKE3: &str =
-    "7180fcbcea6842cc32ad8db188293a923ea19614f6360c8f7178990c85c1f71c";
+    "62db69e3769104b36481282e5e487c8682e2e94c24db87ca67d8a8544debb033";
 const PROGRESS_PERCENT_EPSILON: f64 = 0.0001;
 const CLAIMS_SCHEMA_VERSION: u32 = 2;
 const BLUEPRINT_SCHEMA_VERSION: u32 = 2;
 const ACTIVE_GOAL_SCHEMA_VERSION: u32 = 2;
-const CLAIM_BASELINE_ID: &str = "hegemon-formal-security-claims-2026-08-17-v1";
+const CLAIM_BASELINE_ID: &str = "hegemon-formal-security-claims-2026-11-08-treasury-candidate-v2";
 const EXPECTED_CLAIM_BASELINE_BLAKE3: &str =
-    "c27b47f4d9e82a86ad82b1a0b0d116586a35b7af47ea5755d98fd9e440d4841d";
+    "2f1dd53c1fa6adc2737fe7fab661b05b48569ad49346d06bd96aee8a0b97ec0f";
 const CONDITIONAL_SMALLWOOD_CLAIM_ID: &str =
     "formal.deployed-smallwood-no-counterfeit-critical-path";
 // These source-compatible historical implications use absolute injectivity,
@@ -2179,6 +2179,9 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "formal/lean/Hegemon/Consensus/StatementAnchorAdmission.lean",
         "formal/lean/Hegemon/Consensus/GenerateStatementAnchorAdmissionVectors.lean",
         "formal/lean/Hegemon/Consensus/Supply.lean",
+        "formal/lean/Hegemon/Consensus/TreasuryBatchSupply.lean",
+        "formal/lean/Hegemon/Consensus/GenerateTreasuryBatchSupplyVectors.lean",
+        "formal/core/treasury_batch_supply_vectors.json",
         "formal/lean/Hegemon/Consensus/GenerateSupplyVectors.lean",
         "formal/lean/Hegemon/Consensus/SupplyInvariant.lean",
         "formal/lean/Hegemon/Consensus/GenerateSupplyInvariantVectors.lean",
@@ -6078,6 +6081,9 @@ enum ResultObligation {
     MustGuardFalseFailClosed,
     MustMatchSomeOrReturnSupplyDeltaInvalid,
     MustMatchSomeAndCompareSupplyClaim,
+    MustDispatchInactiveTreasuryToLegacy,
+    MustDispatchMissingIssuanceToLegacy,
+    MustPreserveInactiveLegacyOverride,
 }
 
 fn parse_result_obligation(
@@ -6118,6 +6124,15 @@ fn parse_result_obligation(
         Some("must_match_some_or_return_supply_delta_invalid") => {
             Ok(ResultObligation::MustMatchSomeOrReturnSupplyDeltaInvalid)
         }
+        Some("must_preserve_inactive_legacy_override") => {
+            Ok(ResultObligation::MustPreserveInactiveLegacyOverride)
+        }
+        Some("must_dispatch_missing_issuance_to_legacy") => {
+            Ok(ResultObligation::MustDispatchMissingIssuanceToLegacy)
+        }
+        Some("must_dispatch_inactive_treasury_to_legacy") => {
+            Ok(ResultObligation::MustDispatchInactiveTreasuryToLegacy)
+        }
         Some("must_match_some_and_compare_supply_claim") => {
             Ok(ResultObligation::MustMatchSomeAndCompareSupplyClaim)
         }
@@ -6157,6 +6172,15 @@ fn result_obligation_error_suffix(obligation: ResultObligation) -> &'static str 
         ResultObligation::MustReturnTupleResultComponent => " with returned tuple result component",
         ResultObligation::MustResetWorkTemplateOnErr => " with empty work-template fallback",
         ResultObligation::MustGuardFalseFailClosed => " with fail-closed false guard handling",
+        ResultObligation::MustPreserveInactiveLegacyOverride => {
+            " with inactive replay override explicitly None"
+        }
+        ResultObligation::MustDispatchMissingIssuanceToLegacy => {
+            " with exact actual-issued/legacy replay dispatch"
+        }
+        ResultObligation::MustDispatchInactiveTreasuryToLegacy => {
+            " with exact inactive treasury legacy dispatch"
+        }
         ResultObligation::MustMatchSomeOrReturnSupplyDeltaInvalid => {
             " with supply-delta invalid match handling"
         }
@@ -7502,6 +7526,15 @@ fn call_satisfies_result_obligation(
         ResultObligation::MustGuardFalseFailClosed => {
             call_bool_false_guard_is_fail_closed(source, call)
         }
+        ResultObligation::MustPreserveInactiveLegacyOverride => {
+            call_preserves_inactive_legacy_override(source, call)
+        }
+        ResultObligation::MustDispatchMissingIssuanceToLegacy => {
+            call_dispatches_missing_issuance_to_legacy(source, call)
+        }
+        ResultObligation::MustDispatchInactiveTreasuryToLegacy => {
+            call_dispatches_inactive_treasury_to_legacy(source, call)
+        }
         ResultObligation::MustMatchSomeOrReturnSupplyDeltaInvalid => {
             call_option_matches_some_or_returns_supply_delta_invalid(source, call)
         }
@@ -7509,6 +7542,88 @@ fn call_satisfies_result_obligation(
             call_option_matches_some_and_compares_supply_claim(source, call)
         }
     }
+}
+
+/// Pin the sole override assignment and its inactive None branch before replay.
+/// This bounded syntactic guard does not prove the active note-value projection.
+fn call_preserves_inactive_legacy_override(source: &str, call: &RustCallSite) -> bool {
+    // Result obligations receive an already-delimited function body, with call
+    // offsets relative to that slice; there is no `fn` declaration to parse.
+    let context = rust_statement_context(source, call.start);
+    let Some(outer) = context.block_path.first().copied() else {
+        return false;
+    };
+    let Ok(outer_end) = match_rust_brace(source, outer) else {
+        return false;
+    };
+    let body = &source[outer + 1..outer_end];
+    let compact = body.split_whitespace().collect::<String>();
+    if !compact.starts_with("input.issued_coinbase_amount=ifpolicy.active_at(input.height){")
+        || compact.matches("input.issued_coinbase_amount").count() != 1
+    {
+        return false;
+    }
+    let Some(relative_open) = body.find('{') else {
+        return false;
+    };
+    let Ok(then_end) = match_rust_brace(source, outer + 1 + relative_open) else {
+        return false;
+    };
+    let suffix = &source[then_end + 1..call.start];
+    let suffix_compact = suffix.split_whitespace().collect::<String>();
+    if !suffix_compact.starts_with("else{None};") {
+        return false;
+    }
+    source[skip_ascii_whitespace(
+        source,
+        call.start + "evaluate_native_block_replay_refinement".len(),
+    ) + 1..call.close_paren]
+        .trim_start()
+        .starts_with("input,")
+}
+
+/// Pin the whole small replay supply selector, including actual checked-add
+/// and the legacy None branch. Admission of the supplied amount remains separate.
+fn call_dispatches_missing_issuance_to_legacy(source: &str, call: &RustCallSite) -> bool {
+    let context = rust_statement_context(source, call.start);
+    let Some(outer) = context.block_path.first().copied() else {
+        return false;
+    };
+    let Ok(outer_end) = match_rust_brace(source, outer) else {
+        return false;
+    };
+    let compact = source[outer + 1..outer_end]
+        .split_whitespace()
+        .collect::<String>()
+        .replace(",)", ")")
+        .replace(",}", "}");
+    compact == "matchinput.issued_coinbase_amount{Some(amount)=>input.parent_supply.checked_add(u128::from(amount)),None=>expected_native_supply_from_parts(input.parent_supply,input.height,input.fee_total,input.has_coinbase)}"
+}
+
+/// The inactive branch must be the first statement and return the bound legacy
+/// result unchanged. This is deliberately a bounded source guard, not a proof
+/// that the active branch refines the historical monetary model.
+fn call_dispatches_inactive_treasury_to_legacy(source: &str, call: &RustCallSite) -> bool {
+    let context = rust_statement_context(source, call.start);
+    if context.block_path.len() != 2 {
+        return false;
+    }
+    let outer = context.block_path[0];
+    let guard = context.block_path[1];
+    let condition = source[outer + 1..guard]
+        .split_whitespace()
+        .collect::<String>();
+    if condition != "if!policy.active_at(height)" {
+        return false;
+    }
+    let expression_start = rust_call_expression_start(source, call.start);
+    if source[guard + 1..expression_start].trim() != "return" {
+        return false;
+    }
+    let Ok(end) = match_rust_brace(source, guard) else {
+        return false;
+    };
+    matches!(source[call.close_paren + 1..end].trim(), ";" | "")
 }
 
 /// Deliberately narrow: the entire caller body must return exactly the direct
@@ -11823,6 +11938,75 @@ mod tests {
         )
         .unwrap_err();
         assert!(format!("{err:#}").contains("not covered by the formal security claims"));
+    }
+
+    #[test]
+    fn additive_claim_baseline_preserves_historical_ids_and_classification() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let raw = fs::read_to_string(root.join("config/formal-security-claims.json")).unwrap();
+        let ledger: Value = serde_json::from_str(&raw).unwrap();
+        let candidate = "consensus.treasury-batch-actual-issued";
+        let claims = ledger["claims"].as_array().unwrap();
+        let added = claims.iter().find(|c| c["id"] == candidate).unwrap();
+        assert_eq!(added["status"], "research_only");
+        assert_eq!(added["production_eligible"], false);
+        assert!(added.get("authority").is_none_or(Value::is_null));
+        let mut ids = claims
+            .iter()
+            .map(|c| c["id"].as_str().unwrap())
+            .collect::<BTreeSet<_>>();
+        for tombstone in ledger["claim_baseline"]["tombstones"].as_array().unwrap() {
+            ids.insert(tombstone["claim_id"].as_str().unwrap());
+        }
+        assert_eq!(ids.len(), 123);
+        assert_eq!(
+            claim_id_set_blake3(ids.iter().copied()),
+            EXPECTED_CLAIM_BASELINE_BLAKE3
+        );
+        ids.remove(candidate);
+        assert_eq!(ids.len(), 122);
+        assert_eq!(
+            claim_id_set_blake3(ids.iter().copied()),
+            "c27b47f4d9e82a86ad82b1a0b0d116586a35b7af47ea5755d98fd9e440d4841d"
+        );
+        let mut historical = claims
+            .iter()
+            .filter(|c| c["id"] != candidate)
+            .map(|c| {
+                let mut fields = serde_json::Map::new();
+                for field in [
+                    "id",
+                    "claim_class",
+                    "status",
+                    "production_eligible",
+                    "authority",
+                    "proof_model",
+                ] {
+                    fields.insert(
+                        field.to_owned(),
+                        c.get(field).cloned().unwrap_or(Value::Null),
+                    );
+                }
+                Value::Object(fields)
+            })
+            .collect::<Vec<_>>();
+        historical.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
+        let digest = |values: &[Value]| {
+            blake3::hash(&serde_json::to_vec(values).unwrap())
+                .to_hex()
+                .to_string()
+        };
+        let expected = "c08e898084e48007f8b74eeb6e85136464edad4a6b82a51ca4e69f8572291961";
+        assert_eq!(
+            digest(&historical),
+            expected,
+            "historical classification/status/authority/proof-model changed"
+        );
+        let mut removed = historical.clone();
+        removed.pop();
+        assert_ne!(digest(&removed), expected);
+        historical[0]["status"] = json!("reclassified-negative-control");
+        assert_ne!(digest(&historical), expected);
     }
 
     #[test]
@@ -18464,6 +18648,123 @@ mod tests {
         assert!(err.to_string().contains(
             "does not call advance_native_supply_digest with empty work-template fallback"
         ));
+    }
+
+    #[test]
+    fn blueprint_checks_inactive_replay_override() {
+        let exact = "input.issued_coinbase_amount = if policy.active_at(input.height) { Some(checked_actual()?) } else { None }; evaluate_native_block_replay_refinement(input, steps)";
+        for (name, body, valid) in [
+            ("exact", exact.to_owned(), true),
+            ("inverted", exact.replace("if policy", "if !policy"), false),
+            (
+                "inactive-zero",
+                exact.replace("else { None }", "else { Some(0) }"),
+                false,
+            ),
+            (
+                "rewritten",
+                exact.replace(
+                    "; evaluate_",
+                    "; input.issued_coinbase_amount = Some(7); evaluate_",
+                ),
+                false,
+            ),
+        ] {
+            let root = test_root(&format!("inactive-replay-override-{name}"));
+            write_repo_file(&root, "evidence/support.txt", "support");
+            write_repo_file(&root, "evidence/target.txt", "target");
+            write_repo_file(
+                &root,
+                "src/native.rs",
+                &format!(
+                "fn evaluate_native_block_replay_refinement() {{}}\nfn wrapper() {{ {body} }}\n"),
+            );
+            let claims_path = root.join("claims.json");
+            let blueprint_path = root.join("blueprint.json");
+            write_json(&claims_path, claims_fixture());
+            write_json(
+                &blueprint_path,
+                blueprint_fixture_with_result_binding(
+                    "evaluate_native_block_replay_refinement",
+                    &["wrapper"],
+                    "must_preserve_inactive_legacy_override",
+                ),
+            );
+            assert_eq!(
+                check_blueprint_file(&blueprint_path, &claims_path).is_ok(),
+                valid,
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn blueprint_checks_actual_issued_replay_selector() {
+        let exact = "match input.issued_coinbase_amount { Some(amount) => input.parent_supply.checked_add(u128::from(amount)), None => expected_native_supply_from_parts(input.parent_supply, input.height, input.fee_total, input.has_coinbase), }";
+        for (name, body, valid) in [
+            ("exact", exact.to_owned(), true),
+            (
+                "saturating",
+                exact.replace("checked_add", "saturating_add"),
+                false,
+            ),
+            ("wrong-height", exact.replace("input.height", "0"), false),
+            (
+                "wrong-actual",
+                exact.replace("u128::from(amount)", "0"),
+                false,
+            ),
+        ] {
+            let root = test_root(&format!("actual-issued-selector-{name}"));
+            write_repo_file(&root, "evidence/support.txt", "support");
+            write_repo_file(&root, "evidence/target.txt", "target");
+            write_repo_file(
+                &root,
+                "src/native.rs",
+                &format!(
+                    "fn expected_native_supply_from_parts() {{}}\nfn selector() {{ {body} }}\n"
+                ),
+            );
+            let claims_path = root.join("claims.json");
+            let blueprint_path = root.join("blueprint.json");
+            write_json(&claims_path, claims_fixture());
+            write_json(
+                &blueprint_path,
+                blueprint_fixture_with_result_binding(
+                    "expected_native_supply_from_parts",
+                    &["selector"],
+                    "must_dispatch_missing_issuance_to_legacy",
+                ),
+            );
+            assert_eq!(
+                check_blueprint_file(&blueprint_path, &claims_path).is_ok(),
+                valid,
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn blueprint_checks_inactive_treasury_legacy_dispatch() {
+        for (name, body, valid) in [
+            ("exact", "if !policy.active_at(height) { return legacy(actions, height); } active()", true),
+            ("inverted", "if policy.active_at(height) { return legacy(actions, height); } active()", false),
+            ("discarded", "if !policy.active_at(height) { legacy(actions, height); return Ok(()); } active()", false),
+            ("late", "mutate(); if !policy.active_at(height) { return legacy(actions, height); } active()", false),
+            ("changed-result", "if !policy.active_at(height) { return legacy(actions, height).or(Ok(())); } active()", false),
+        ] {
+            let root = test_root(&format!("inactive-treasury-{name}"));
+            write_repo_file(&root, "evidence/support.txt", "support");
+            write_repo_file(&root, "evidence/target.txt", "target");
+            write_repo_file(&root, "src/native.rs", &format!(
+                "fn legacy() {{}}\nfn wrapper() {{ {body} }}\n"));
+            let claims_path = root.join("claims.json");
+            let blueprint_path = root.join("blueprint.json");
+            write_json(&claims_path, claims_fixture());
+            write_json(&blueprint_path, blueprint_fixture_with_result_binding(
+                "legacy", &["wrapper"], "must_dispatch_inactive_treasury_to_legacy"));
+            assert_eq!(check_blueprint_file(&blueprint_path, &claims_path).is_ok(), valid, "{name}");
+        }
     }
 
     #[test]

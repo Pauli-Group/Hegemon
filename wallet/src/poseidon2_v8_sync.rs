@@ -2513,6 +2513,386 @@ pub(crate) mod tests {
         }
     }
 
+    // Under the activated cadence, a positive boundary with no miner claim uses
+    // action12's existing one-note carrier. The wallet reads the public opening,
+    // rather than assigning ownership from its historical `miner_note` label.
+    fn treasury_only_reward_action(note: Poseidon2V8CoinbaseNoteData) -> Vec<u8> {
+        let mut wire =
+            decode_canonical_action_exact(&coinbase_action(&MintPoseidon2V8CoinbaseArgs {
+                miner_note: note.clone(),
+            }))
+            .unwrap();
+        wire.action_id = ACTION_MINT_POSEIDON2_V8_REWARDS;
+        wire.binding = protocol_versioning::launch_candidate::RP06_VERSION_BINDING.into();
+        wire.public_args = MintPoseidon2V8RewardsArgs {
+            miner_note: note,
+            funding_note: None,
+        }
+        .encode();
+        wire.tx_hash = pending_action_hash(&wire);
+        wire.encode()
+    }
+
+    fn treasury_cadence_hash(height: u64, branch: u8) -> [u8; 32] {
+        if height == 0 {
+            return GENESIS;
+        }
+        let mut hash = [branch; 32];
+        hash[..8].copy_from_slice(&height.to_le_bytes());
+        hash
+    }
+
+    #[test]
+    fn treasury_only_boundary_recovers_threshold_policy_and_restores_maturity_after_reorg() {
+        use crate::poseidon2_v8_multisig::{
+            note_from_words, v8_treasury_signer_tag, V8TreasuryDescriptor,
+        };
+        use crate::private_spend_build::{
+            treasury_value_input, OutputRequest, SpendReference, TreasuryFinalTemplate,
+        };
+
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("batched-threshold.wallet");
+        let roots = [0x81, 0x82, 0x83].map(|tag| RootSecret::from_bytes([tag; 32]));
+        let keys = roots.each_ref().map(RootSecret::derive);
+        let tags = keys.each_ref().map(|k| v8_treasury_signer_tag(k).unwrap());
+        let descriptor = V8TreasuryDescriptor::create(
+            &keys[0],
+            [0x84; 32],
+            tags,
+            &mut StdRng::seed_from_u64(840),
+        )
+        .unwrap();
+        // Sixty exact 1-HGN shares fit both public reward and PrivateSpend ranges.
+        let batch_amount = 60 * 100_000_000u64;
+        let mut reward = build_poseidon2_v8_coinbase_args(
+            &descriptor.receive_address,
+            batch_amount,
+            &mut StdRng::seed_from_u64(841),
+        )
+        .unwrap()
+        .miner_note;
+        // The authenticated note body follows seven identity bytes and its
+        // four-byte length. Leave the container's trailing zero padding intact.
+        reward.encrypted_note.ciphertext[7 + 4] ^= 1;
+        assert!(
+            NoteCiphertext::from_chain_bytes(&reward.encrypted_note.encode())
+                .unwrap()
+                .decrypt(&keys[0].poseidon2_v8_address(0).unwrap())
+                .is_err()
+        );
+        let action = treasury_only_reward_action(reward.clone());
+        let recovered = poseidon2_v8_reward_notes_from_canonical_action(&action)
+            .unwrap()
+            .unwrap();
+        assert_eq!(recovered, vec![reward.clone()]);
+        assert!(
+            crate::poseidon2_v8_coinbase::public_poseidon2_v8_reward_opening(
+                &recovered[0],
+                &descriptor.receive_address,
+            )
+            .is_ok()
+        );
+        assert!(
+            crate::poseidon2_v8_coinbase::public_poseidon2_v8_reward_opening(
+                &recovered[0],
+                &keys[1].poseidon2_v8_address(0).unwrap().shielded_address(),
+            )
+            .is_err()
+        );
+
+        let store = WalletStore::create_from_root(&path, PASSPHRASE, roots[1].clone()).unwrap();
+        store
+            .ensure_poseidon2_v8_genesis_for_test(GENESIS, TEST_STABLECOIN_ROOT)
+            .unwrap();
+        store
+            .import_v8_treasury_descriptor(descriptor.clone())
+            .unwrap();
+        let block_at = |height: u64| {
+            canonical_block(
+                height,
+                treasury_cadence_hash(height, 0x85),
+                treasury_cadence_hash(height - 1, 0x85),
+                if height == 60 {
+                    vec![action.clone()]
+                } else {
+                    vec![]
+                },
+            )
+        };
+        for height in 1..=178 {
+            store
+                .apply_poseidon2_v8_canonical_block(&block_at(height))
+                .unwrap();
+        }
+        // A signer can discover a public treasury opening without the receiving
+        // keeper's decryption key; its threshold note never becomes ordinary money.
+        assert_eq!(
+            store
+                .v8_treasury_notes(descriptor.account_id)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(store.poseidon2_v8_owned_notes().unwrap().is_empty());
+        assert!(store
+            .v8_treasury_note_view(descriptor.account_id, reward.commitment, 0)
+            .is_err());
+        assert!(store
+            .poseidon2_v8_canonical_commitment_positions(reward.commitment)
+            .unwrap()
+            .is_empty());
+        let before_release = store.poseidon2_v8_tip().unwrap();
+        drop(store);
+
+        let reopened = WalletStore::open(&path, PASSPHRASE).unwrap();
+        assert_eq!(reopened.poseidon2_v8_tip().unwrap(), before_release);
+        assert!(reopened
+            .v8_treasury_note_view(descriptor.account_id, reward.commitment, 0)
+            .is_err());
+        reopened
+            .apply_poseidon2_v8_canonical_block(&block_at(179))
+            .unwrap();
+        let view = reopened
+            .v8_treasury_note_view(descriptor.account_id, reward.commitment, 0)
+            .unwrap();
+        assert_eq!(
+            note_from_words(&view.note.note_words).unwrap().value,
+            batch_amount
+        );
+        assert_eq!(view.path.position, 0);
+        assert!(!view.spent && !view.reserved);
+        let tip = reopened.poseidon2_v8_tip().unwrap();
+        let reference = SpendReference {
+            chain_id: descriptor.chain_id,
+            parent_hash: tip.block_hash,
+            parent_height: tip.height,
+            merkle_root: tip.anchor,
+        };
+        let (input, policy) = treasury_value_input(reference, &descriptor, &view).unwrap();
+        // Prepare the existing two-input treasury final operation using the exact
+        // matured note and path. Approval proofs/native acceptance remain separate.
+        let template = TreasuryFinalTemplate::prepare(
+            reference,
+            1,
+            &input,
+            policy,
+            [
+                OutputRequest {
+                    recipient: keys[1].poseidon2_v8_address(1).unwrap().shielded_address(),
+                    value: batch_amount - 1,
+                },
+                OutputRequest {
+                    recipient: keys[1].poseidon2_v8_address(2).unwrap().shielded_address(),
+                    value: 0,
+                },
+            ],
+        )
+        .unwrap();
+        assert_ne!(
+            template.approval_policy([0; 3], 0).unwrap().intent,
+            vec![0; transaction_circuit::private_spend::INTENT_WORDS]
+        );
+        drop(template);
+        reopened
+            .rollback_poseidon2_v8_to(178, before_release.block_hash)
+            .unwrap();
+        assert!(reopened
+            .v8_treasury_note_view(descriptor.account_id, reward.commitment, 0)
+            .is_err());
+        reopened
+            .apply_poseidon2_v8_canonical_block(&block_at(179))
+            .unwrap();
+        assert_eq!(
+            reopened
+                .v8_treasury_note_view(descriptor.account_id, reward.commitment, 0)
+                .unwrap(),
+            view
+        );
+        // Detaching the payout itself removes canonical spending authority too.
+        reopened
+            .rollback_poseidon2_v8_to(59, treasury_cadence_hash(59, 0x85))
+            .unwrap();
+        assert!(reopened
+            .v8_treasury_note_view(descriptor.account_id, reward.commitment, 0)
+            .is_err());
+        let replacement = build_poseidon2_v8_coinbase_args(
+            &descriptor.receive_address,
+            batch_amount,
+            &mut StdRng::seed_from_u64(842),
+        )
+        .unwrap()
+        .miner_note;
+        let replacement_action = treasury_only_reward_action(replacement.clone());
+        let replacement_block = |height: u64| {
+            canonical_block(
+                height,
+                treasury_cadence_hash(height, 0x86),
+                if height == 60 {
+                    treasury_cadence_hash(59, 0x85)
+                } else {
+                    treasury_cadence_hash(height - 1, 0x86)
+                },
+                if height == 60 {
+                    vec![replacement_action.clone()]
+                } else {
+                    vec![]
+                },
+            )
+        };
+        for height in 60..=179 {
+            reopened
+                .apply_poseidon2_v8_canonical_block(&replacement_block(height))
+                .unwrap();
+        }
+        assert!(reopened
+            .v8_treasury_note_view(descriptor.account_id, reward.commitment, 0)
+            .is_err());
+        let replacement_view = reopened
+            .v8_treasury_note_view(descriptor.account_id, replacement.commitment, 0)
+            .unwrap();
+        assert_eq!(
+            reopened
+                .poseidon2_v8_canonical_commitment_positions(replacement.commitment)
+                .unwrap(),
+            vec![0]
+        );
+
+        let fresh = WalletStore::create_from_root(
+            directory.path().join("fresh-threshold.wallet"),
+            PASSPHRASE,
+            roots[2].clone(),
+        )
+        .unwrap();
+        fresh
+            .ensure_poseidon2_v8_genesis_for_test(GENESIS, TEST_STABLECOIN_ROOT)
+            .unwrap();
+        fresh
+            .import_v8_treasury_descriptor(descriptor.clone())
+            .unwrap();
+        for height in 1..=179 {
+            let block = if height < 60 {
+                block_at(height)
+            } else {
+                replacement_block(height)
+            };
+            fresh.apply_poseidon2_v8_canonical_block(&block).unwrap();
+        }
+        assert_eq!(
+            fresh.poseidon2_v8_tip().unwrap(),
+            reopened.poseidon2_v8_tip().unwrap()
+        );
+        assert_eq!(
+            fresh
+                .v8_treasury_note_view(descriptor.account_id, replacement.commitment, 0)
+                .unwrap(),
+            replacement_view
+        );
+    }
+
+    #[test]
+    fn treasury_only_batch_values_remain_valid_in_existing_two_input_private_spend() {
+        use crate::private_spend_build::{
+            prepare, OutputRequest, SpendInput, SpendOperation, SpendReference,
+        };
+        use transaction_circuit::private_spend as relation;
+
+        let directory = tempdir().unwrap();
+        let root = RootSecret::from_bytes([0x91; 32]);
+        let keys = root.derive();
+        let store = WalletStore::create_from_root(
+            directory.path().join("batch-values.wallet"),
+            PASSPHRASE,
+            root.clone(),
+        )
+        .unwrap();
+        store
+            .ensure_poseidon2_v8_genesis_for_test(GENESIS, TEST_STABLECOIN_ROOT)
+            .unwrap();
+        let amount = 60 * 100_000_000u64;
+        let first = coinbase_args(&root, amount, 910).miner_note;
+        let second = coinbase_args(&root, amount, 911).miner_note;
+        for height in 1..=239 {
+            let actions = match height {
+                60 => vec![treasury_only_reward_action(first.clone())],
+                120 => vec![treasury_only_reward_action(second.clone())],
+                _ => vec![],
+            };
+            store
+                .apply_poseidon2_v8_canonical_block(&canonical_block(
+                    height,
+                    treasury_cadence_hash(height, 0x92),
+                    treasury_cadence_hash(height - 1, 0x92),
+                    actions,
+                ))
+                .unwrap();
+            if height == 178 {
+                assert!(store.poseidon2_v8_owned_notes().unwrap().is_empty());
+                assert!(store.poseidon2_v8_spend_context().is_err());
+            } else if height == 238 {
+                assert_eq!(store.poseidon2_v8_owned_notes().unwrap().len(), 1);
+                assert!(store.poseidon2_v8_spend_context().is_err());
+            }
+        }
+        let context = store.poseidon2_v8_spend_context().unwrap();
+        assert_eq!(
+            context.notes.each_ref().map(|n| n.created_height),
+            [60, 120]
+        );
+        let chain_id = [0x93; 32];
+        let inputs = context.notes.each_ref().map(|view| {
+            let n = view.opening;
+            SpendInput::legacy(
+                relation::Note {
+                    value: n.value,
+                    asset_id: n.asset_id,
+                    recipient_key: n.recipient_key,
+                    authorization_key: n.authorization_key,
+                    rho: n.rho,
+                    randomness: n.randomness,
+                },
+                view.position.try_into().unwrap(),
+                view.path,
+                &keys,
+                chain_id,
+            )
+            .unwrap()
+        });
+        // `prepare` compiles the unchanged PrivateSpend relation and verifies
+        // the packed witness. This is constraint evidence, not a generated proof.
+        let prepared = prepare(
+            SpendReference {
+                chain_id,
+                parent_hash: context.tip.block_hash,
+                parent_height: context.tip.height,
+                merkle_root: context.tip.anchor,
+            },
+            1,
+            inputs,
+            [
+                OutputRequest {
+                    recipient: keys.poseidon2_v8_address(4).unwrap().shielded_address(),
+                    value: amount * 2 - 1,
+                },
+                OutputRequest {
+                    recipient: keys.poseidon2_v8_address(7).unwrap().shielded_address(),
+                    value: 0,
+                },
+            ],
+            SpendOperation::Ordinary,
+        )
+        .unwrap();
+        let public = prepared.public_statement();
+        assert_eq!(public.reference_parent_height, 239);
+        assert_eq!(public.merkle_root, context.tip.anchor);
+        assert_eq!(public.nullifiers.len(), 2);
+        assert_ne!(public.nullifiers[0], public.nullifiers[1]);
+        assert_eq!(
+            public.nullifiers,
+            context.notes.each_ref().map(|n| n.nullifier)
+        );
+    }
+
     fn transfer_inline_args(
         material: &Poseidon2V8SpendMaterial,
         relation_binding: Poseidon2V8Digest,

@@ -588,7 +588,8 @@ pub(crate) fn native_canonical_reorg_chain_admission_input(
         if meta.chain_id != HEGEMON_CHAIN_ID_V1 {
             canonical_chain_ids_match = false;
         }
-        if meta.rules_hash != HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE {
+        if meta.rules_hash != consensus_light_client::native_rules_hash(&meta.chain_id, meta.height)
+        {
             canonical_rules_hashes_match = false;
         }
         if meta.hash != meta.work_hash {
@@ -626,6 +627,22 @@ pub(crate) fn native_canonical_reorg_chain_admission_input(
         height_entry_count_matches_chain,
         height_entries_match_chain,
     })
+}
+
+/// The unchanged per-block model remains the None branch; scheduled batch
+/// blocks supply their independently validated physical issued-note amount.
+pub(crate) fn expected_native_supply_for_replay(
+    input: NativeBlockReplayRefinementInput,
+) -> Option<u128> {
+    match input.issued_coinbase_amount {
+        Some(amount) => input.parent_supply.checked_add(u128::from(amount)),
+        None => expected_native_supply_from_parts(
+            input.parent_supply,
+            input.height,
+            input.fee_total,
+            input.has_coinbase,
+        ),
+    }
 }
 
 pub(crate) fn evaluate_native_block_replay_refinement<'a>(
@@ -667,12 +684,7 @@ pub(crate) fn evaluate_native_block_replay_refinement_with_trace<'a>(
         }
     };
     trace.push("expected_supply".to_owned());
-    let expected_supply = match expected_native_supply_from_parts(
-        input.parent_supply,
-        input.height,
-        input.fee_total,
-        input.has_coinbase,
-    ) {
+    let expected_supply = match expected_native_supply_for_replay(input) {
         Some(expected_supply) => expected_supply,
         None => {
             let rejection = NativeBlockReplayRefinementRejection::SupplyDeltaInvalid;
@@ -808,14 +820,51 @@ pub(crate) fn native_block_replay_supply_parts(
     Ok((fee_total, projection.has_coinbase))
 }
 
+pub(crate) fn native_block_replay_supply_parts_with_policy(
+    actions: &[PendingAction],
+    height: u64,
+    policy: consensus::treasury::TreasuryRewardPolicy,
+) -> Result<(u64, bool)> {
+    if !policy.active_at(height) {
+        return native_block_replay_supply_parts(actions, height);
+    }
+    let projection = native_supply_composition_projection_with_policy(actions, height, policy)?;
+    let fee_total = if projection.has_coinbase {
+        projection
+            .checked_transfer_fee_total
+            .ok_or_else(|| anyhow!("block fee total overflow"))?
+    } else {
+        projection.checked_transfer_fee_total.unwrap_or(0)
+    };
+    Ok((fee_total, projection.has_coinbase))
+}
+
 pub(crate) fn evaluate_native_block_replay_refinement_for_actions(
     context: &'static str,
     da_ciphertext_tree: &sled::Tree,
     ciphertext_archive_tree: Option<&sled::Tree>,
     state: &NativeState,
     actions: &[PendingAction],
-    input: NativeBlockReplayRefinementInput,
+    policy: consensus::treasury::TreasuryRewardPolicy,
+    mut input: NativeBlockReplayRefinementInput,
 ) -> Result<NativeBlockReplayRefinementSummary> {
+    // Contextual network validation independently authorizes amounts before this
+    // composition step. Supply counts physical issuance, never pending accrual.
+    input.issued_coinbase_amount =
+        if policy.active_at(input.height) {
+            Some(actions.iter().filter(|a| is_coinbase_action(a)).try_fold(
+                0u64,
+                |total, action| {
+                    total
+                        .checked_add(coinbase_action_amount(action)?)
+                        .ok_or_else(|| anyhow!("issued reward sum overflow"))
+                },
+            )?)
+        } else {
+            // Preserve the original per-block supply model for historical and
+            // unscheduled heights. The batch model applies only after activation.
+            None
+        };
     let materialized = materialize_native_action_payloads_from_state(
         da_ciphertext_tree,
         ciphertext_archive_tree,
@@ -864,6 +913,7 @@ pub(crate) fn native_block_replay_refinement_input_from_state(
         height,
         fee_total,
         has_coinbase,
+        issued_coinbase_amount: None,
         claimed_supply,
         tx_count_matches,
         state_root_matches,
@@ -2003,6 +2053,20 @@ pub(crate) fn validate_coinbase_accounting(actions: &[PendingAction], height: u6
     validate_coinbase_reward_split(actions, height)
 }
 
+pub(crate) fn validate_coinbase_accounting_with_policy(
+    actions: &[PendingAction],
+    height: u64,
+    policy: consensus::treasury::TreasuryRewardPolicy,
+) -> Result<()> {
+    if !policy.active_at(height) {
+        return validate_coinbase_accounting(actions, height);
+    }
+    let entitlement = policy
+        .entitlement(height)
+        .ok_or_else(|| anyhow!("treasury entitlement overflow"))?;
+    validate_batched_coinbase_accounting(actions, height, entitlement)
+}
+
 pub(crate) fn validate_coinbase_route_at_height(
     actions: &[PendingAction],
     _height: u64,
@@ -2083,6 +2147,60 @@ pub(crate) fn native_supply_composition_projection(
     })
 }
 
+pub(crate) fn native_supply_composition_projection_with_policy(
+    actions: &[PendingAction],
+    height: u64,
+    policy: consensus::treasury::TreasuryRewardPolicy,
+) -> Result<NativeSupplyCompositionProjection> {
+    if !policy.active_at(height) {
+        return native_supply_composition_projection(actions, height);
+    }
+    validate_coinbase_accounting_with_policy(actions, height, policy)?;
+    let ordered_transfer_fees = actions
+        .iter()
+        .filter(|action| is_shielded_transfer_action(action))
+        .map(|action| action.fee)
+        .collect::<Vec<_>>();
+    let exact_transfer_fee_total = ordered_transfer_fees
+        .iter()
+        .try_fold(0u128, |total, fee| total.checked_add(u128::from(*fee)))
+        .ok_or_else(|| anyhow!("exact block fee total overflow"))?;
+    let checked_transfer_fee_total = checked_transfer_fee_total(actions);
+    let coinbase_actions = actions
+        .iter()
+        .filter(|action| is_coinbase_action(action))
+        .collect::<Vec<_>>();
+    let coinbase_count = coinbase_actions.len();
+    let has_coinbase = coinbase_count == 1;
+    let observed_coinbase_amount = coinbase_actions
+        .first()
+        .map(|action| coinbase_action_amount(action))
+        .transpose()?;
+    let expected_coinbase_amount = if has_coinbase {
+        Some(if policy.entitlement(height).is_some() {
+            observed_coinbase_amount.ok_or_else(|| anyhow!("issued coinbase amount missing"))?
+        } else {
+            expected_coinbase_amount(actions, height)?
+        })
+    } else {
+        None
+    };
+    let supply_delta = expected_coinbase_amount.map(u128::from).unwrap_or(0);
+
+    Ok(NativeSupplyCompositionProjection {
+        ordered_transfer_fees,
+        exact_transfer_fee_total,
+        checked_transfer_fee_total,
+        // The deployed native action grammar has no independent burn action.
+        accepted_burn_amounts: Vec::new(),
+        coinbase_count,
+        observed_coinbase_amount,
+        expected_coinbase_amount,
+        has_coinbase,
+        supply_delta,
+    })
+}
+
 pub(crate) fn native_block_supply_delta(actions: &[PendingAction], height: u64) -> Result<u128> {
     native_supply_composition_projection(actions, height).map(|projection| projection.supply_delta)
 }
@@ -2096,6 +2214,77 @@ pub(crate) fn advance_native_supply_digest(
     parent_supply
         .checked_add(delta)
         .ok_or_else(|| anyhow!("native supply digest overflow"))
+}
+
+pub(crate) fn advance_native_supply_digest_with_policy(
+    parent_supply: u128,
+    actions: &[PendingAction],
+    height: u64,
+    policy: consensus::treasury::TreasuryRewardPolicy,
+) -> Result<u128> {
+    if !policy.active_at(height) {
+        return advance_native_supply_digest(parent_supply, actions, height);
+    }
+    let delta =
+        native_supply_composition_projection_with_policy(actions, height, policy)?.supply_delta;
+    parent_supply
+        .checked_add(delta)
+        .ok_or_else(|| anyhow!("native supply digest overflow"))
+}
+
+/// Logical roles under an already selected active cadence. Exact note admission
+/// and contextual amounts are checked independently before these roles are used.
+pub(crate) fn batched_reward_roles<'a>(
+    args: &'a MintPoseidon2V8RewardsArgs,
+    payout: u64,
+) -> (
+    Option<&'a protocol_shielded_pool::poseidon2_v8_coinbase::Poseidon2V8CoinbaseNoteData>,
+    Option<&'a protocol_shielded_pool::poseidon2_v8_coinbase::Poseidon2V8CoinbaseNoteData>,
+) {
+    if payout > 0 && args.funding_note.is_none() {
+        (None, Some(&args.miner_note))
+    } else {
+        (Some(&args.miner_note), args.funding_note.as_ref())
+    }
+}
+
+fn validate_batched_coinbase_accounting(
+    actions: &[PendingAction],
+    height: u64,
+    entitlement: consensus::treasury::TreasuryEntitlement,
+) -> Result<()> {
+    validate_native_coinbase_placement(actions, entitlement.payout > 0)?;
+    let rewards = actions
+        .iter()
+        .filter(|a| is_coinbase_action(a))
+        .collect::<Vec<_>>();
+    if rewards.is_empty() {
+        return Ok(());
+    }
+    let action = rewards[0];
+    if action.action_id != ACTION_MINT_POSEIDON2_V8_REWARDS
+        || !is_poseidon2_v8_coinbase_action(action)
+    {
+        return Err(anyhow!(
+            "batched treasury requires the canonical V8 rewards action"
+        ));
+    }
+    admitted_poseidon2_v8_coinbase_commitments(action)?;
+    let args: MintPoseidon2V8RewardsArgs =
+        decode_scale_exact(&action.public_args, "batched V8 rewards")?;
+    let fees =
+        checked_transfer_fee_total(actions).ok_or_else(|| anyhow!("block fee total overflow"))?;
+    let (miner_amount, _) =
+        poseidon2_v8_reward_split(consensus::reward::block_subsidy(height), fees)
+            .ok_or_else(|| anyhow!("batched miner reward overflow"))?;
+    let (miner, treasury) = batched_reward_roles(&args, entitlement.payout);
+    if miner.is_some_and(|note| note.opening.value != miner_amount)
+        || treasury.map(|note| note.opening.value)
+            != (entitlement.payout > 0).then_some(entitlement.payout)
+    {
+        return Err(anyhow!("batched V8 rewards allocation mismatch"));
+    }
+    Ok(())
 }
 
 /// Exact allocation check independent of the network's chosen public recipient.
@@ -2123,14 +2312,34 @@ fn validate_coinbase_reward_split(actions: &[PendingAction], height: u64) -> Res
 }
 
 /// Contextual acceptance pins the complete funding authorization identity to
-/// the network manifest. Absence of coinbase forfeits both shares; claiming
-/// any subsidy cannot bypass or redirect the funding output.
+/// the network manifest. Before cadence activation, omission forfeits both
+/// shares. Active cadence accrues scheduled treasury entitlement independently;
+/// a positive due payout is mandatory even when the miner forfeits its share.
 pub(crate) fn validate_coinbase_funding_accounting(
     actions: &[PendingAction],
     height: u64,
     recipient: Option<&ShieldedAddress>,
 ) -> Result<()> {
-    validate_coinbase_accounting(actions, height)?;
+    validate_coinbase_funding_accounting_with_policy(
+        actions,
+        height,
+        recipient,
+        consensus::treasury::TreasuryRewardPolicy::disabled(),
+    )
+}
+
+pub(crate) fn validate_coinbase_funding_accounting_with_policy(
+    actions: &[PendingAction],
+    height: u64,
+    recipient: Option<&ShieldedAddress>,
+    policy: consensus::treasury::TreasuryRewardPolicy,
+) -> Result<()> {
+    validate_coinbase_accounting_with_policy(actions, height, policy)?;
+    if policy.entitlement(height).is_some() && recipient.is_none() {
+        return Err(anyhow!(
+            "batched treasury requires immutable network recipient"
+        ));
+    }
     for action in actions.iter().filter(|action| is_coinbase_action(action)) {
         match (
             recipient,
@@ -2148,7 +2357,12 @@ pub(crate) fn validate_coinbase_funding_accounting(
             (Some(address), true) => {
                 let args: MintPoseidon2V8RewardsArgs =
                     decode_scale_exact(&action.public_args, "V8 rewards args")?;
-                if let Some(note) = args.funding_note {
+                let treasury = if let Some(entitlement) = policy.entitlement(height) {
+                    batched_reward_roles(&args, entitlement.payout).1
+                } else {
+                    args.funding_note.as_ref()
+                };
+                if let Some(note) = treasury {
                     let recipient = transaction_circuit::smallwood_poseidon2_v8_coinbase::poseidon2_v8_words_from_canonical_bytes(address.pk_recipient)
                         .map_err(|error| anyhow!("invalid funding recipient: {error:?}"))?;
                     let authorization = transaction_circuit::smallwood_poseidon2_v8_coinbase::poseidon2_v8_words_from_canonical_bytes(address.pk_auth)

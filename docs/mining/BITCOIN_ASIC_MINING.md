@@ -31,8 +31,9 @@ Set one exact worker name and a secret in the adapter's environment, then run:
       --bind 127.0.0.1 --port 3333 \
       --worker miner.1 --share-difficulty 0.001
 
-If the node requires an RPC pool token, set `HEGEMON_POOL_RPC_TOKEN` in the
-adapter's environment. Configure the ASIC's Stratum V1 pool to point to
+The native RPC does not authenticate pool tokens. Keep its listener on loopback
+and use an authenticated SSH tunnel when the adapter is remote. A nonempty
+`HEGEMON_POOL_RPC_TOKEN` is rejected by the adapter. Configure the ASIC's Stratum V1 pool to point to
 `stratum+tcp://127.0.0.1:3333`, worker `miner.1`, and the same password. An ASIC
 on another host needs a private TCP tunnel or a deliberate public bind with
 `--allow-public-bind`; Stratum V1 itself sends credentials and work without
@@ -44,6 +45,12 @@ default and reads at most 8192 bytes per newline JSON request. Each connection
 has a bounded outbound queue; a miner that stops reading is disconnected when
 its queue fills, without delaying work for other miners.
 
+The default split is a 20-byte server extranonce1 plus an 8-byte miner
+extranonce2. For firmware requiring the previous 24+4 split, add
+`--extranonce2-bytes 4`. Other positive splits can be configured with that
+option; the combined extranonce always remains 28 bytes. Configure a separate
+adapter listener for devices requiring a different split.
+
 The adapter uses Python's standard library only. No package installation is
 needed. Check its command line options with `python3 scripts/bitcoin_asic_stratum.py
 --help`.
@@ -53,7 +60,10 @@ needed. Check its command line options with `python3 scripts/bitcoin_asic_stratu
 The adapter polls `hegemon_poolWork` and requires `available: true`,
 `algorithm: "sha256d-bitcoin80"`, `job_id`, `version`, `parent_hash`, `ntime`,
 `nbits`, `target`, `coinbase_prefix`, `coinbase_suffix`, `extranonce_bytes: 28`,
-`header80`, and `expires_in`. `version`, `ntime`, and `nbits` are eight numeric
+`header80`, and `expires_in`. The node also advertises `version_rolling_mask`:
+`00000000` before the selected mining-profile activation and `1fffffe0` once
+active. An older RPC without the field is treated as fixed version.
+`version`, `version_rolling_mask`, `ntime`, and `nbits` are eight numeric
 hex characters; `parent_hash` is the `0x`-prefixed 32-byte displayed big endian hash;
 `target` is a `0x`-prefixed 32-byte displayed big endian integer;
 `header80` is 160 raw hex characters. The adapter checks that `header80`
@@ -63,24 +73,42 @@ compact encoding of a nonzero target no easier than `0x207fffff`. The adapter
 rejects a sign bit, overflow, noncanonical encodings, and any disagreement
 between `nbits` and the node's expanded target.
 
-Each authorized connection gets a unique 24-byte extranonce1 and provides a
-4-byte extranonce2. The node provides a serialized Bitcoin-shaped synthetic
+Each connection gets a unique extranonce1 and provides the extranonce2 size
+returned by `mining.subscribe` (20+8 by default, 24+4 with the compatibility
+option). The node provides a serialized Bitcoin-shaped synthetic
 coinbase wrapper. Its bytes are
 `coinbase_prefix || extranonce1 || extranonce2 || coinbase_suffix`.
 Double SHA-256 of those bytes is the sole merkle root, so `mining.notify` has
 an empty merkle branch list. The Stratum previous hash reverses the order of
 the eight 4-byte words of the displayed parent hash. The resulting header is
 `versionLE4 || parentHashReversed32 || merkleRoot32 || ntimeLE4 || nbitsLE4 || nonceLE4`.
-The miner's requested version stays fixed: `mining.configure` reports version
-rolling disabled and a zero mask. Time rolling is also disabled, so submissions
-must repeat the job's exact `ntime`.
+Fixed-version clients continue to submit five fields. A client can negotiate
+the `version-rolling` extension through [BIP310](https://github.com/bitcoin/bips/blob/master/bip-0310.mediawiki)
+with `mining.configure`, providing its eight-character `version-rolling.mask`
+(default `ffffffff`) and required integer `version-rolling.min-bit-count`.
+The response gives the intersection of the device and current job masks. The
+minimum bit count is diagnostic: a device requesting more bits than available
+stays connected and can choose degraded operation. A negotiated extension with
+zero available bits returns a zero mask; activation and reorganization changes
+arrive through `mining.set_version_mask` before the new job notification.
+
+A negotiated client must send the sixth `mining.submit` field, `version_bits`.
+The adapter rejects any bit outside the last negotiated mask and constructs
+`nVersion = (job_version & ~mask) | version_bits`. Consensus independently
+restricts changes to the 24 mining bits `0x1fffffe0` at the active height.
+Those bits are reserved for mining; no deployment signaling is encoded there.
+Time rolling remains disabled, so submissions must repeat the job's exact
+`ntime`. Version rolling does not ease a target or change the 60-second target
+spacing, fixed job timestamp policy, or parent-driven ASERT gap behavior.
 
 The adapter authenticates `mining.authorize` against its configured worker and
 password, announces the configured share difficulty or the easier network
 difficulty for that job, reconstructs and double hashes
 each submitted header, rejects low difficulty and duplicate shares, and forwards
 only full network target solutions through `hegemon_submitPoolShare` with
-`{job_id, nonce, extranonce, ntime}`. The node makes the final admission
+`{job_id, nonce, extranonce, ntime, mining_version}`; `mining_version` is the
+complete effective eight-character header version. Duplicate and bounded retry
+identities include that version. The node makes the final admission
 decision. A locally accepted share below the network target is a measurement
 of miner work, not a mined Hegemon block.
 
@@ -123,7 +151,11 @@ Run the socket-level tests without hardware:
 These use an in-process mock of the node RPC and actual loopback TCP. They
 cover subscribe, authorization, notify, share submission, header bytes,
 malformed input, stale jobs, wrong passwords, duplicate shares, job retention,
-cache saturation, stalled clients, and fixed time and version enforcement.
+cache saturation, stalled clients, fixed time, fixed-version compatibility,
+24+4 compatibility, default 20+8, negotiated device subsets, below-minimum
+diagnostics, malformed configuration, out-of-mask rejection, exact rolled
+header bytes, version-aware duplicate identity, and activation/reorg mask
+notifications.
 They do not show that a physical ASIC, a real node,
 or the shared testnet accepted a block. Hardware validation still requires an
 approved node release and genesis, a connected ASIC, a full-target solution,

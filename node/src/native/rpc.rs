@@ -886,8 +886,14 @@ pub(crate) fn block_reward(node: &NativeNode, params: Value) -> Result<Value> {
         .funding_address()
         .map(ShieldedAddress::decode)
         .transpose()?;
-    validate_coinbase_funding_accounting(&actions, meta.height, funding.as_ref())?;
-    reward_observation(&meta, &actions, canonical, tip_height, tip_hash)
+    let policy = node.treasury_reward_policy();
+    validate_coinbase_funding_accounting_with_policy(
+        &actions,
+        meta.height,
+        funding.as_ref(),
+        policy,
+    )?;
+    reward_observation_with_policy(&meta, &actions, canonical, tip_height, tip_hash, policy)
 }
 
 pub(crate) fn reward_observation(
@@ -897,8 +903,27 @@ pub(crate) fn reward_observation(
     tip_height: u64,
     tip_hash: [u8; 32],
 ) -> Result<Value> {
+    reward_observation_with_policy(
+        meta,
+        actions,
+        canonical,
+        tip_height,
+        tip_hash,
+        consensus::treasury::TreasuryRewardPolicy::disabled(),
+    )
+}
+
+pub(crate) fn reward_observation_with_policy(
+    meta: &NativeBlockMeta,
+    actions: &[PendingAction],
+    canonical: bool,
+    tip_height: u64,
+    tip_hash: [u8; 32],
+    policy: consensus::treasury::TreasuryRewardPolicy,
+) -> Result<Value> {
     let fees =
         checked_transfer_fee_total(actions).ok_or_else(|| anyhow!("block fee total overflow"))?;
+    let entitlement = policy.entitlement(meta.height);
     let reward = actions.iter().find(|action| is_coinbase_action(action));
     let mut miner = Value::Null;
     let mut treasury = Value::Null;
@@ -919,11 +944,18 @@ pub(crate) fn reward_observation(
             if action.action_id == ACTION_MINT_POSEIDON2_V8_REWARDS {
                 let args: MintPoseidon2V8RewardsArgs =
                     decode_scale_exact(&action.public_args, "V8 block reward")?;
-                miner_atoms = args.miner_note.opening.value;
-                miner = v8_reward_note_json(&args.miner_note);
-                if let Some(note) = args.funding_note {
+                let (miner_note, treasury_note) = if let Some(entitlement) = entitlement {
+                    batched_reward_roles(&args, entitlement.payout)
+                } else {
+                    (Some(&args.miner_note), args.funding_note.as_ref())
+                };
+                if let Some(note) = miner_note {
+                    miner_atoms = note.opening.value;
+                    miner = v8_reward_note_json(note);
+                }
+                if let Some(note) = treasury_note {
                     treasury_atoms = note.opening.value;
-                    treasury = v8_reward_note_json(&note);
+                    treasury = v8_reward_note_json(note);
                 }
             } else {
                 let args: MintPoseidon2V8CoinbaseArgs =
@@ -943,6 +975,10 @@ pub(crate) fn reward_observation(
     let height_eligible = canonical
         && maturity_height
             .is_some_and(|height| tip_height.checked_add(1).is_some_and(|next| next >= height));
+    let issued_subsidy = miner_atoms
+        .checked_add(treasury_atoms)
+        .and_then(|issued| issued.checked_sub(if miner_atoms > 0 { fees } else { 0 }))
+        .ok_or_else(|| anyhow!("reward issuance accounting overflow"))?;
     Ok(json!({
         "schema": "hegemon.block-reward.v1",
         "chain_id": hex32(&meta.chain_id),
@@ -952,7 +988,12 @@ pub(crate) fn reward_observation(
         "confirmations": if canonical { tip_height.saturating_sub(meta.height).saturating_add(1) } else { 0 },
         "reward_present": reward.is_some(),
         "scheduled_subsidy_atoms": consensus::reward::block_subsidy(meta.height).to_string(),
-        "issued_subsidy_atoms": if reward.is_some() { consensus::reward::block_subsidy(meta.height) } else { 0 }.to_string(),
+        "issued_subsidy_atoms": issued_subsidy.to_string(),
+        "treasury_cadence_active": entitlement.is_some(),
+        "treasury_entitlement_atoms": entitlement.map_or(0, |e| e.accrued_this_block).to_string(),
+        "treasury_due_atoms": entitlement.map_or(0, |e| e.payout).to_string(),
+        "treasury_pending_after_atoms": entitlement.map_or(0, |e| e.pending_after).to_string(),
+        "treasury_payout_height": entitlement.and_then(|e| e.payout_height),
         "fees_atoms": fees.to_string(),
         "miner_amount_atoms": miner_atoms.to_string(), "treasury_amount_atoms": treasury_atoms.to_string(),
         "miner": miner, "treasury": treasury,
@@ -1785,6 +1826,7 @@ pub(crate) fn header_json(meta: &NativeBlockMeta) -> Value {
         "headerMmrLen": meta.header_mmr_len,
         "cumulativeWork": format!("0x{}", hex::encode(meta.cumulative_work)),
         "powBits": meta.pow_bits,
+        "miningVersion": meta.mining_version.unwrap_or(consensus_light_client::BITCOIN80_VERSION),
         "nonce": hex32(&meta.nonce),
         "digest": {
             "logs": [],
@@ -1816,7 +1858,7 @@ pub(crate) fn da_get_chunk(node: &NativeNode, params: Value) -> Result<Value> {
     let meta = node
         .header_by_hash(&block_hash)?
         .ok_or_else(|| anyhow!("unknown native block {}", hex32(&block_hash)))?;
-    if meta.rules_hash != HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE {
+    if meta.rules_hash != consensus_light_client::native_rules_hash(&meta.chain_id, meta.height) {
         return Err(anyhow!("da_getChunk serves only active native V3 blocks"));
     }
     if index >= meta.da_chunk_count {
@@ -1889,6 +1931,8 @@ pub(crate) fn pow_header_json(header: &PowHeaderV2) -> Value {
         "header_mmr_root": hex32(&header.header_mmr_root),
         "header_mmr_len": header.header_mmr_len,
         "pow_bits": header.pow_bits,
+        "version_commitment": hex48(&header.version_commitment),
+        "mining_version": header.mining_version().ok(),
         "nonce": hex32(&header.nonce),
         "cumulative_work": format!("0x{}", hex::encode(header.cumulative_work)),
         "pow_hash": hex32(&header.pow_hash()),

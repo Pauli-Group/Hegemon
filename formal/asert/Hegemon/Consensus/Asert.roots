@@ -1,0 +1,14 @@
+Hegemon.Consensus.Asert.clampTarget_positive
+Hegemon.Consensus.Asert.clampTarget_le_limit
+Hegemon.Consensus.Asert.scaledTarget_positive
+Hegemon.Consensus.Asert.scaledTarget_le_limit
+Hegemon.Consensus.Asert.exponentSplit_reconstruct
+Hegemon.Consensus.Asert.fractionalExponent_bound
+Hegemon.Consensus.Asert.activation_before
+Hegemon.Consensus.Asert.activation_at
+Hegemon.Consensus.Asert.genesis_legacy
+Hegemon.Consensus.Asert.invalid_activation_legacy
+Hegemon.Consensus.Asert.negative_deviation_truncation
+Hegemon.Consensus.Asert.negative_exponent_split
+Hegemon.Consensus.Asert.exact_schedule_keeps_target
+Hegemon.Consensus.Asert.half_life_lag_doubles_target

@@ -69,6 +69,7 @@ class PreparationWorkflowTests(unittest.TestCase):
             self.release,
             (ROOT / ".github/workflows/prepare-premainnet-release.yml").read_text(),
             v0113=True,
+            combined=(ROOT / "config/combined-upgrade-candidate-20261108.json").is_file(),
         )
 
     def test_preparation_arm_runner_override_preserves_tag_workflow(self) -> None:

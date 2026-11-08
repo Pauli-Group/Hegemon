@@ -17,6 +17,10 @@ serde_json = "1"
 
 [features]
 default = ["std"]
+# Disposable legacy --dev activation at height 20; never enables pre-mainnet.
+asert-rehearsal = []
+# Exact funded Development fixture only; production activation remains unset.
+combined-upgrade-rehearsal = []
 std = [
     "blake3/std",
     "codec/std",

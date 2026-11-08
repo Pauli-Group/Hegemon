@@ -543,8 +543,9 @@ pub(crate) fn validate_native_block_meta_bincode_budget_with_total_limit(
             max_total_bytes
         ));
     }
-    let Some(action_count) = read_bincode_fixint_len(bytes, NATIVE_BLOCK_META_ACTION_BYTES_OFFSET)?
-    else {
+    let action_offset =
+        native_mining_meta_payload_offset(bytes) + NATIVE_BLOCK_META_ACTION_BYTES_OFFSET;
+    let Some(action_count) = read_bincode_fixint_len(bytes, action_offset)? else {
         return Ok(());
     };
     if action_count > MAX_NATIVE_BLOCK_ACTIONS {
@@ -555,7 +556,7 @@ pub(crate) fn validate_native_block_meta_bincode_budget_with_total_limit(
         ));
     }
 
-    let mut cursor = NATIVE_BLOCK_META_ACTION_BYTES_OFFSET + BINCODE_FIXINT_VEC_LEN_BYTES;
+    let mut cursor = action_offset + BINCODE_FIXINT_VEC_LEN_BYTES;
     let mut total_action_bytes = 0usize;
     for index in 0..action_count {
         let Some(action_len) = read_bincode_fixint_len(bytes, cursor)? else {

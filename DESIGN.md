@@ -158,10 +158,12 @@ startup. It does not by itself establish current-network full lifecycle or
 mainnet deployment authority. [The security policy](SECURITY.md) records the
 conditional proof and implementation boundaries.
 
-The header/RPC `supply_digest` remains the checked gross coinbase counter:
-subsidy plus included fees when coinbase exists, unchanged otherwise. Recycled
-fees make it different from net issuance or circulating wealth; the 21M schedule
-cap is not a bound on this counter. See [native supply accounting](docs/NATIVE_SUPPLY_ACCOUNTING.md).
+The header/RPC `supply_digest` remains a checked gross coinbase counter.
+Historical per-block rules add subsidy plus included fees when coinbase exists.
+After a combined treasury activation, the counter instead adds the actual created
+coinbase-note values, including recycled fees; pending treasury entitlement stays
+separate. Recycled fees make this different from net issuance or circulating
+wealth; the 21M schedule cap is not a bound on this counter. See [native supply accounting](docs/NATIVE_SUPPLY_ACCOUNTING.md).
 This clarification changes neither the header nor its accepted arithmetic.
 
 **v0.11.1 restart correction.** Canonical startup reconstructs ordinary state
@@ -1467,12 +1469,26 @@ The PoW fork mirrors conventional PoW mechanics so operators can reason about li
   body malleability. Exact legacy unsigned/signed V1 and unreleased identity-bearing V2 metadata grammars are decoded only far enough
   to return an actionable fresh-genesis rejection and are never upgraded into active metadata. Generic consensus/P2P identities remain
   separate from this native active-V2 rule.
-* Difficulty retargeting is deterministic: after the genesis-anchored launch window, every `RETARGET_WINDOW = 10` blocks the chain recomputes the target from the window's
-  timestamps, clamping swings to ×¼…×4 and aiming for a `TARGET_BLOCK_INTERVAL = 60 s` (1 minute). The first boundary inherits the launch bits instead of treating the fixed genesis timestamp as a mined timing sample. Honest nodes reject any block whose
-  `pow_bits` diverges from this schedule, which makes retarget spoofing impossible even across deep reorgs. Blocks between
-  retarget boundaries MUST inherit the parent’s `pow_bits` verbatim and the retarget math uses the clamped timespan so outlier
-  timestamps cannot skew difficulty even after a reorg. The retarget boundary schedule and compact re-encoding step are Lean-conformance-checked so retarget outputs cannot drift through skipped history, target truncation, or zero-target edge cases. The native verifier also requires the compact difficulty bits
-  embedded in a PoW seal to equal the locally computed schedule exactly and checks work against that schedule target, not an attacker-supplied near match. The native node treats `NATIVE_DEV_POW_BITS` as the calibrated launch/genesis difficulty only: work templates, locally mined imports, announced blocks, replay, and sync validation compute the expected child bits from stored parent history before accepting or extending a chain.
+* Difficulty is selected by a source-owned chain/height schedule. The prepared
+  ASERT upgrade leaves the live pre-mainnet activation unset; historical and
+  unscheduled networks retain `RETARGET_WINDOW = 10`, the first-boundary launch
+  exception and the ×¼…×4 legacy adjustment. Once an activation height H is
+  compiled for the existing pre-mainnet chain ID, native V2 headers use ASERT
+  every block with a 60-second interval and one-hour half-life. The fixed
+  reference target and height are those of H−1 on the relevant branch; its
+  parent's timestamp (H−2) is the time origin. The candidate block timestamp
+  does not determine its own target. Full nodes require exact expected bits and
+  height-specific header rules in mining, import, sync, restart and reorgs.
+  Genesis manifest, chain ID, wallet pins, transaction proofs and reward rules
+  stay unchanged. A bounded, process-local ancestry cache accelerates sequential
+  lookups without persisting a new trust anchor. Cold lookups advance at most
+  128 links per call and resume through bounded local scheduling state;
+  deferred announcements release their import slot and rejoin the fair queue.
+  This does not impose a consensus history cutoff. Standard ASERT does not ease
+  the target during a blockless gap. The `asert-rehearsal` build feature activates
+  only the legacy development identity at height 20 and never pre-mainnet.
+  See [the ASERT upgrade specification](docs/consensus/ASERT_UPGRADE.md) for exact
+  arithmetic, qualification commands and the separate activation decision.
 * A PoW block may carry one shielded coinbase action, and if present it must be the final action; omitting it deliberately forfeits
   subsidy and fees. Multiple, first, or middle coinbases reject before proof/DA work. The coinbase spells out how many native units
   were minted and how many fees were aggregated. Consensus enforces
@@ -1912,3 +1928,56 @@ disabled. Retained formal/protocol receipts keep their original identities;
 versioned final binaries require fresh artifact provenance and affected checks.
 See [the operator guide](config/testnet/0.11/README.md) and
 [release checklist](docs/releases/v0.11.md).
+
+### Combined software candidate qualification
+
+The timestamp/ASERT/mining/treasury candidate has a separate pending/frozen
+source gate. It preserves the existing pre-mainnet identity, all 41 current SMZL
+relation inputs and Cargo.lock; historical source/configuration and proof
+receipts remain attributable to their original tuple. A complete exact source
+inventory and reviewed delta bind the candidate, its independent scope review,
+and source-owned fresh qualification commands. Final artifacts must execute
+unchanged actual five-case proof/thirty-negative and isolated H0 checks plus
+fresh timestamp, ASERT, rolling, treasury, current SMZL HTLC and recovery suites.
+Passing technical software qualification grants no activation, deployment,
+mainnet, production cryptographic or physical-ASIC authority. A pending source
+preparation result cannot satisfy final artifact consumers.
+
+
+### Combined timestamp and reward migration
+
+Fresh mined work, direct announcements, missing canonical/noncanonical sync rows
+and newly adopted stored tips enforce the existing inclusive 90,000-millisecond
+future limit. The comparison uses the complete committed native timestamp. A
+shared typed rejection permits the identical bytes to be admitted once timely;
+it does not create a permanent invalid-hash cache. Startup, canonical duplicates
+and deterministic historical replay remain independent of the current clock.
+Authoring selects `max(now_ms, parent_ms + 1)` with checked addition and pauses
+when no legal next timestamp exists. Bitcoin80 nTime remains fixed for each job.
+
+An issued ASIC solution can become temporarily future-dated after local clock
+rollback. The node retains only unexpired jobs matching the current tip; its
+structured work pause names their exact IDs without issuing future work. The
+adapter retains the same solution reservation, owner, payload, retry count and
+original monotonic deadline. A pause cannot extend the 120-second job lifetime;
+expiry, parent change and ordinary work withdrawal cancel retry eligibility.
+This is software behavior and supplies no physical firmware qualification.
+
+The combined profile fingerprint is
+`ec304529f49e7ddc777e0ca78b189acec753d4fb18aafe15761e686ea3596b7f`.
+Its exact source preimage binds the one-hour ASERT profile, 24-bit mining mask,
+version commitment normalization, tagged native metadata framing, exact
+60-block treasury entitlements and actual issued-note accounting. All three
+consensus changes share a source-owned multiple-of-60 pre-mainnet height; that
+production height remains unset. Disposable funded Development rehearsal alone
+selects H120, first batch H120..H179 and first spend inclusion H299. A fresh
+mainnet profile still requires explicit genesis/ASERT initialization and new
+identity-bound qualification; it does not inherit this migration schedule.
+
+
+Ordinary release binaries retain activation `None`. Upgrade lifecycle evidence
+comes from explicitly identified rehearsal builds of the same frozen source,
+whose features and executable hashes are recorded separately. Each target still
+executes final ordinary-binary proof verification and isolated H0 checks. A pinned
+external public rehearsal transcript can supply source behavior evidence across
+targets; it does not say its rehearsal executable ran on those targets.

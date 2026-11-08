@@ -26,13 +26,53 @@ pub const BITCOIN80_COINBASE_SUFFIX: &[u8] = &[
     0, 0, 0, 0, // locktime
 ];
 pub const BITCOIN80_VERSION: u32 = 0x2000_0000;
+/// The 24 bits reserved for mining under the scheduled combined profile.
+pub const BITCOIN80_VERSION_ROLLING_MASK: u32 = 0x1fff_ffe0;
+/// The otherwise-unused native V2 version commitment carries the exact mining
+/// version under the combined rules profile. This tag cannot alias a legacy
+/// proof-version commitment because its interpretation is profile-specific.
+pub const BITCOIN80_MINING_VERSION_TAG: &[u8; 44] =
+    b"hegemon.bitcoin80.mining-version-v1\0\0\0\0\0\0\0\0\0";
+
+pub fn bitcoin80_validate_mining_version(
+    version: u32,
+    allow_rolling: bool,
+) -> Result<(), LightClientError> {
+    let mask = if allow_rolling {
+        BITCOIN80_VERSION_ROLLING_MASK
+    } else {
+        0
+    };
+    if version & !mask != BITCOIN80_VERSION {
+        return Err(LightClientError::InvalidMiningVersion);
+    }
+    Ok(())
+}
+
+pub fn bitcoin80_mining_version_payload(version: u32) -> crate::Digest48 {
+    let mut payload = [0u8; 48];
+    payload[..4].copy_from_slice(&version.to_le_bytes());
+    payload[4..].copy_from_slice(BITCOIN80_MINING_VERSION_TAG);
+    payload
+}
+
+pub fn bitcoin80_mining_version_from_payload(
+    payload: &crate::Digest48,
+) -> Result<u32, LightClientError> {
+    if &payload[4..] != BITCOIN80_MINING_VERSION_TAG {
+        return Err(LightClientError::InvalidMiningVersion);
+    }
+    let version = u32::from_le_bytes(payload[..4].try_into().expect("four-byte version"));
+    bitcoin80_validate_mining_version(version, true)?;
+    Ok(version)
+}
 pub const BITCOIN80_HEADER_LEN: usize = 80;
 /// Largest admissible target in the new ASIC profile. The leading sign bit is
 /// clear, and this is the largest target representable by the old 32-byte
 /// unsigned compact decoder while also being positive in Bitcoin's format.
 pub const BITCOIN80_POW_LIMIT_BITS: u32 = 0x207f_ffff;
 
-fn bitcoin_compact_from_target(target: &Hash32) -> Result<u32, LightClientError> {
+pub(crate) fn bitcoin_compact_from_target(target: &Hash32) -> Result<u32, LightClientError> {
     let first = target
         .iter()
         .position(|byte| *byte != 0)
@@ -135,11 +175,32 @@ pub fn bitcoin80_header(
     pow_bits: u32,
     nonce: Hash32,
 ) -> Result<[u8; BITCOIN80_HEADER_LEN], LightClientError> {
+    bitcoin80_header_with_version(
+        pre_hash,
+        parent_hash,
+        timestamp_ms,
+        pow_bits,
+        nonce,
+        BITCOIN80_VERSION,
+    )
+}
+
+/// Exact final header bytes including the independently rolled mining version.
+/// The coinbase commitment is deliberately independent of the version bits.
+pub fn bitcoin80_header_with_version(
+    pre_hash: &Hash32,
+    parent_hash: &Hash32,
+    timestamp_ms: u64,
+    pow_bits: u32,
+    nonce: Hash32,
+    mining_version: u32,
+) -> Result<[u8; BITCOIN80_HEADER_LEN], LightClientError> {
+    bitcoin80_validate_mining_version(mining_version, true)?;
     bitcoin80_validate_compact(pow_bits)?;
     let seconds =
         u32::try_from(timestamp_ms / 1_000).map_err(|_| LightClientError::TimestampOutOfRange)?;
     let mut header = [0u8; BITCOIN80_HEADER_LEN];
-    header[..4].copy_from_slice(&BITCOIN80_VERSION.to_le_bytes());
+    header[..4].copy_from_slice(&mining_version.to_le_bytes());
     for (dst, src) in header[4..36].iter_mut().zip(parent_hash.iter().rev()) {
         *dst = *src;
     }
@@ -175,6 +236,25 @@ pub fn bitcoin80_work_hash(
         timestamp_ms,
         pow_bits,
         nonce,
+    )?))
+}
+
+/// Display-order hash of the exact negotiated version, nonce and extra nonce.
+pub fn bitcoin80_work_hash_with_version(
+    pre_hash: &Hash32,
+    parent_hash: &Hash32,
+    timestamp_ms: u64,
+    pow_bits: u32,
+    nonce: Hash32,
+    mining_version: u32,
+) -> Result<Hash32, LightClientError> {
+    Ok(bitcoin80_hash_header(&bitcoin80_header_with_version(
+        pre_hash,
+        parent_hash,
+        timestamp_ms,
+        pow_bits,
+        nonce,
+        mining_version,
     )?))
 }
 
@@ -488,5 +568,181 @@ mod tests {
             verify_pow_header_v2(&parent, &child),
             Err(LightClientError::InvalidCompactTarget)
         );
+    }
+}
+
+#[cfg(test)]
+mod mining_version_tests {
+    use super::*;
+    use crate::{PowHeaderV2, HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_COMBINED};
+    use codec::{Decode, Encode};
+
+    #[test]
+    fn mining_version_changes_exact_four_header_bytes_only() {
+        let fixed =
+            bitcoin80_header(&[7; 32], &[9; 32], 1_700_000_000_123, 0x207fffff, [5; 32]).unwrap();
+        for bit in 5..29 {
+            let version = BITCOIN80_VERSION | (1 << bit);
+            let rolled = bitcoin80_header_with_version(
+                &[7; 32],
+                &[9; 32],
+                1_700_000_000_123,
+                0x207fffff,
+                [5; 32],
+                version,
+            )
+            .unwrap();
+            assert_eq!(&rolled[..4], &version.to_le_bytes());
+            assert_eq!(&rolled[4..], &fixed[4..]);
+            assert_ne!(
+                bitcoin80_hash_header(&rolled),
+                bitcoin80_hash_header(&fixed)
+            );
+        }
+        assert!(bitcoin80_validate_mining_version(BITCOIN80_VERSION, false).is_ok());
+        assert!(bitcoin80_validate_mining_version(BITCOIN80_VERSION | 32, false).is_err());
+        for bit in [0, 4, 29, 30, 31] {
+            assert!(bitcoin80_header_with_version(
+                &[7; 32],
+                &[9; 32],
+                1_700_000_000_123,
+                0x207fffff,
+                [5; 32],
+                BITCOIN80_VERSION ^ (1 << bit)
+            )
+            .is_err());
+        }
+    }
+
+    fn combined_header(version: u32) -> PowHeaderV2 {
+        PowHeaderV2 {
+            chain_id: [1; 32],
+            rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_COMBINED,
+            height: 120,
+            timestamp_ms: 1_700_000_000_123,
+            parent_hash: [2; 32],
+            state_root: [3; 48],
+            kernel_root: [4; 48],
+            nullifier_root: [5; 48],
+            proof_commitment: [6; 48],
+            da_root: [7; 48],
+            action_root: [8; 32],
+            tx_statements_commitment: [9; 48],
+            version_commitment: bitcoin80_mining_version_payload(version),
+            fee_commitment: [11; 48],
+            supply_digest: 12,
+            tx_count: 13,
+            message_root: [14; 48],
+            message_count: 15,
+            header_mmr_root: [16; 32],
+            header_mmr_len: 120,
+            pow_bits: 0x207fffff,
+            nonce: [17; 32],
+            cumulative_work: [18; 48],
+        }
+    }
+
+    #[test]
+    fn combined_payload_is_explicit_without_aliasing_coinbase_or_work() {
+        let fixed = combined_header(BITCOIN80_VERSION);
+        let rolled = combined_header(BITCOIN80_VERSION | BITCOIN80_VERSION_ROLLING_MASK);
+        assert_eq!(fixed.canonical_bytes().len(), 713);
+        assert_ne!(fixed.canonical_bytes(), rolled.canonical_bytes());
+        assert_eq!(fixed.pre_hash(), rolled.pre_hash());
+        assert_ne!(fixed.pow_hash(), rolled.pow_hash());
+        let encoded = rolled.encode();
+        let mut cursor = encoded.as_slice();
+        assert_eq!(PowHeaderV2::decode(&mut cursor).unwrap(), rolled);
+        assert!(cursor.is_empty());
+        let mut malformed = rolled.clone();
+        malformed.version_commitment[47] ^= 1;
+        assert_eq!(
+            malformed.mining_version(),
+            Err(LightClientError::InvalidMiningVersion)
+        );
+        assert_ne!(malformed.pre_hash(), fixed.pre_hash());
+        assert_eq!(malformed.pow_hash(), [0xff; 32]);
+        let mut outside = rolled;
+        outside.version_commitment[0] |= 1;
+        assert_eq!(
+            outside.mining_version(),
+            Err(LightClientError::InvalidMiningVersion)
+        );
+        assert_eq!(outside.pow_hash(), [0xff; 32]);
+        let mut historical = fixed;
+        historical.rules_hash = crate::HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_ASIC;
+        assert_eq!(
+            historical.pre_hash(),
+            crate::hash32(&historical.canonical_bytes())
+        );
+        assert_eq!(historical.mining_version(), Ok(BITCOIN80_VERSION));
+    }
+
+    #[test]
+    fn combined_boundary_requires_explicit_version_and_preserves_fixed_miners() {
+        let schedule = crate::PowRulesSchedule::combined_at(120).unwrap();
+        for height in [119, 120, 121] {
+            let parent = crate::TrustedCheckpointV2 {
+                chain_id: [1; 32],
+                rules_hash: schedule.rules_hash(height - 1),
+                height: height - 1,
+                header_hash: [2; 32],
+                timestamp_ms: 1_700_000_000_000,
+                pow_bits: 0x207fffff,
+                cumulative_work: [0; 48],
+                header_mmr_root: [0; 32],
+                header_mmr_len: height - 1,
+            };
+            for version in [BITCOIN80_VERSION, BITCOIN80_VERSION | 32] {
+                let mut header = combined_header(version);
+                header.height = height;
+                header.header_mmr_len = height;
+                header.rules_hash = schedule.rules_hash(height);
+                if height < 120 {
+                    header.version_commitment = [0; 48];
+                }
+                header.cumulative_work =
+                    crate::cumulative_work_after(&parent.cumulative_work, parent.pow_bits).unwrap();
+                for nonce in 0u32..1000 {
+                    header.nonce[..4].copy_from_slice(&nonce.to_le_bytes());
+                    if crate::hash_meets_target(&header.pow_hash(), header.pow_bits).unwrap() {
+                        break;
+                    }
+                }
+                let verified = crate::verify_pow_header_v2_with_expected_bits_and_schedule(
+                    &parent,
+                    &header,
+                    parent.pow_bits,
+                    schedule,
+                )
+                .unwrap();
+                assert_eq!(verified, header.pow_hash());
+                assert_eq!(
+                    header.mining_version().unwrap(),
+                    if height < 120 {
+                        BITCOIN80_VERSION
+                    } else {
+                        version
+                    }
+                );
+                if height >= 120 {
+                    let mut missing = header.clone();
+                    missing.version_commitment = [0; 48];
+                    assert_eq!(
+                        crate::verify_pow_header_v2_with_expected_bits_and_schedule(
+                            &parent,
+                            &missing,
+                            parent.pow_bits,
+                            schedule
+                        ),
+                        Err(LightClientError::InvalidMiningVersion)
+                    );
+                    assert_eq!(
+                        crate::verify_pow_header_v2(&parent, &header),
+                        Err(LightClientError::UnsupportedDifficultySchedule)
+                    );
+                }
+            }
+        }
     }
 }

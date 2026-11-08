@@ -151,10 +151,7 @@ pub(crate) fn native_announced_block_admission_error(
                 rejection.label()
             )
         }
-        NativeAnnouncedBlockAdmissionRejection::FutureSkew => anyhow!(
-            "announced block timestamp exceeds future skew bound ({})",
-            rejection.label()
-        ),
+        NativeAnnouncedBlockAdmissionRejection::FutureSkew => NativeFutureTimestamp.into(),
         NativeAnnouncedBlockAdmissionRejection::HashWorkHashMismatch => {
             anyhow!(
                 "native block hash must equal work hash ({})",
@@ -172,7 +169,7 @@ pub(crate) fn validate_announced_block(
     evaluate_native_announced_block_admission(native_announced_block_admission_input(
         parent,
         meta,
-        current_time_ms(),
+        native_admission_time_ms(),
     ))
     .map_err(native_announced_block_admission_error)?;
     verify_native_block_meta_projection(Some(parent), meta, Some(expected_pow_bits))
@@ -199,7 +196,7 @@ pub(crate) fn native_pow_header_from_parts(
 ) -> PowHeaderV2 {
     PowHeaderV2 {
         chain_id: HEGEMON_CHAIN_ID_V1,
-        rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE,
+        rules_hash: consensus_light_client::native_rules_hash(&HEGEMON_CHAIN_ID_V1, height),
         height,
         timestamp_ms,
         parent_hash,
@@ -210,7 +207,10 @@ pub(crate) fn native_pow_header_from_parts(
         da_root: *da_root,
         action_root: *extrinsics_root,
         tx_statements_commitment: NATIVE_EMPTY_DIGEST48,
-        version_commitment: NATIVE_EMPTY_DIGEST48,
+        version_commitment: native_mining_version_commitment(
+            &consensus_light_client::native_rules_hash(&HEGEMON_CHAIN_ID_V1, height),
+            consensus_light_client::BITCOIN80_VERSION,
+        ),
         fee_commitment: NATIVE_EMPTY_DIGEST48,
         supply_digest,
         tx_count,
@@ -238,7 +238,11 @@ pub(crate) fn pow_header_from_meta(meta: &NativeBlockMeta) -> PowHeaderV2 {
         da_root: meta.da_root,
         action_root: meta.extrinsics_root,
         tx_statements_commitment: NATIVE_EMPTY_DIGEST48,
-        version_commitment: NATIVE_EMPTY_DIGEST48,
+        version_commitment: native_mining_version_commitment(
+            &meta.rules_hash,
+            meta.mining_version
+                .unwrap_or(consensus_light_client::BITCOIN80_VERSION),
+        ),
         fee_commitment: NATIVE_EMPTY_DIGEST48,
         supply_digest: meta.supply_digest,
         tx_count: meta.tx_count,
@@ -335,12 +339,44 @@ pub(crate) fn checkpoint_from_meta(meta: &NativeBlockMeta) -> TrustedCheckpointV
     }
 }
 
+/// Only the combined rules interpret the native-unused V2 version commitment
+/// as a mining payload. All historical commitment semantics remain unchanged.
+pub(crate) fn native_mining_version_commitment(rules_hash: &[u8; 32], version: u32) -> [u8; 48] {
+    if *rules_hash == consensus_light_client::HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_COMBINED {
+        consensus_light_client::bitcoin80_mining_version_payload(version)
+    } else {
+        NATIVE_EMPTY_DIGEST48
+    }
+}
+
+pub(crate) fn native_mining_version_rolling_active(chain_id: &[u8; 32], height: u64) -> bool {
+    consensus_light_client::native_combined_upgrade_activation_height(chain_id)
+        .is_some_and(|activation| height >= activation && height > 0)
+}
+
+pub(crate) fn validate_native_mining_payload(meta: &NativeBlockMeta) -> Result<()> {
+    let active = native_mining_version_rolling_active(&meta.chain_id, meta.height);
+    if active != meta.mining_version.is_some() {
+        return Err(anyhow!(
+            "native mining version payload does not match activation at height {}",
+            meta.height
+        ));
+    }
+    consensus_light_client::bitcoin80_validate_mining_version(
+        meta.mining_version
+            .unwrap_or(consensus_light_client::BITCOIN80_VERSION),
+        active,
+    )
+    .map_err(|err| anyhow!("native mining version invalid: {err:?}"))
+}
+
 pub(crate) fn verify_native_pow_meta(
     parent: &NativeBlockMeta,
     meta: &NativeBlockMeta,
     expected_pow_bits: u32,
 ) -> Result<()> {
-    if meta.rules_hash == HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE {
+    validate_native_mining_payload(meta)?;
+    if consensus_light_client::is_bitcoin80_rules(&meta.rules_hash) {
         consensus_light_client::bitcoin80_validate_compact(meta.pow_bits)
             .map_err(|err| anyhow!("native Bitcoin80 PoW bits invalid: {err:?}"))?;
     }
@@ -374,6 +410,7 @@ pub(crate) fn verify_native_block_meta_projection(
     expected_pow_bits: Option<u32>,
 ) -> Result<()> {
     if meta.height == 0 {
+        validate_native_mining_payload(meta)?;
         return Ok(());
     }
     let parent = parent.ok_or_else(|| {
@@ -415,12 +452,13 @@ pub(crate) fn nonce_from_counter(counter: u64) -> [u8; 32] {
 }
 
 pub(crate) fn native_pow_work_hash(work: &NativeWork, nonce: [u8; 32]) -> [u8; 32] {
-    consensus_light_client::bitcoin80_work_hash(
+    consensus_light_client::bitcoin80_work_hash_with_version(
         &work.pre_hash,
         &work.parent_hash,
         work.timestamp_ms,
         work.pow_bits,
         nonce,
+        work.mining_version,
     )
     .unwrap_or([0xff; 32])
 }
@@ -453,6 +491,28 @@ pub(crate) fn native_asic_expected_pow_bits_from_schedule(
         .map_err(|err| anyhow!("native Bitcoin80 PoW bits normalization failed: {err:?}"))
 }
 
+/// Source-owned activation only; no local operator override participates in consensus.
+pub(crate) fn native_asert_activation_height(chain_id: &[u8; 32], height: u64) -> Option<u64> {
+    consensus_light_client::native_pow_rules(chain_id)
+        .asert_activation_height()
+        .filter(|activation| height >= *activation)
+}
+
+pub(crate) fn native_asert_expected_pow_bits(
+    parent_height: u64,
+    parent_timestamp_ms: u64,
+    anchor: consensus_light_client::AsertAnchor,
+) -> Result<u32> {
+    consensus_light_client::asert_next_bits(
+        anchor,
+        parent_height,
+        parent_timestamp_ms,
+        consensus_light_client::ASERT_TARGET_SPACING_MS,
+        consensus_light_client::ASERT_HALF_LIFE_MS,
+    )
+    .map_err(|error| anyhow!("native ASERT schedule rejected: {error:?}"))
+}
+
 pub(crate) fn native_expected_child_pow_bits_from_chain(
     chain_to_parent: &[NativeBlockMeta],
     genesis_pow_bits: u32,
@@ -464,6 +524,43 @@ pub(crate) fn native_expected_child_pow_bits_from_chain(
         .height
         .checked_add(1)
         .ok_or_else(|| anyhow!("native PoW child height overflow"))?;
+    if let Some(activation) = native_asert_activation_height(&parent.chain_id, new_height) {
+        let anchor_height = activation - 1;
+        let steps = usize::try_from(parent.height - anchor_height)
+            .map_err(|_| anyhow!("native ASERT anchor offset overflow"))?;
+        let anchor_index = chain_to_parent
+            .len()
+            .checked_sub(steps)
+            .and_then(|index| index.checked_sub(1))
+            .ok_or_else(|| anyhow!("native ASERT missing anchor history"))?;
+        let anchor = &chain_to_parent[anchor_index];
+        let anchor_parent = anchor_index
+            .checked_sub(1)
+            .and_then(|index| chain_to_parent.get(index))
+            .ok_or_else(|| anyhow!("native ASERT missing anchor-parent history"))?;
+        if anchor.height != anchor_height
+            || anchor_parent.height.checked_add(1) != Some(anchor_height)
+            || anchor.parent_hash != anchor_parent.hash
+            || anchor.chain_id != parent.chain_id
+            || anchor_parent.chain_id != parent.chain_id
+            || anchor.rules_hash
+                != consensus_light_client::native_rules_hash(&parent.chain_id, anchor_height)
+            || anchor_parent.rules_hash
+                != consensus_light_client::native_rules_hash(&parent.chain_id, anchor_parent.height)
+            || anchor.timestamp_ms <= anchor_parent.timestamp_ms
+        {
+            return Err(anyhow!("native ASERT anchor ancestry mismatch"));
+        }
+        return native_asert_expected_pow_bits(
+            parent.height,
+            parent.timestamp_ms,
+            consensus_light_client::AsertAnchor {
+                height: anchor_height,
+                parent_timestamp_ms: anchor_parent.timestamp_ms,
+                pow_bits: anchor.pow_bits,
+            },
+        );
+    }
     let anchor_timestamp_ms = if let Some(anchor_steps) =
         consensus::pow::pow_retarget_anchor_steps(parent.height, new_height)
     {

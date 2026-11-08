@@ -7,7 +7,7 @@ gross fee-inclusive coinbase accounting, not circulating supply.
 
 ## Header and RPC counter
 
-For the current native HGN route, a block with coinbase advances the counter by
+For the historical per-block native HGN route, a block with coinbase advances the counter by
 its scheduled subsidy plus the checked total of included transfer fees. A block
 without coinbase leaves it unchanged. Replay reconstructs this value and
 requires exact equality with the header; reward or counter overflow rejects.
@@ -60,6 +60,31 @@ The reward split assigns `floor(subsidy / 5)` to the configured funding recipien
 and the remainder plus all fees to the miner. The source requires 120-block
 reward maturity. These statements describe the current implementation; mainnet
 identity and release authority remain separately qualified.
+
+## Combined treasury migration candidate
+
+The combined upgrade keeps the historical per-block rules below its selected
+activation height H. Production H remains unset during preparation. At active
+heights, reconstruct the same gross counter from the actual coinbase-note values:
+
+    next_digest = parent_digest + sum(created_coinbase_note_values)
+
+That sum includes recycled fees when the miner claims its note. It excludes
+pending treasury entitlement until a treasury note is actually created. Each
+accepted active height accrues `floor(subsidy(height) / 5)` independently of the
+miner claiming its own reward. A positive payout at H+59 and every 60 blocks
+thereafter is mandatory, including when the miner forfeits its note. Omissions
+below H are never re-accrued. Miner subsidy remainder and all fees stay per block;
+120-block maturity begins at each note's actual creation height.
+
+The historical per-block supply theorems do not by themselves describe this
+transition. The separate
+[batch accounting model](../formal/lean/Hegemon/Consensus/TreasuryBatchSupply.lean)
+and generated native-helper vectors distinguish pending entitlement, actual
+coinbase issuance and the legacy inactive branch. They are local model/vector
+and source-guard evidence, with full Rust/chain refinement and production
+activation outside their scope. Genuine proof-bearing lifecycle and exact
+release-artifact qualification remain required.
 
 ## Evidence and limits
 

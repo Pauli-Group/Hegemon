@@ -410,8 +410,8 @@ def run(node_bin: Path, timeout: int) -> dict[str, Any]:
             raise RuntimeError(f"invalid mining.subscribe result: {subscription!r}")
         extranonce1 = bytes.fromhex(subscription[1])
         extranonce2_size = subscription[2]
-        if len(extranonce1) != 24 or extranonce2_size != 4:
-            raise RuntimeError("adapter did not provide 24-byte extranonce1 and 4-byte extranonce2")
+        if len(extranonce1) != 20 or extranonce2_size != 8:
+            raise RuntimeError("adapter did not provide default 20-byte extranonce1 and 8-byte extranonce2")
         ex2 = secrets.token_bytes(extranonce2_size)
 
         auth_id = client.send("mining.authorize", ["miner.1", adapter_env["HEGEMON_STRATUM_PASSWORD"]])
@@ -448,7 +448,7 @@ def run(node_bin: Path, timeout: int) -> dict[str, Any]:
             raise RuntimeError("Stratum notify fields differ from native poolWork")
         reference_header = work.get("header80")
         ref_header_bytes = bytes.fromhex(reference_header.removeprefix("0x"))
-        zero_extranonce_header = reconstruct_header(notify, bytes(24), bytes(4), "00000000")
+        zero_extranonce_header = reconstruct_header(notify, bytes(20), bytes(8), "00000000")
         if zero_extranonce_header != ref_header_bytes:
             raise RuntimeError("independent Stratum header reconstruction mismatches native header80")
 

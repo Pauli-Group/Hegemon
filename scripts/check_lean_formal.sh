@@ -89,6 +89,8 @@ rm -f /tmp/hegemon-lean-forbidden.$$
   lake env lean Hegemon/Consensus/StatementAnchorAdmission.lean
   lake env lean Hegemon/Consensus/GenerateStatementAnchorAdmissionVectors.lean
   lake env lean Hegemon/Consensus/Supply.lean
+  lake env lean Hegemon/Consensus/TreasuryBatchSupply.lean
+  lake env lean Hegemon/Consensus/GenerateTreasuryBatchSupplyVectors.lean
   lake env lean Hegemon/Consensus/GenerateSupplyVectors.lean
   lake env lean Hegemon/Consensus/SupplyInvariant.lean
   lake env lean Hegemon/Consensus/GenerateSupplyInvariantVectors.lean

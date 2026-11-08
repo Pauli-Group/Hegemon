@@ -28,6 +28,7 @@ import Hegemon.Consensus.RecursivePublicReplay
 import Hegemon.Consensus.RecursiveSemanticInputs
 import Hegemon.Consensus.StatementAnchorAdmission
 import Hegemon.Consensus.Supply
+import Hegemon.Consensus.TreasuryBatchSupply
 import Hegemon.Consensus.SupplyInvariant
 import Hegemon.Consensus.TreeTransition
 import Hegemon.Consensus.VersionPolicy

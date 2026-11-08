@@ -83,7 +83,12 @@ pub struct MintPoseidon2V8CoinbaseArgs {
 }
 
 /// A separately identified wire successor; action11 bytes remain unchanged.
-/// Funding is absent only when the subsidy rounds down to zero funding.
+/// These historical field names describe the original per-block allocation.
+/// Under an explicitly activated treasury cadence, `miner_note` is the physical
+/// primary: a sole primary at a positive boundary is treasury-only; paired notes
+/// remain miner then treasury. Intermediate blocks have only a miner primary.
+/// Contextual native validation assigns roles and exact amounts; bytes and the
+/// source-owned note relation remain unchanged.
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo)]
 pub struct MintPoseidon2V8RewardsArgs {
     pub miner_note: Poseidon2V8CoinbaseNoteData,

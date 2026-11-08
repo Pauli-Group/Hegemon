@@ -10,6 +10,7 @@ pub mod pow;
 pub mod proof;
 pub mod proof_interface;
 pub mod reward;
+pub mod treasury;
 pub mod types;
 pub mod validator;
 pub mod version_policy;

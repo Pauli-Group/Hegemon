@@ -1,5 +1,11 @@
 import Hegemon.Consensus.Supply
 
+/- Monetary-policy scope: the per-block subsidy-plus-fee native transition in
+this historical model applies when treasury cadence is disabled and replay uses
+no issued-amount override. Active 60-block batching is modeled separately in
+Hegemon.Consensus.TreasuryBatchSupply. Generic checked supply arithmetic and the
+unchanged subsidy schedule retain their independent statements. -/
+
 namespace Hegemon
 namespace Native
 namespace CoinbaseAccountingAdmission

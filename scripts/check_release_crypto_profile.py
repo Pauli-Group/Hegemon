@@ -307,6 +307,27 @@ V0113_AUTHORITY_SHA256 = {
 }
 
 
+COMBINED_CONFIG = 'config/combined-upgrade-candidate-20261108.json'
+COMBINED_SCOPE = 'combined_upgrade_source_proofs_h0_and_fresh_affected_lifecycle'
+
+def combined_helper(root: Path):
+    """Explicit source-selected candidate path; never a production fallback."""
+    import importlib.util
+    path = root / 'scripts/check_combined_upgrade_candidate.py'
+    if not path.is_file() or path.is_symlink():
+        fail('combined candidate checker missing or linked')
+    spec = importlib.util.spec_from_file_location('_combined_candidate_predicate', path)
+    helper = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(helper)
+    try:
+        config = helper.load_config(root)
+        helper.source_check(root, config)
+        helper.review_check(root, config)
+    except (OSError, ValueError, helper.CandidateError) as error:
+        fail('combined candidate is not qualified: ' + str(error))
+    return helper
+
+
 def v0113_helper(root: Path):
     """Authenticate the distinct pre-mainnet adapter before any execution."""
     import importlib.util
@@ -366,6 +387,14 @@ def private_launch_snapshot(root: Path, manifest_path: Path) -> tuple:
         binary_paths.append(binary)
     if len(set(binary_paths)) != 4:
         fail("private launch artifact paths must be distinct")
+    if (root / COMBINED_CONFIG).is_file():
+        helper = combined_helper(root)
+        config = helper.load_config(root)
+        authority = tuple((str(file), sha256_file(file)) for file in (
+            root / COMBINED_CONFIG, root / 'scripts/check_combined_upgrade_candidate.py',
+            root / 'scripts/check_release_crypto_profile.py',
+            root / config['independent_review']['path']))
+        return manifest, hashlib.sha256(manifest_bytes).hexdigest(), tuple(binary_paths), authority
     v0113 = (root / 'config/v0113-release-successor.json').is_file()
     if v0113:
         v0113_helper(root)
@@ -524,6 +553,12 @@ def validate_v011_sync_import_successor_receipt(receipt, manifest, manifest_dige
 
 
 def validate_private_launch_receipt(receipt: object, manifest: dict, manifest_digest: str, registry: dict) -> dict:
+    if isinstance(receipt, dict) and receipt.get('final_artifact_scope') == COMBINED_SCOPE:
+        helper = combined_helper(SOURCE_ROOT)
+        try:
+            return helper.validate_final_receipt(receipt, manifest, manifest_digest, SOURCE_ROOT)
+        except (OSError, ValueError, helper.CandidateError) as error:
+            fail('combined candidate final receipt rejected: ' + str(error))
     if isinstance(receipt, dict) and receipt.get('final_artifact_scope') == V0113_SCOPE:
         helper = v0113_helper(SOURCE_ROOT)
         try:
@@ -595,17 +630,32 @@ def private_launch_profile(root: Path, manifest_path: Path) -> dict:
         command = [sys.executable, '-I', '-B', str(root / 'scripts/check_v0113_release_successor.py'),
                    '--require-authorized', '--artifact-manifest', manifest_path.relative_to(root).as_posix(),
                    '--require-final-artifact']
-    completed = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=1300 if (root / "config/v011-release-successor.json").is_file() else 180)
+    if (root / COMBINED_CONFIG).is_file():
+        combined_helper(root)
+        command = [sys.executable, '-I', '-B', str(root / 'scripts/check_combined_upgrade_candidate.py'),
+                   '--require-authorized', '--artifact-manifest', manifest_path.relative_to(root).as_posix(),
+                   '--require-final-artifact']
+    completed = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=44400 if (root / COMBINED_CONFIG).is_file() else (1300 if (root / "config/v011-release-successor.json").is_file() else 180))
     if completed.returncode != 0 or completed.stderr:
         fail("private launch source authorization failed: " + (completed.stderr.strip() or str(completed.returncode)))
     lines = completed.stdout.splitlines()
     receipt = json.loads(completed.stdout)
-    if len(lines) != 1 and receipt.get("final_artifact_scope") not in ("version_and_exact_platform_shutdown_successor_public_proof_replay", "exact_current_source_current_binary_backend_and_h0", SYNC_IMPORT_SCOPE, V0113_SCOPE):
+    if len(lines) != 1 and receipt.get("final_artifact_scope") not in ("version_and_exact_platform_shutdown_successor_public_proof_replay", "exact_current_source_current_binary_backend_and_h0", SYNC_IMPORT_SCOPE, V0113_SCOPE, COMBINED_SCOPE):
         fail("private launch source authorization must return one JSON receipt")
     registry = json.loads((root / "scripts/private_spend_launch_authorized_registry.json").read_text())
     identity = validate_private_launch_receipt(receipt, manifest, manifest_digest, registry)
     if private_launch_snapshot(root, manifest_path) != before:
         fail("private launch manifest, artifacts or authority changed during validation")
+    if receipt.get('final_artifact_scope') == COMBINED_SCOPE:
+        return {'passed': True, 'mode': 'executed-combined-upgrade-software-candidate',
+                'target_triple': manifest['target_triple'], 'production_authority': False,
+                'private_spend_launch_authority': False, 'current_network_G8_qualified': False,
+                'public_cutover_authorized': False, 'mainnet_authorized': False,
+                'activation_authorized': False, 'physical_asic_qualified': False,
+                'identity': identity, 'artifact_manifest_sha256': manifest_digest,
+                'actual_new_binary_proof_verification': True,
+                'affected_lifecycle_verified': True,
+                'candidate_binding_sha256': receipt['candidate_binding_sha256']}
     if receipt.get('final_artifact_scope') == V0113_SCOPE:
         return {'passed': True, 'mode': 'executed-exact-v0113-premainnet-source-backend-h0',
             'target_triple': manifest['target_triple'], 'production_authority': False,

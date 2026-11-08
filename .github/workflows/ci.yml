@@ -2,7 +2,7 @@ name: Monorepo CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, 'codex/combined-*' ]
   pull_request:
 
 env:
@@ -18,6 +18,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev
       - name: Setup Rust toolchain
@@ -35,6 +36,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Setup Rust toolchain
         run: rustup show
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
@@ -54,6 +56,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev clang lld
       - name: Setup Rust toolchain
@@ -72,6 +75,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Setup Rust toolchain
         run: rustup show
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
@@ -87,6 +91,8 @@ jobs:
           sh "$ELAN_INIT" -y --default-toolchain none
       - name: Formal-core proof-kernel gate
         run: bash scripts/check_formal_core.sh lean
+      - name: ASERT standalone arithmetic and activation model
+        run: bash scripts/check_asert_formal.sh --lean-only
 
   formal-core-vectors:
     runs-on: ubuntu-latest
@@ -96,6 +102,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev clang lld
       - name: Setup Rust toolchain
@@ -121,6 +128,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev clang lld
       - name: Setup Rust toolchain
@@ -167,6 +175,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Reject research dependencies in production authority
         run: bash scripts/check_formal_crypto.sh --isolation-only
 
@@ -185,6 +194,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev clang lld
       - name: Setup Rust toolchain
@@ -244,6 +254,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev
       - name: Setup Rust toolchain
@@ -279,6 +290,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev
       - name: Setup Rust toolchain
@@ -316,6 +328,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Install app dependencies
         run: npm ci --prefix hegemon-app
       - name: App UI guard gate
@@ -347,6 +360,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev clang lld
       - name: Setup Rust toolchain
@@ -379,6 +393,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev clang lld
       - name: Setup Rust toolchain
@@ -401,7 +416,7 @@ jobs:
 
   release-binaries:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 120
     steps:
       - name: Free disk space
         run: |
@@ -413,6 +428,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev
       - name: Setup Rust toolchain
@@ -431,6 +447,20 @@ jobs:
 
       - name: Restore authenticated v0.11 predecessor for strict binary qualification
         run: python3 -I -B scripts/materialize_v011_predecessor.py --reserve-bytes 4294967296
+
+      - name: Install candidate qualification Lean toolchain
+        shell: bash
+        env:
+          ELAN_INIT_SHA256: a620ff1641616222c8d37c54845492004bb84d6877cdbc944dd65c1aa685bf53
+        run: |
+          set -euo pipefail
+          ELAN_INIT="$RUNNER_TEMP/combined-elan-init.sh"
+          curl --proto '=https' --tlsv1.2 --fail --location --show-error https://elan.lean-lang.org/elan-init.sh -o "$ELAN_INIT"
+          python3 -I -B -c 'import hashlib,pathlib,sys; assert hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest() == sys.argv[2]' "$ELAN_INIT" "$ELAN_INIT_SHA256"
+          sh "$ELAN_INIT" -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+          "$HOME/.elan/bin/elan" toolchain install "$(cat formal/asert/lean-toolchain)"
+          (cd formal/asert && "$HOME/.elan/bin/lean" --version)
 
       - name: Release PQ binary audit
         run: ./scripts/security-audit.sh --require-binary --binary-manifest target/release/hegemon-release-artifacts.json --node-bin target/release/hegemon-node --binary target/release/wallet --binary target/release/walletd --binary target/release/private-spend

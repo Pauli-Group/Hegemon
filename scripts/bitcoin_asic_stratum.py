@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Small, fixed-version Stratum V1 bridge for Hegemon Bitcoin80 work.
+"""Bounded Stratum V1 bridge for Hegemon Bitcoin80 work.
 
 This is a local pool adapter, not a Bitcoin wallet or ledger. The native node
 owns block templates, consensus targets, and final block admission.
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import argparse
 from collections import OrderedDict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import Decimal, InvalidOperation
 from fractions import Fraction
 import hashlib
@@ -38,12 +38,17 @@ MAX_NETWORK_SUCCESS = 4096
 MAX_BUSY_SUBMISSION_ATTEMPTS = 241
 BUSY_SUBMISSION_DELAY_SECONDS = 0.5
 BUSY_SUBMISSION_MESSAGE = "ASIC block import busy; retry solution"
+FUTURE_SUBMISSION_MESSAGE = "ASIC solution temporarily future-dated; retry solution"
+TEMPORARY_FUTURE_WORK_REASON = "timestamp is temporarily ahead of local clock"
 MAX_OUTBOUND_MESSAGES = 8
 DIFF1_TARGET = int("00000000ffff" + "00" * 26, 16)
 MAX_TARGET = (1 << 256) - 1
 MAX_POW_TARGET = 0x7FFFFF << 232  # canonical Bitcoin compact 0x207fffff
-EXTRANONCE1_BYTES = 24
-EXTRANONCE2_BYTES = 4
+EXTRANONCE_BYTES = 28
+EXTRANONCE1_BYTES = 20
+EXTRANONCE2_BYTES = 8
+VERSION_ROLLING_MASK = 0x1FFFFFE0
+ShareKey = tuple[str, bytes, str, str, str]
 
 
 def sha256d(data: bytes) -> bytes:
@@ -101,12 +106,17 @@ class Job:
     job_id: str
     parent_hash: str
     version: str
+    version_rolling_mask: int
     ntime: str
     nbits: str
     network_target: int
     coinbase_prefix: bytes
     coinbase_suffix: bytes
     expires_at: float
+    expires_monotonic: float
+
+    def expired(self) -> bool:
+        return self.expires_monotonic <= time.monotonic()
 
     @classmethod
     def from_rpc(cls, obj: Any, now: float) -> "Job | None":
@@ -135,6 +145,10 @@ class Job:
             raise ValueError("Bitcoin80 work requires 28 extranonce bytes")
         reference_header = fixed_hex(obj.get("header80"), 160, "header80")
         version = fixed_hex(obj.get("version"), 8, "version")
+        version_mask = int(fixed_hex(obj.get("version_rolling_mask", "00000000"),
+                                     8, "version_rolling_mask"), 16)
+        if version_mask & ~VERSION_ROLLING_MASK:
+            raise ValueError("unsupported version rolling bits")
         ntime = fixed_hex(obj.get("ntime"), 8, "ntime")
         nbits = fixed_hex(obj.get("nbits"), 8, "nbits")
         parent_hex = obj.get("parent_hash")
@@ -152,8 +166,9 @@ class Job:
                 or not math.isfinite(expires) or expires <= 0):
             raise ValueError("invalid work expiry")
         # The RPC expiry is a TTL in seconds, capped locally to bound stale work.
-        job = cls(jid, parent, version, ntime, nbits, target, prefix_bytes,
-                  suffix_bytes, now + min(float(expires), 120.0))
+        job = cls(jid, parent, version, version_mask, ntime, nbits, target, prefix_bytes,
+                  suffix_bytes, now + min(float(expires), 120.0),
+                  time.monotonic() + min(float(expires), 120.0))
         if job.header(bytes(28), "00000000").hex() != reference_header:
             raise ValueError("header80 does not match independent Bitcoin header")
         return job
@@ -163,11 +178,14 @@ class Job:
                 self.coinbase_prefix.hex(), self.coinbase_suffix.hex(), [],
                 self.version, self.nbits, self.ntime, clean_jobs]
 
-    def header(self, extranonce: bytes, nonce: str) -> bytes:
+    def header(self, extranonce: bytes, nonce: str, mining_version: str | None = None) -> bytes:
         if len(extranonce) != 28:
             raise ValueError("extranonce must be 28 bytes")
         merkle_root = sha256d(self.coinbase_prefix + extranonce + self.coinbase_suffix)
-        header = (int(self.version, 16).to_bytes(4, "little")
+        version = self.version if mining_version is None else fixed_hex(mining_version, 8, "mining_version")
+        if (int(version, 16) ^ int(self.version, 16)) & ~self.version_rolling_mask:
+            raise ValueError("version changes bits outside job mask")
+        header = (int(version, 16).to_bytes(4, "little")
                   + bytes.fromhex(self.parent_hash)[::-1] + merkle_root
                   + int(self.ntime, 16).to_bytes(4, "little")
                   + int(self.nbits, 16).to_bytes(4, "little")
@@ -221,6 +239,9 @@ class Client:
     extranonce1: bytes = field(default_factory=lambda: secrets.token_bytes(EXTRANONCE1_BYTES))
     subscribed: bool = False
     authorized: bool = False
+    version_rolling: bool = False
+    miner_version_mask: int = 0xFFFFFFFF
+    version_rolling_mask: int = 0
     job_ids: set[str] = field(default_factory=set)
 
     def start_writer(self) -> None:
@@ -266,9 +287,15 @@ class Client:
 
 class Pool:
     def __init__(self, rpc: Any, worker: str, password: str, difficulty: str,
-                 max_clients: int = 32) -> None:
+                 max_clients: int = 32, extranonce2_bytes: int = EXTRANONCE2_BYTES) -> None:
         if not worker or not password or max_clients < 1:
             raise ValueError("worker, password and positive max_clients are required")
+        if type(extranonce2_bytes) is not int or not 1 <= extranonce2_bytes < EXTRANONCE_BYTES:
+            raise ValueError("extranonce2-bytes must be between 1 and 27")
+        self.extranonce2_bytes = extranonce2_bytes
+        self.extranonce1_bytes = EXTRANONCE_BYTES - extranonce2_bytes
+        if max_clients > 1 << (8 * self.extranonce1_bytes):
+            raise ValueError("extranonce1 namespace is smaller than max-clients")
         self.rpc, self.worker, self.password = rpc, worker, password
         self.difficulty, self.target = difficulty, share_target(difficulty)
         self.difficulty_float = float(Decimal(difficulty))
@@ -281,11 +308,12 @@ class Pool:
         self.clients: set[Client] = set()
         self.jobs: dict[str, Job] = {}
         self.current: Job | None = None
-        self.seen: OrderedDict[tuple[str, bytes, str, str], None] = OrderedDict()
-        self.network_pending: set[tuple[str, bytes, str, str]] = set()
-        self.network_pending_tokens: dict[tuple[str, bytes, str, str], object] = {}
+        self.paused_parent: str | None = None
+        self.seen: OrderedDict[ShareKey, None] = OrderedDict()
+        self.network_pending: set[ShareKey] = set()
+        self.network_pending_tokens: dict[ShareKey, object] = {}
         self.work_epoch = 0
-        self.network_success: OrderedDict[tuple[str, bytes, str, str], None] = OrderedDict()
+        self.network_success: OrderedDict[ShareKey, None] = OrderedDict()
         self.slots = threading.BoundedSemaphore(max_clients)
         self.max_clients = max_clients
 
@@ -310,8 +338,42 @@ class Pool:
             self.poll_lock.release()
 
     def _poll_once(self) -> None:
-        new = Job.from_rpc(self.rpc.call("hegemon_poolWork"), time.time())
+        raw = self.rpc.call("hegemon_poolWork")
+        # Only the node's explicit temporary-clock response can retain an
+        # existing same-parent epoch. Ordinary unavailability still withdraws
+        # authority immediately. No refresh extends any original job expiry.
+        if (isinstance(raw, dict) and raw.get("available") is False
+                and raw.get("reason") == TEMPORARY_FUTURE_WORK_REASON
+                and raw.get("reason_code") == "future_timestamp"):
+            raw_parent = raw.get("parent_hash")
+            if not isinstance(raw_parent, str):
+                raise ValueError("parent_hash must be hex")
+            parent = fixed_hex(raw_parent.removeprefix("0x"), 64, "parent_hash")
+            retained = raw.get("retained_job_ids")
+            if (not isinstance(retained, list) or len(retained) > MAX_JOBS
+                    or not all(isinstance(jid, str) and 1 <= len(jid) <= 128 for jid in retained)
+                    or len(set(retained)) != len(retained)):
+                raise ValueError("invalid retained_job_ids")
+            with self.lock:
+                prior_parent = self.current.parent_hash if self.current else self.paused_parent
+                eligible = {jid: job for jid, job in self.jobs.items()
+                            if jid in retained and job.parent_hash == parent and not job.expired()}
+                if prior_parent == parent and eligible:
+                    self.jobs = eligible
+                    self.current = None
+                    self.paused_parent = parent
+                    for key in tuple(self.network_pending):
+                        if key[0] not in eligible:
+                            self.network_pending.discard(key)
+                            self.network_pending_tokens.pop(key, None)
+                    for client in self.clients:
+                        client.job_ids.intersection_update(eligible.keys())
+                    return
+        new = Job.from_rpc(raw, time.time())
         with self.lock:
+            prior_parent = self.current.parent_hash if self.current else self.paused_parent
+            was_paused = self.paused_parent is not None
+            self.paused_parent = None
             if new is None:
                 self.current = None
                 self.jobs.clear()
@@ -324,7 +386,7 @@ class Pool:
                     client.job_ids.clear()
                 return
             old = self.current
-            parent_changed = old is None or old.parent_hash != new.parent_hash
+            parent_changed = prior_parent != new.parent_hash
             if parent_changed:
                 self.jobs.clear()
                 self.seen.clear()
@@ -338,17 +400,19 @@ class Pool:
             if existing is not None and existing != new:
                 # Expiry changes as the node's remaining TTL counts down. All
                 # other bytes must stay immutable for a given job identifier.
-                if (existing.parent_hash, existing.version, existing.ntime,
+                if (existing.parent_hash, existing.version, existing.version_rolling_mask, existing.ntime,
                     existing.nbits, existing.network_target, existing.coinbase_prefix,
                     existing.coinbase_suffix) != (
-                    new.parent_hash, new.version, new.ntime, new.nbits,
+                    new.parent_hash, new.version, new.version_rolling_mask, new.ntime, new.nbits,
                     new.network_target, new.coinbase_prefix, new.coinbase_suffix):
                     raise ValueError("job_id reused for different work")
-            changed = old is None or old.job_id != new.job_id or parent_changed
+            if existing is not None:
+                new = replace(new, expires_at=min(existing.expires_at, new.expires_at),
+                              expires_monotonic=min(existing.expires_monotonic, new.expires_monotonic))
+            changed = old is None or old.job_id != new.job_id or parent_changed or was_paused
             self.current = new
-            now = time.time()
             for jid, job in tuple(self.jobs.items()):
-                if job.expires_at <= now:
+                if job.expired():
                     del self.jobs[jid]
             self.jobs[new.job_id] = new
             while len(self.jobs) > MAX_JOBS:
@@ -356,9 +420,18 @@ class Pool:
             retained_ids = self.jobs.keys()
             for client in self.clients:
                 client.job_ids.intersection_update(retained_ids)
-            clients = tuple(c for c in self.clients if c.authorized) if changed else ()
+            clients = tuple(self.clients) if changed else ()
         for client in clients:
             try:
+                with self.lock:
+                    mask = new.version_rolling_mask & client.miner_version_mask
+                    changed_mask = client.version_rolling and mask != client.version_rolling_mask
+                    if changed_mask:
+                        client.version_rolling_mask = mask
+                if changed_mask:
+                    client.event("mining.set_version_mask", [f"{mask:08x}"])
+                if not client.authorized:
+                    continue
                 client.job_ids.add(new.job_id)
                 client.event("mining.set_difficulty", [self.announced_difficulty(new)])
                 client.event("mining.notify", new.notify(parent_changed))
@@ -369,10 +442,10 @@ class Pool:
 
     @staticmethod
     def _work_bytes(job: Job) -> tuple[Any, ...]:
-        return (job.parent_hash, job.version, job.ntime, job.nbits,
+        return (job.parent_hash, job.version, job.version_rolling_mask, job.ntime, job.nbits,
                 job.network_target, job.coinbase_prefix, job.coinbase_suffix)
 
-    def _submit_network_solution(self, key: tuple[str, bytes, str, str],
+    def _submit_network_solution(self, key: ShareKey,
                                  job: Job, token: object, epoch: int,
                                  payload: dict[str, str]) -> tuple[bool, str | None]:
         # A bounded client handler owns this retry and keeps its server slot
@@ -380,23 +453,24 @@ class Pool:
         # is created. The first job expiry remains fixed across work refreshes.
         # The deadline bounds retry admission; an in-flight RPC retains its
         # existing socket timeout and may finish after that deadline.
-        deadline = time.monotonic() + min(120.0, max(0.0, job.expires_at - time.time()))
+        deadline = min(job.expires_monotonic, time.monotonic() + 120.0)
         for attempt in range(MAX_BUSY_SUBMISSION_ATTEMPTS):
             with self.lock:
                 cached = self.jobs.get(job.job_id)
                 if (self.work_epoch != epoch
                         or self.network_pending_tokens.get(key) is not token
-                        or self.current is None or cached is None
-                        or self.current.parent_hash != job.parent_hash
+                        or cached is None
+                        or (self.current.parent_hash if self.current else self.paused_parent) != job.parent_hash
                         or self._work_bytes(cached) != self._work_bytes(job)
-                        or cached.expires_at <= time.time()
-                        or job.expires_at <= time.time()
+                        or cached.expired()
+                        or job.expired()
                         or time.monotonic() >= deadline):
                     return False, "stale job"
             try:
                 result = self.rpc.call("hegemon_submitPoolShare", dict(payload))
             except NodeRPCError as exc:
-                if exc.code != -32602 or exc.message != BUSY_SUBMISSION_MESSAGE:
+                if (exc.code != -32602 or exc.message not in
+                        (BUSY_SUBMISSION_MESSAGE, FUTURE_SUBMISSION_MESSAGE)):
                     return False, exc.message
                 if attempt + 1 == MAX_BUSY_SUBMISSION_ATTEMPTS:
                     return False, "node import busy; retry budget exhausted"
@@ -425,8 +499,8 @@ class Pool:
     def start_client(self, client: Client) -> None:
         with self.lock:
             used = {active.extranonce1 for active in self.clients}
-            while client.extranonce1 in used:
-                client.extranonce1 = secrets.token_bytes(EXTRANONCE1_BYTES)
+            while len(client.extranonce1) != self.extranonce1_bytes or client.extranonce1 in used:
+                client.extranonce1 = secrets.token_bytes(self.extranonce1_bytes)
             client.start_writer()
             self.clients.add(client)
 
@@ -446,17 +520,41 @@ class Pool:
                     "error": [20, error, None] if error else None}
 
         if method == "mining.configure":
-            if not params or not isinstance(params[0], list):
+            if (len(params) != 2 or not isinstance(params[0], list)
+                    or not all(isinstance(code, str) and code for code in params[0])
+                    or not isinstance(params[1], dict)):
                 return reply(error="invalid configure request")
-            return reply({extension: ("00000000" if extension == "version-rolling.mask" else False)
-                          for extension in params[0] if isinstance(extension, str)}
-                         | ({"version-rolling.mask": "00000000"}
-                            if "version-rolling" in params[0] else {}))
+            result = {extension: False for extension in params[0]}
+            if "version-rolling" in params[0]:
+                try:
+                    requested = int(fixed_hex(params[1].get("version-rolling.mask", "ffffffff"),
+                                              8, "version-rolling.mask"), 16)
+                    minimum = params[1].get("version-rolling.min-bit-count")
+                    if type(minimum) is not int or minimum < 0:
+                        raise ValueError("version-rolling.min-bit-count must be a nonnegative integer")
+                except ValueError as exc:
+                    result["version-rolling"] = str(exc)
+                    return reply(result)
+                with self.lock:
+                    # A zero mask still negotiates the extension. An activation
+                    # or reorganization can update it with set_version_mask.
+                    server_mask = self.current.version_rolling_mask if self.current else 0
+                    mask = requested & server_mask
+                    client.version_rolling = True
+                    client.miner_version_mask = requested
+                    client.version_rolling_mask = mask
+                result.update({"version-rolling": True, "version-rolling.mask": f"{mask:08x}"})
+                if mask.bit_count() < minimum:
+                    # BIP310 treats the minimum as diagnostic; the miner may
+                    # choose degraded operation and remains connected.
+                    LOG.info("miner requests %d version bits; available intersection has %d",
+                             minimum, mask.bit_count())
+            return reply(result)
         if method == "mining.subscribe":
             client.subscribed = True
             return reply([[ ["mining.set_difficulty", "hegemon"],
                             ["mining.notify", "hegemon"] ],
-                          client.extranonce1.hex(), EXTRANONCE2_BYTES])
+                          client.extranonce1.hex(), self.extranonce2_bytes])
         if method == "mining.authorize":
             ok = (client.subscribed and len(params) == 2
                   and isinstance(params[0], str) and isinstance(params[1], str)
@@ -467,13 +565,14 @@ class Pool:
         if method == "mining.submit":
             if not client.authorized:
                 return reply(False, "unauthorized")
-            if len(params) != 5 or params[0] != self.worker:
+            if len(params) != (6 if client.version_rolling else 5) or params[0] != self.worker:
                 return reply(False, "invalid submit parameters")
             try:
                 job_id = params[1]
-                ex2 = fixed_hex(params[2], 8, "extranonce2")
+                ex2 = fixed_hex(params[2], self.extranonce2_bytes * 2, "extranonce2")
                 ntime = fixed_hex(params[3], 8, "ntime")
                 nonce = fixed_hex(params[4], 8, "nonce")
+                bits = int(fixed_hex(params[5], 8, "version_bits"), 16) if client.version_rolling else 0
             except ValueError as exc:
                 return reply(False, str(exc))
             if not isinstance(job_id, str):
@@ -481,13 +580,20 @@ class Pool:
             with self.lock:
                 job = self.jobs.get(job_id)
                 if (job is None or job_id != job.job_id or job_id not in client.job_ids
-                        or job.expires_at <= time.time()):
+                        or job.expired()):
                     return reply(False, "stale job")
                 if ntime != job.ntime:
                     return reply(False, "ntime rolling is disabled")
+                if bits & ~client.version_rolling_mask:
+                    return reply(False, "version bits exceed negotiated mask")
+                mask = client.version_rolling_mask if client.version_rolling else 0
+                mining_version = f"{(int(job.version, 16) & ~mask) | bits:08x}"
                 extranonce = client.extranonce1 + bytes.fromhex(ex2)
-                key = (job_id, extranonce, ntime, nonce)
-                header = job.header(extranonce, nonce)
+                key = (job_id, extranonce, ntime, nonce, mining_version)
+                try:
+                    header = job.header(extranonce, nonce, mining_version)
+                except ValueError as exc:
+                    return reply(False, str(exc))
                 value = int.from_bytes(sha256d(header), "little")
                 is_network_solution = value <= job.network_target
                 if (key in self.seen or key in self.network_pending
@@ -508,7 +614,7 @@ class Pool:
             if is_network_solution:
                 accepted, reason = self._submit_network_solution(key, job, token, epoch, {
                     "job_id": job_id, "nonce": nonce, "extranonce": extranonce.hex(),
-                    "ntime": ntime,
+                    "ntime": ntime, "mining_version": mining_version,
                 })
                 with self.lock:
                     # A parent/unavailable transition may have cleared the old
@@ -573,16 +679,26 @@ class _Handler(socketserver.StreamRequestHandler):
                     client.send({"id": None, "result": None,
                                  "error": [20, "invalid JSON", None]})
                     continue
-                response = self.server.pool.handle(client, request)
+                if isinstance(request, dict) and request.get("method") == "mining.configure":
+                    # Keep a negotiated mask's response ordered with poller
+                    # mask updates. Solution handlers must not hold this lock:
+                    # their bounded import-busy retries refresh work themselves.
+                    with self.server.pool.poll_lock:
+                        response = self.server.pool.handle(client, request)
+                        if response is not None:
+                            client.send(response)
+                else:
+                    response = self.server.pool.handle(client, request)
+                    if response is not None:
+                        client.send(response)
                 if response is not None:
-                    client.send(response)
                     if (isinstance(request, dict) and request.get("method") == "mining.authorize"
                             and response.get("result") is True):
                         with self.server.pool.lock:
                             job = self.server.pool.current
                         client.event("mining.set_difficulty",
                                      [self.server.pool.announced_difficulty(job)])
-                        if job is not None and job.expires_at > time.time():
+                        if job is not None and not job.expired():
                             client.job_ids.add(job.job_id)
                             client.event("mining.notify", job.notify())
         except (TimeoutError, OSError, BrokenPipeError):
@@ -605,6 +721,8 @@ def main() -> None:
     parser.add_argument("--share-difficulty", default="0.001")
     parser.add_argument("--poll-seconds", type=float, default=2.0)
     parser.add_argument("--max-clients", type=int, default=32)
+    parser.add_argument("--extranonce2-bytes", type=int, default=EXTRANONCE2_BYTES,
+                        help="miner extranonce bytes (default 8; use 4 for 24+4 compatibility; total stays 28)")
     args = parser.parse_args()
     if not ipaddress.ip_address(args.bind).is_loopback and not args.allow_public_bind:
         parser.error("non-loopback bind requires --allow-public-bind")
@@ -615,7 +733,8 @@ def main() -> None:
         parser.error(f"set nonempty {args.password_env}")
     try:
         pool = Pool(NodeRPC(args.rpc_url, os.environ.get(args.rpc_token_env)),
-                    args.worker, password, args.share_difficulty, args.max_clients)
+                    args.worker, password, args.share_difficulty, args.max_clients,
+                    args.extranonce2_bytes)
     except ValueError as exc:
         parser.error(str(exc))
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")

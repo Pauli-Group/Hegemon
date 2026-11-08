@@ -302,14 +302,17 @@ Stablecoin issuance and burn are handled as a controlled exception to the per-as
 
 Inside the AIR, the stablecoin binding payload stays in the public inputs. The fixed four balance-slot asset ids are also public inputs, with a canonical encoding enforced by the runtime and wallet: slot `0` is always the native asset, non-native asset ids are strictly increasing, and any `u64::MAX` padding must appear only as a suffix. The witness trace carries only the running in/out sums for those four slots plus a compact 2-bit selector for the chosen non-native balance slot: `00` means “no stablecoin binding,” while `01`, `10`, and `11` select non-native slots `1`, `2`, and `3` respectively. When the binding is enabled, that selected slot must match `stablecoin_asset_id` and its net delta must equal `issuance_delta`; the balance kernel proves `validBalance_stablecoin_padding_field_alias_rejected`, and production `verify_balance_slots` rejects the reserved Goldilocks padding-field alias before any issuance exception is applied. All other non-native slots are still constrained to zero. Wallet/RPC construction obtains the binding from the active `StablecoinPolicy`, fresh oracle commitment, and undisputed attestation through a helper that binds the storage-backed policy hash, oracle commitment, attestation commitment, issuance delta, and policy version into the exact payload while rejecting inactive, ambiguous, stale, disputed, zero-issuance, or over-range records. Node admission then binds the submitted stablecoin payload through public-input, statement, proof-binding, native tx-leaf/action equality checks, and a theorem-backed native manifest authorization table requiring active policy, enabled/retired lifecycle, matching policy hash/version, matching oracle and attestation commitments, undisputed attestation, fresh oracle submission, nonzero issuance, and max-mint/u64 bounds. This keeps issuance fully shielded while still tethering the proof payload to protocol-approved policy inputs; replayed dynamic policy/oracle/attestation state and full native-node `LiveStablecoinPolicyAuthorizes` refinement remain explicit follow-on targets.
 
-Consensus stitches this MASP output into PoW validation with an optional shielded coinbase action. Omitting coinbase forfeits the
+The historical per-block native route stitches this MASP output into PoW validation with an optional shielded coinbase action. Omitting coinbase forfeits the
 subsidy and fees; if a coinbase is present, active V2 requires exactly one, requires it to be the final action, and requires its
 amount to equal the checked subsidy plus checked shielded-transfer fees. Multiple or non-final coinbases reject in the early block
 policy gate before proof or DA work. Full nodes recompute the running `supply_digest = parent_digest + minted + fees − burns`, and
 reject an over-subsidy/reward-mismatched coinbase before fork-choice publication. This keeps the STARK circuit, MASP accounting,
 and the PoW header’s supply digest in lockstep while preserving intentional subsidy forfeiture.
-The current native `supply_digest` counts gross subsidy plus recycled fees, not circulating supply. Do not compare it with
-`MAX_SUPPLY` or substitute the scheduled prefix for actual minted subsidy; see [native supply accounting](docs/NATIVE_SUPPLY_ACCOUNTING.md).
+The native `supply_digest` is gross coinbase accounting, including recycled fees, rather than circulating supply. At an active
+combined treasury cadence, reconstruct it from actual created reward-note values; pending scheduled treasury entitlement remains
+separate, and omitted miner rewards do not erase that entitlement. Preserve the historical per-block replay below activation.
+Do not compare the counter with `MAX_SUPPLY` or substitute the scheduled prefix for actual minted subsidy; see
+[native supply accounting](docs/NATIVE_SUPPLY_ACCOUNTING.md).
 The executable 21M epoch-budget schedule is represented in Lean: it starts at 5 HGN, uses 2,100,000-block epochs and
 integer floor-prefix differences, issues nothing at height zero, and eventually exhausts the remaining budget.
 Generated vectors check the source schedule against `consensus::reward::block_subsidy`. The executable supply-accounting rule is also represented in Lean: generated vectors check
@@ -1909,6 +1912,32 @@ work, block import, sync and restart; reject invalid genesis configurations and
 noncanonical work targets. The legacy codec and generated schedule vectors are
 not altered or presented as formal proofs of the new wrapper.
 
+The prepared ASERT successor uses the same Bitcoin80 envelope and compact codec.
+Its source-owned chain schedule is in `consensus-light-client/src/pow_rules.rs`;
+the pre-mainnet activation remains unset. At an eventual height H, the target is
+computed from the H−1 block's target and height and H−2's timestamp, using the
+current parent's height/time and the reference integer polynomial. Native
+validation resolves that anchor along parent hashes, including unpersisted
+validated sync prefixes. Historical replay indexes its already admitted ancestry.
+Cold retained-history lookups advance at most 128 links per call and return a
+typed local deferral. Exact original and cursor projections are reread on
+resume; pending and complete caches each hold at most 256 entries. Network
+announcement retries release the fair import slot and preserve owned work
+under the existing byte and peer limits; sync retry does not penalize peers
+for local deferral. This does not change which historical branches are valid.
+The new header rules digest is height-aware, while the original genesis/manifest
+rules and wallet launch-reference commitment remain fixed. Both header profiles
+use Bitcoin80 hashing. Fixed-difficulty bridge/light-client interfaces reject
+ASERT because they lack authenticated anchor history; the explicit expected-bits
+verifier remains the native admission interface. No new bridge authority is implied.
+
+Qualification commands and reference vector provenance are recorded in
+`docs/consensus/ASERT_UPGRADE.md`. The isolated `asert-rehearsal` build enables only
+the legacy development chain at height 20, with disposable test databases. These
+checks cover the PoW delta; they neither replace unchanged transaction proof
+qualification nor select a live activation or authorize a release. Operators must
+keep NTP/chrony enabled because the existing future-timestamp bound remains active.
+
 `hegemon_poolWork`/`hegemon_compactJob` and solution submission are unsafe RPCs,
 not anonymous public work services. Jobs retain exact prepared actions and reject
 stale parent, invalidated prepared contents, expiry, malformed fields and insufficient
@@ -2880,3 +2909,76 @@ disabled. Retained formal/protocol receipts keep their original identities;
 versioned final binaries require fresh artifact provenance and affected checks.
 See [the operator guide](config/testnet/0.11/README.md) and
 [release checklist](docs/releases/v0.11.md).
+
+### Combined candidate source and artifact method
+
+Generate the attributed preparation lane with
+`python3 -I -B scripts/prepare_premainnet_release.py --write --combined-candidate`.
+`check_combined_upgrade_candidate.py --prepare` checks pending source diagnostics;
+`--require-authorized` requires exact frozen source and independent scope review.
+Final artifact checks additionally require `--artifact-manifest` and
+`--require-final-artifact`, execute authenticated actual proof/H0 checks, and run
+six complete reviewed source-owned qualification commands with exact target and
+binary binding. Each command includes `{artifact_manifest}` as a literal argv
+placeholder, substituted with the actual manifest path without a shell. All
+artifact bytes, config, review and source are rechecked after qualification.
+Read the command/receipt contract in that checker; missing
+commands, receipts or subgates reject. Do not create substitute PASS receipts.
+
+The root coordinator supplies an exact sorted JSON path allowlist to
+`freeze_combined_upgrade_candidate.py --allow-paths PATH --write` after integrating
+and reviewing source. This freezes bytes only; it leaves independent review and
+qualification commands unset. Candidate evidence lives under the separate
+`release-evidence/combined-upgrade-20261108/` data namespace; scripts executing
+checks must be in the frozen source inventory. Full non-PR Monorepo CI runs on
+`codex/combined-*` branch pushes, without merging or publishing. All historical
+release workflow, checker and configuration bytes remain unchanged.
+
+Pinned rustfmt uses a distinct candidate wrapper. Byte-unchanged predecessor debt
+is inherited; changed old debt files require the separately reviewed exact paths
+passed with `--formatting-debt-paths`, while new debt paths always reject. This
+formatting allowance grants no release authority. Actual physical ASIC evidence,
+final parameter freeze and activation remain separate operator decisions.
+
+
+### Combined migration verification method
+
+Run injected-clock native tests at the inclusive future limit and one
+millisecond beyond it through real mined work, direct announcements, whole
+canonical batches, missing side-branch batches and stored winning-tip promotion.
+Compare complete durable rows before and after rejection, then retry the exact
+same bytes at the first eligible time. Reopen and replay accepted history after
+clock rollback. Exercise actual ASIC RPC jobs and real software PoW across the
+same pause, expiry and parent-change boundaries, together with socket-level
+adapter retry/negotiation controls.
+
+Treat the production binary and the explicit funded rehearsal binary as distinct
+artifacts from the same reviewed source. Record exact features, commands and
+hashes for both. Rehearsal results qualify the exercised source behavior; actual
+final binaries independently execute their own unchanged proof verification and
+isolated H0 gates. No receipt may claim that an inactive production schedule
+performed a rehearsal activation or that one platform's executable was tested
+by running another platform's artifact.
+
+Use real current SMZL proofs for treasury spending and HTLC lock/claim/refund.
+Keep mining paused while constructing reference-bound proofs, enforce the
+unchanged reference window, and retain exact actions, statements and proof
+hashes. Independent nodes must agree on canonical work, roots, issued supply,
+pending entitlement and mature wallet notes after boundary reorg, restart and
+fresh sync. Model/vector conformance, source guards and finite process evidence
+remain separately identified; historical per-block supply proofs cannot silently
+be credited to the new batch-issued transition.
+
+
+`scripts/qualify_combined_upgrade.py --suite NAME --artifact-manifest PATH`
+executes the focused source tests for each reviewed suite. Rust tests require
+exactly one pass and zero ignored cases; the 180-block coordinator test explicitly
+uses `--ignored --exact`. Adapter socket tests, no_std compilation and actual
+ASERT Lean/vector generation are separately executed. A public external runtime
+bundle additionally needs explicit receipt, harness and rehearsal-executable
+SHA256 pins in the independently reviewed argv, complete frozen source records,
+actual process closure, retained public proof/carrier bytes and canonical audit.
+Wallet credentials and private witness/prover material stay outside that bundle.
+The producer reports source rehearsal scope separately from final artifact
+identity; no per-target runtime execution is inferred from external evidence.
+Missing runtime operations reject even when unrelated focused tests pass.

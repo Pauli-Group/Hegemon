@@ -152,8 +152,13 @@ mod poseidon2_v8_throughput_tests {
             let mut competing = vec![asset_first.clone(), recovery.clone(), native_first.clone()];
             retain_one_native_controlled_asset_action(&mut competing);
             assert!(is_native_controlled_asset_action(&recovery));
-            assert_eq!(competing.iter().map(|action| action.tx_hash).collect::<Vec<_>>(),
-                vec![asset_first.tx_hash, native_first.tx_hash]);
+            assert_eq!(
+                competing
+                    .iter()
+                    .map(|action| action.tx_hash)
+                    .collect::<Vec<_>>(),
+                vec![asset_first.tx_hash, native_first.tx_hash]
+            );
         }
     }
 
@@ -161,12 +166,27 @@ mod poseidon2_v8_throughput_tests {
     fn mining_selection_reserves_reward_inside_exact_source_action_budget() {
         let actions = (0..8).map(|index| action(index, true)).collect::<Vec<_>>();
         let indices = (0..8).collect::<Vec<_>>();
-        assert_eq!(retain_selected_v8_proof_action_budget(&actions, &indices, 1, 8).unwrap(), indices[..7]);
-        assert_eq!(retain_selected_v8_proof_action_budget(&actions, &indices[..7], 1, 8).unwrap(), indices[..7]);
-        assert_eq!(retain_selected_v8_proof_action_budget(&actions, &indices, 0, 8).unwrap(), indices);
+        assert_eq!(
+            retain_selected_v8_proof_action_budget(&actions, &indices, 1, 8).unwrap(),
+            indices[..7]
+        );
+        assert_eq!(
+            retain_selected_v8_proof_action_budget(&actions, &indices[..7], 1, 8).unwrap(),
+            indices[..7]
+        );
+        assert_eq!(
+            retain_selected_v8_proof_action_budget(&actions, &indices, 0, 8).unwrap(),
+            indices
+        );
         assert!(retain_selected_v8_proof_action_budget(&actions, &indices, 1, 0).is_err());
         assert!(retain_selected_v8_proof_action_budget(&actions, &indices, 9, 8).is_err());
-        assert!(retain_selected_v8_proof_action_budget(&actions, &indices, 0, MAX_POSEIDON2_V8_ACTIONS_PER_BLOCK + 1).is_err());
+        assert!(retain_selected_v8_proof_action_budget(
+            &actions,
+            &indices,
+            0,
+            MAX_POSEIDON2_V8_ACTIONS_PER_BLOCK + 1
+        )
+        .is_err());
     }
 
     #[test]
@@ -176,12 +196,22 @@ mod poseidon2_v8_throughput_tests {
             .collect::<Vec<_>>();
         let all_indices = (0..actions.len()).collect::<Vec<_>>();
 
-        let without_coinbase =
-            retain_selected_v8_proof_action_budget(&actions, &all_indices, 0, MAX_POSEIDON2_V8_ACTIONS_PER_BLOCK).unwrap();
+        let without_coinbase = retain_selected_v8_proof_action_budget(
+            &actions,
+            &all_indices,
+            0,
+            MAX_POSEIDON2_V8_ACTIONS_PER_BLOCK,
+        )
+        .unwrap();
         assert_eq!(without_coinbase.len(), MAX_POSEIDON2_V8_ACTIONS_PER_BLOCK);
 
-        let with_coinbase =
-            retain_selected_v8_proof_action_budget(&actions, &all_indices, 1, MAX_POSEIDON2_V8_ACTIONS_PER_BLOCK).unwrap();
+        let with_coinbase = retain_selected_v8_proof_action_budget(
+            &actions,
+            &all_indices,
+            1,
+            MAX_POSEIDON2_V8_ACTIONS_PER_BLOCK,
+        )
+        .unwrap();
         assert_eq!(with_coinbase.len(), MAX_POSEIDON2_V8_ACTIONS_PER_BLOCK - 1);
         assert_eq!(with_coinbase, all_indices[..with_coinbase.len()]);
 
@@ -453,7 +483,7 @@ impl<V: poseidon2_v8_state::Poseidon2V8ExactLeafVerifier>
     fn launch_proof_action_limit(&self) -> Option<usize> {
         self.inner.launch_proof_action_limit()
     }
-    fn exact_leaf_proof_units(&self, exact: &[u8]) -> std::result::Result<usize,String> {
+    fn exact_leaf_proof_units(&self, exact: &[u8]) -> std::result::Result<usize, String> {
         self.inner.exact_leaf_proof_units(exact)
     }
 
@@ -678,11 +708,11 @@ fn verify_recorded_poseidon2_v8_block_order(
 fn is_native_controlled_asset_action(action: &PendingAction) -> bool {
     asset_recovery_native::is_recovery_action(action)
         || action.family_id == FAMILY_SHIELDED_POOL
-        && matches!(
-            action.action_id,
-            transaction_circuit::asset_spend_v1_admission::ASSET_SPEND_ACTION_ID
-                | transaction_circuit::asset_spend_v1_admission::ASSET_ADMIN_ACTION_ID
-        )
+            && matches!(
+                action.action_id,
+                transaction_circuit::asset_spend_v1_admission::ASSET_SPEND_ACTION_ID
+                    | transaction_circuit::asset_spend_v1_admission::ASSET_ADMIN_ACTION_ID
+            )
 }
 
 /// Defer competing asset actions without removing them from the mempool. The
@@ -861,7 +891,7 @@ fn validate_native_noncanonical_fork_record(
     meta: &NativeBlockMeta,
     encoded: &[u8],
 ) -> Result<()> {
-    validate_native_noncanonical_fork_record_summary(record, &meta.hash)?;
+    validate_native_noncanonical_fork_record_summary(record, &meta.hash, &meta.chain_id)?;
     if record.rules_hash != meta.rules_hash
         || record.height != meta.height
         || record.parent_hash != meta.parent_hash
@@ -882,9 +912,10 @@ fn validate_native_noncanonical_fork_record(
 fn validate_native_noncanonical_fork_record_summary(
     record: &NativeNoncanonicalForkRecordV1,
     expected_hash: &[u8; 32],
+    chain_id: &[u8; 32],
 ) -> Result<()> {
     if record.schema_version != NATIVE_NONCANONICAL_FORK_SCHEMA_V1
-        || record.rules_hash != HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE
+        || record.rules_hash != consensus_light_client::native_rules_hash(chain_id, record.height)
         || &record.block_hash != expected_hash
         || record.body_len > u64::try_from(MAX_NATIVE_BLOCK_META_BYTES).unwrap_or(u64::MAX)
         || record.record_digest != native_noncanonical_fork_digest(record)
@@ -974,7 +1005,8 @@ pub(crate) fn validate_native_canonical_state_checkpoint(
     meta: &NativeBlockMeta,
 ) -> Result<(CommitmentTreeState, NullifierAccumulator, Vec<Hash32>)> {
     if checkpoint.schema_version != NATIVE_CANONICAL_STATE_CHECKPOINT_SCHEMA_V1
-        || checkpoint.rules_hash != HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE
+        || checkpoint.rules_hash
+            != consensus_light_client::native_rules_hash(&meta.chain_id, meta.height)
         || checkpoint.rules_hash != meta.rules_hash
         || checkpoint.height != meta.height
         || checkpoint.block_hash != meta.hash
@@ -1069,7 +1101,8 @@ where
         if ancestor.hash != expected_hash
             || ancestor.height != expected_height
             || ancestor.chain_id != parent.chain_id
-            || ancestor.rules_hash != parent.rules_hash
+            || ancestor.rules_hash
+                != consensus_light_client::native_rules_hash(&ancestor.chain_id, ancestor.height)
             || ancestor.hash != ancestor.work_hash
         {
             return Err(anyhow!(
@@ -1394,7 +1427,13 @@ pub(crate) fn select_native_da_capacity_prefix<T>(
 pub(crate) fn select_native_da_action_prefix(
     actions: &[PendingAction],
 ) -> Result<NativeDaActionSelection> {
-    select_native_da_action_prefix_with_reservation(actions, 0, 0, 0, MAX_POSEIDON2_V8_ACTIONS_PER_BLOCK)
+    select_native_da_action_prefix_with_reservation(
+        actions,
+        0,
+        0,
+        0,
+        MAX_POSEIDON2_V8_ACTIONS_PER_BLOCK,
+    )
 }
 
 pub(crate) fn select_native_da_action_prefix_with_reservation(
@@ -1460,7 +1499,9 @@ fn retain_selected_v8_proof_action_budget(
     max_v8_proof_actions: usize,
 ) -> Result<Vec<usize>> {
     if max_v8_proof_actions == 0 || max_v8_proof_actions > MAX_POSEIDON2_V8_ACTIONS_PER_BLOCK {
-        return Err(anyhow!("invalid native source V8 action budget {max_v8_proof_actions}"));
+        return Err(anyhow!(
+            "invalid native source V8 action budget {max_v8_proof_actions}"
+        ));
     }
     let maximum_transactions = max_v8_proof_actions
         .checked_sub(reserved_v8_proof_actions)
@@ -1763,6 +1804,171 @@ struct NativePowMetaProjection {
     cumulative_work: [u8; 48],
 }
 
+pub(crate) const MAX_NATIVE_ASERT_ANCESTRY_HOPS_PER_CALL: usize = 128;
+const MAX_NATIVE_ASERT_CACHE_ENTRIES: usize = 256;
+
+/// Local backpressure while authenticating retained ancestry, not a consensus
+/// rejection. Retry the same work after giving other import jobs a turn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NativeAsertResolutionDeferred {
+    pub parent_hash: [u8; 32],
+    pub resume_height: u64,
+}
+
+impl std::fmt::Display for NativeAsertResolutionDeferred {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "native ASERT ancestor resolution deferred for {} at height {}",
+            hex32(&self.parent_hash),
+            self.resume_height,
+        )
+    }
+}
+
+impl std::error::Error for NativeAsertResolutionDeferred {}
+
+/// Memoized ancestry calculations only, never block/proof validity authority.
+/// A cache hit must match the exact parent projection and reread both anchor rows.
+/// Completed results and resumable walks are independently bounded and discarded
+/// on restart. Pending entries never authorize a target calculation.
+#[derive(Default)]
+pub(super) struct NativeAsertAnchorCache {
+    entries: BTreeMap<
+        [u8; 32],
+        (
+            NativePowMetaProjection,
+            NativePowMetaProjection,
+            NativePowMetaProjection,
+        ),
+    >,
+    order: VecDeque<[u8; 32]>,
+    progress: BTreeMap<[u8; 32], (NativePowMetaProjection, NativePowMetaProjection)>,
+    progress_order: VecDeque<[u8; 32]>,
+}
+
+impl NativeAsertAnchorCache {
+    fn insert(
+        &mut self,
+        parent: NativePowMetaProjection,
+        anchor: NativePowMetaProjection,
+        anchor_parent: NativePowMetaProjection,
+    ) {
+        if !self.entries.contains_key(&parent.hash) {
+            self.order.push_back(parent.hash);
+        }
+        self.entries
+            .insert(parent.hash, (parent, anchor, anchor_parent));
+        self.remove_progress(&parent.hash);
+        while self.order.len() > MAX_NATIVE_ASERT_CACHE_ENTRIES {
+            if let Some(hash) = self.order.pop_front() {
+                self.entries.remove(&hash);
+            }
+        }
+    }
+
+    fn remember_progress(
+        &mut self,
+        original: NativePowMetaProjection,
+        cursor: NativePowMetaProjection,
+    ) {
+        if let Some((previous_original, previous_cursor)) = self.progress.get(&original.hash) {
+            // Concurrent retries may finish their bounded slice out of order.
+            // Never replace an equally authenticated, further advanced walk.
+            if *previous_original == original && previous_cursor.height <= cursor.height {
+                return;
+            }
+        } else {
+            self.progress_order.push_back(original.hash);
+        }
+        self.progress.insert(original.hash, (original, cursor));
+        while self.progress_order.len() > MAX_NATIVE_ASERT_CACHE_ENTRIES {
+            if let Some(hash) = self.progress_order.pop_front() {
+                self.progress.remove(&hash);
+            }
+        }
+    }
+
+    fn remove_progress(&mut self, hash: &[u8; 32]) {
+        if self.progress.remove(hash).is_some() {
+            self.progress_order.retain(|entry| entry != hash);
+        }
+    }
+}
+
+#[cfg(test)]
+mod asert_cache_tests {
+    use super::*;
+
+    #[test]
+    fn asert_cache_replacements_and_eviction_are_bounded() {
+        let mut cache = NativeAsertAnchorCache::default();
+        let row = NativePowMetaProjection {
+            chain_id: [1; 32],
+            rules_hash: [2; 32],
+            height: 19,
+            hash: [3; 32],
+            parent_hash: [4; 32],
+            timestamp_ms: 60_000,
+            pow_bits: 0x207fffff,
+            work_hash: [3; 32],
+            cumulative_work: [0; 48],
+        };
+        for index in 0..300u64 {
+            let mut parent = row;
+            parent.hash[..8].copy_from_slice(&index.to_le_bytes());
+            cache.insert(parent, row, row);
+            cache.insert(parent, row, row);
+            cache.remember_progress(parent, row);
+            cache.remember_progress(parent, row);
+            assert_eq!(cache.entries.len(), cache.order.len());
+            assert!(cache.entries.len() <= 256);
+            assert_eq!(cache.progress.len(), cache.progress_order.len());
+            assert!(cache.progress.len() <= 256);
+        }
+        let mut oldest_hash = row.hash;
+        oldest_hash[..8].copy_from_slice(&0u64.to_le_bytes());
+        assert!(!cache.entries.contains_key(&oldest_hash));
+        assert!(!cache.progress.contains_key(&oldest_hash));
+        assert_eq!(cache.entries.len(), 256);
+        assert_eq!(cache.progress.len(), 256);
+        let mut newest_hash = row.hash;
+        newest_hash[..8].copy_from_slice(&299u64.to_le_bytes());
+        assert!(cache.entries.contains_key(&newest_hash));
+        assert!(cache.progress.contains_key(&newest_hash));
+        let newest_parent = cache.progress[&newest_hash].0;
+        cache.insert(newest_parent, row, row);
+        assert!(!cache.progress.contains_key(&newest_hash));
+        assert_eq!(cache.progress.len(), cache.progress_order.len());
+    }
+}
+
+fn validate_native_asert_anchor(
+    chain_id: [u8; 32],
+    activation: u64,
+    anchor: NativePowMetaProjection,
+    anchor_parent: NativePowMetaProjection,
+) -> Result<()> {
+    if activation < 2
+        || anchor.height.checked_add(1) != Some(activation)
+        || anchor_parent.height.checked_add(1) != Some(anchor.height)
+        || anchor.parent_hash != anchor_parent.hash
+        || anchor.chain_id != chain_id
+        || anchor_parent.chain_id != chain_id
+        || anchor.rules_hash != consensus_light_client::native_rules_hash(&chain_id, anchor.height)
+        || anchor_parent.rules_hash
+            != consensus_light_client::native_rules_hash(&chain_id, anchor_parent.height)
+        || anchor.hash != anchor.work_hash
+        || anchor_parent.hash != anchor_parent.work_hash
+        || anchor.timestamp_ms <= anchor_parent.timestamp_ms
+    {
+        return Err(anyhow!("native ASERT anchor ancestry mismatch"));
+    }
+    consensus_light_client::bitcoin80_validate_compact(anchor.pow_bits)
+        .map_err(|error| anyhow!("native ASERT anchor target rejected: {error:?}"))?;
+    Ok(())
+}
+
 impl From<&NativeBlockMeta> for NativePowMetaProjection {
     fn from(meta: &NativeBlockMeta) -> Self {
         Self {
@@ -1853,7 +2059,22 @@ fn inspect_native_pow_metadata_bincode_exact(
     label: &str,
 ) -> Result<(NativePowMetaProjection, bool)> {
     validate_native_block_meta_bincode_budget(bytes, label)?;
-    let prefix_bytes = bytes
+    let payload_offset = native_mining_meta_payload_offset(bytes);
+    let legacy_bytes = bytes
+        .get(payload_offset..)
+        .ok_or_else(|| anyhow!("{label} truncated mining metadata prefix"))?;
+    let mining_version = if payload_offset == 0 {
+        None
+    } else {
+        Some(u32::from_le_bytes(
+            bytes
+                .get(32..36)
+                .ok_or_else(|| anyhow!("{label} truncated mining version"))?
+                .try_into()
+                .expect("four-byte version"),
+        ))
+    };
+    let prefix_bytes = legacy_bytes
         .get(..NATIVE_BLOCK_META_ACTION_BYTES_OFFSET)
         .ok_or_else(|| anyhow!("{label} is truncated before its action byte count"))?;
     let prefix: NativeStoredPowPrefix<'_> = bincode::DefaultOptions::new()
@@ -1873,8 +2094,12 @@ fn inspect_native_pow_metadata_bincode_exact(
         work_hash: prefix.work_hash,
         cumulative_work: *prefix.cumulative_work,
     };
-    let mut exact_match = expected.is_none_or(|meta| prefix.matches(meta));
-    let mut cursor = NATIVE_BLOCK_META_ACTION_BYTES_OFFSET;
+    if prefix.chain_id == *NATIVE_MINING_META_MARKER {
+        return Err(anyhow!("{label} reserved mining marker chain identity"));
+    }
+    let mut exact_match =
+        expected.is_none_or(|meta| prefix.matches(meta) && mining_version == meta.mining_version);
+    let mut cursor = payload_offset + NATIVE_BLOCK_META_ACTION_BYTES_OFFSET;
     let action_count = required_bincode_len(bytes, &mut cursor, label, "action byte count")?;
     if action_count > MAX_NATIVE_BLOCK_ACTIONS {
         return Err(anyhow!(
@@ -2136,6 +2361,7 @@ impl NativeNode {
             work_template_build_lock: Mutex::new(()),
             work_template_cache: Mutex::new(None),
             bitcoin_asic_jobs: Mutex::new(BitcoinAsicJobCache::default()),
+            asert_anchor_cache: Mutex::new(NativeAsertAnchorCache::default()),
             pending_action_group_commit: NativePendingActionGroupCommit::default(),
             pending_proof_admissions_in_flight: Arc::new(Mutex::new(BTreeSet::new())),
             rejected_pending_actions: Mutex::new(RejectedPendingActionCache::default()),
@@ -3733,28 +3959,29 @@ impl NativeNode {
                 ));
             }
             validate_coinbase_action_payload(&action)?;
-            let expected = expected_coinbase_amount(actions, height)?;
-            if coinbase_action_amount(&action)? != expected {
-                return Err(anyhow!(
-                    "test-scoped Poseidon2 V8 coinbase amount mismatch at height {height}"
-                ));
-            }
             let mut accounting_actions = actions.to_vec();
             accounting_actions.push(action.clone());
             self.validate_network_coinbase_accounting(&accounting_actions, height)?;
             return Ok(Some(action));
         }
-        if self.config.miner_address.is_none() {
+        let treasury_due = self
+            .treasury_reward_policy()
+            .entitlement(height)
+            .map_or(0, |e| e.payout);
+        if self.config.miner_address.is_none() && treasury_due == 0 {
             return Ok(None);
         }
         if actions.iter().any(is_coinbase_action) {
             return Ok(None);
         }
         let amount = expected_coinbase_amount(actions, height)?;
-        if amount == 0 {
+        if amount == 0 && treasury_due == 0 {
             return Ok(None);
         }
         let Some(production) = self.fresh_coinbase_authority_at_height(height)? else {
+            if treasury_due > 0 {
+                return Err(anyhow!("mandatory treasury payout lacks mint authority"));
+            }
             // Fresh V4/Gamma minting is retired. Mining may still author an
             // empty, subsidy-forfeiting block while the V8 capability is absent.
             return Ok(None);
@@ -3776,9 +4003,6 @@ impl NativeNode {
                 .checked_add(1)
                 .ok_or_else(|| anyhow!("native coinbase reservation height overflow"))?;
             return self.auto_coinbase_action_reservation_bytes_at_height(height);
-        }
-        if self.config.miner_address.is_none() {
-            return Ok(0);
         }
         let height = self
             .best_meta()
@@ -3803,7 +4027,13 @@ impl NativeNode {
             }
             return Ok(action.encoded_size());
         }
-        if self.config.miner_address.is_none() {
+        if self.config.miner_address.is_none()
+            && self
+                .treasury_reward_policy()
+                .entitlement(height)
+                .map_or(0, |e| e.payout)
+                == 0
+        {
             return Ok(0);
         }
         let Some(production) = self.fresh_coinbase_authority_at_height(height)? else {
@@ -3818,7 +4048,11 @@ impl NativeNode {
             .encoded_size())
     }
 
-    fn validate_network_coinbase_accounting(
+    pub(crate) fn treasury_reward_policy(&self) -> consensus::treasury::TreasuryRewardPolicy {
+        treasury_reward_policy_for_network(&self.config.network)
+    }
+
+    pub(crate) fn validate_network_coinbase_accounting(
         &self,
         actions: &[PendingAction],
         height: u64,
@@ -3830,7 +4064,12 @@ impl NativeNode {
             .map(ShieldedAddress::decode)
             .transpose()
             .with_context(|| "decode immutable network funding recipient")?;
-        validate_coinbase_funding_accounting(actions, height, recipient.as_ref())
+        validate_coinbase_funding_accounting_with_policy(
+            actions,
+            height,
+            recipient.as_ref(),
+            self.treasury_reward_policy(),
+        )
     }
 
     pub(crate) fn native_proof_binding_for_replay(
@@ -4034,13 +4273,6 @@ impl NativeNode {
         amount: u64,
         production: native_proof_binding::NativeProofBinding,
     ) -> Result<PendingAction> {
-        let miner_address = self
-            .config
-            .miner_address
-            .as_deref()
-            .ok_or_else(|| anyhow!("native coinbase reservation requires a miner address"))?;
-        let recipient = ShieldedAddress::decode(miner_address)
-            .with_context(|| "decode HEGEMON_MINER_ADDRESS for native coinbase")?;
         if !production.active_at(height) {
             return Err(anyhow!(
                 "native V8 coinbase authority is inactive at height {height}"
@@ -4065,6 +4297,13 @@ impl NativeNode {
             }
             return self.build_allocated_reward_action(height, amount);
         }
+        let miner_address = self
+            .config
+            .miner_address
+            .as_deref()
+            .ok_or_else(|| anyhow!("native coinbase reservation requires a miner address"))?;
+        let recipient = ShieldedAddress::decode(miner_address)
+            .with_context(|| "decode HEGEMON_MINER_ADDRESS for native coinbase")?;
         self.build_poseidon2_v8_auto_coinbase_action(&recipient, amount)
     }
 
@@ -4082,16 +4321,34 @@ impl NativeNode {
             .funding_address()
             .ok_or_else(|| anyhow!("allocated rewards require an immutable funding network"))?;
         let funding = ShieldedAddress::decode(funding)?;
+        let per_height_funding = consensus::reward::block_subsidy(height) / 5;
+        let miner_amount = amount
+            .checked_sub(per_height_funding)
+            .ok_or_else(|| anyhow!("funding reward exceeds total reward"))?;
+        let policy = self.treasury_reward_policy();
+        let funding_amount = policy
+            .entitlement(height)
+            .map_or(per_height_funding, |e| e.payout);
         let miner = self
             .config
             .miner_address
             .as_deref()
-            .ok_or_else(|| anyhow!("allocated rewards require a miner payout address"))?;
-        let miner = ShieldedAddress::decode(miner)?;
-        let funding_amount = consensus::reward::block_subsidy(height) / 5;
-        let miner_amount = amount
-            .checked_sub(funding_amount)
-            .ok_or_else(|| anyhow!("funding reward exceeds total reward"))?;
+            .map(ShieldedAddress::decode)
+            .transpose()?;
+        if policy.entitlement(height).is_some() && (miner.is_none() || miner_amount == 0) {
+            if funding_amount == 0 {
+                return Err(anyhow!("no positive reward to construct"));
+            }
+            // A compact treasury-only action keeps the exact historical wire.
+            return self.build_poseidon2_v8_auto_rewards_action(
+                &funding,
+                funding_amount,
+                &funding,
+                0,
+            );
+        }
+        let miner =
+            miner.ok_or_else(|| anyhow!("allocated rewards require a miner payout address"))?;
         self.build_poseidon2_v8_auto_rewards_action(&miner, miner_amount, &funding, funding_amount)
     }
 
@@ -4454,39 +4711,52 @@ impl NativeNode {
         parameters: bool,
     ) -> Result<Value> {
         let snapshot = self.asset_snapshot_rpc(asset_id, None)?;
-        snapshot.get(if parameters { "parameters" } else { "registry" }).cloned()
+        snapshot
+            .get(if parameters { "parameters" } else { "registry" })
+            .cloned()
             .ok_or_else(|| anyhow!("asset snapshot response missing requested projection"))
     }
 
     /// Atomic reference/current readback. A historical reference is returned
     /// only while its canonical registry commitment still equals CURRENT state.
     pub(crate) fn asset_snapshot_rpc(
-        &self, asset_id: Option<u32>, reference_hash: Option<[u8; 32]>,
+        &self,
+        asset_id: Option<u32>,
+        reference_hash: Option<[u8; 32]>,
     ) -> Result<Value> {
         self.require_development_controlled_asset_route(false)?;
         let canonical = self.state.read();
         let parent = &canonical.best;
         // Identity readback outside the finite proof interval grants no route.
-        let binding = self.native_proof_binding_for_replay()
+        let binding = self
+            .native_proof_binding_for_replay()
             .map_err(|error| anyhow!("native asset RPC source authority: {error}"))?
             .ok_or_else(|| anyhow!("this network has no source-owned proof identity"))?;
-        binding.asset_authority()
+        binding
+            .asset_authority()
             .ok_or_else(|| anyhow!("this network has no source-owned asset authority"))?;
         let genesis = self.load_canonical_block_at_height_unverified(0)?;
         let store = self.poseidon2_v8_store_synced_to_parent(binding, parent)?;
-        let current_bytes = store.asset_tip()
+        let current_bytes = store
+            .asset_tip()
             .map_err(|error| anyhow!("native asset RPC snapshot: {error}"))?
             .ok_or_else(|| anyhow!("native asset canonical registry is missing"))?;
         let current = asset_state::AssetRegistryStateV1::decode_exact(&current_bytes)
             .map_err(|error| anyhow!("native asset RPC canonical codec: {error}"))?;
-        let current_note = store.note_tip()
-            .map_err(|error| anyhow!("native asset RPC note root: {error}"))?.root().limbs();
-        let (reference, note, reference_bytes) = store.asset_reference_snapshot(reference_hash.unwrap_or(parent.hash))
+        let current_note = store
+            .note_tip()
+            .map_err(|error| anyhow!("native asset RPC note root: {error}"))?
+            .root()
+            .limbs();
+        let (reference, note, reference_bytes) = store
+            .asset_reference_snapshot(reference_hash.unwrap_or(parent.hash))
             .map_err(|error| anyhow!("native asset RPC reference: {error}"))?;
         let assets = asset_state::AssetRegistryStateV1::decode_exact(&reference_bytes)
             .map_err(|error| anyhow!("native asset RPC reference codec: {error}"))?;
         if assets.registry().root() != current.registry().root() {
-            return Err(anyhow!("asset reference registry differs from CURRENT canonical registry"));
+            return Err(anyhow!(
+                "asset reference registry differs from CURRENT canonical registry"
+            ));
         }
         let parameters = asset_rpc::parameters(
             &self.config.network,
@@ -4524,7 +4794,9 @@ impl NativeNode {
                 .as_deref()
                 != Some(current_bytes.as_slice())
         {
-            return Err(anyhow!("canonical state changed during native asset RPC readback"));
+            return Err(anyhow!(
+                "canonical state changed during native asset RPC readback"
+            ));
         }
         Ok(serde_json::json!({
             "schema": "hegemon.native.asset-snapshot.v1", "parameters": parameters,
@@ -4721,10 +4993,16 @@ impl NativeNode {
     /// planner. This does not cache proof acceptance; full exact verification
     /// at the actual parent remains mandatory below.
     fn retain_current_asset_reference_candidates(
-        &self, actions: &mut Vec<PendingAction>, best: &NativeBlockMeta, height: u64,
+        &self,
+        actions: &mut Vec<PendingAction>,
+        best: &NativeBlockMeta,
+        height: u64,
     ) -> Result<()> {
-        if !actions.iter().any(is_native_controlled_asset_action) { return Ok(()); }
-        let binding = self.native_proof_binding_at(height)
+        if !actions.iter().any(is_native_controlled_asset_action) {
+            return Ok(());
+        }
+        let binding = self
+            .native_proof_binding_at(height)
             .map_err(|error| anyhow!("asset pending source authority: {error}"))?;
         let Some((binding, authority)) = binding.and_then(|binding| {
             binding
@@ -4742,7 +5020,9 @@ impl NativeNode {
         let references = store
             .canonical_launch_references(context)
             .map_err(|error| anyhow!("asset pending canonical references: {error}"))?;
-        let current = store.asset_tip().map_err(|error| anyhow!("asset pending current registry: {error}"))?
+        let current = store
+            .asset_tip()
+            .map_err(|error| anyhow!("asset pending current registry: {error}"))?
             .ok_or_else(|| anyhow!("asset pending registry missing"))?;
         let note = store
             .note_tip()
@@ -4759,22 +5039,36 @@ impl NativeNode {
         .map_err(|error| anyhow!("asset pending application context: {error}"))?;
         let snapshot = asset_state::AssetRegistryStateV1::decode_exact(&current)
             .map_err(|error| anyhow!("asset pending snapshot decode: {error}"))?;
-        let registry_root = snapshot.registry().root().map(|limb| limb.as_canonical_u64());
+        let registry_root = snapshot
+            .registry()
+            .root()
+            .map(|limb| limb.as_canonical_u64());
         let recovery_authority = binding.recovery_authority();
         actions.retain(|action| {
-            if !is_native_controlled_asset_action(action) { return true; }
+            if !is_native_controlled_asset_action(action) {
+                return true;
+            }
             if asset_recovery_native::is_recovery_action(action) {
-                let Some(recovery_authority) = recovery_authority else { return false; };
+                let Some(recovery_authority) = recovery_authority else {
+                    return false;
+                };
                 if asset_recovery_native::NativeRecoveryActionViewV1::from_pending(
-                    recovery_authority, height, action,
-                ).is_err() { return false; }
+                    recovery_authority,
+                    height,
+                    action,
+                )
+                .is_err()
+                {
+                    return false;
+                }
                 // Scheduling eligibility only. The exact aggregate verifier
                 // still checks all proofs, current accounting and shared NFs.
                 if let Ok(decoded) = transaction_circuit::asset_recovery_wire_v1::decode_spend_ref(
                     &action.public_args,
                 ) {
                     let public = &decoded.public.base;
-                    return snapshot.recovery()
+                    return snapshot
+                        .recovery()
                         .and_then(|recovery| recovery.row(public.asset_id).ok())
                         .is_some_and(|row| row == &decoded.public.row)
                         && public.registry_root == registry_root
@@ -4784,23 +5078,28 @@ impl NativeNode {
                     &action.public_args,
                 ) {
                     let public = &decoded.public;
-                    return snapshot.recovery()
+                    return snapshot
+                        .recovery()
                         .and_then(|recovery| recovery.row(public.before.descriptor.asset_id).ok())
                         .is_some_and(|row| row == &public.before)
                         && public.context.chain_id == self.config.chain_id()
                         && public.context.parent_height == best.height
                         && public.context.parent_hash == best.hash
                         && public.expires_at >= best.height
-                        && references.validate_recovery_admin_current(
-                            public.context.chain_id, block, registry_root,
-                        ).is_ok();
+                        && references
+                            .validate_recovery_admin_current(
+                                public.context.chain_id,
+                                block,
+                                registry_root,
+                            )
+                            .is_ok();
                 }
                 return false;
             }
             asset_native::pending_reference_eligible(action, best.height)
-                && authority.checked_reference(
-                    block, &action.public_args, &current, note, &references,
-                ).is_ok()
+                && authority
+                    .checked_reference(block, &action.public_args, &current, note, &references)
+                    .is_ok()
         });
         Ok(())
     }
@@ -6108,6 +6407,9 @@ impl NativeNode {
         {
             return None;
         }
+        if validate_native_fresh_timestamp_at(entry.work.timestamp_ms, native_admission_time_ms()).is_err() {
+            return None;
+        }
         let state = self.state.read();
         if entry.work.parent_hash != state.best.hash
             || entry.work.height != state.best.height.checked_add(1)?
@@ -6527,14 +6829,11 @@ impl NativeNode {
         })
         .map_err(native_work_template_admission_error)?;
         let cumulative_work = cumulative_work.map_err(native_work_template_admission_error)?;
-        // ASIC nTime is a 32-bit Unix second. Keep the committed native
-        // timestamp exactly representable by the advertised 80-byte header.
-        let template_timestamp_ms = current_time_ms().div_ceil(1_000).saturating_mul(1_000).max(
-            best.timestamp_ms
-                .div_euclid(1_000)
-                .saturating_add(1)
-                .saturating_mul(1_000),
-        );
+        // Native ordering is in milliseconds. Bitcoin80 commits the complete
+        // native timestamp through its work prehash and projects nTime to seconds;
+        // fixed job time does not require adding one second for every block.
+        let template_timestamp_ms =
+            native_next_work_timestamp_ms(best.timestamp_ms, native_admission_time_ms())?;
         self.retain_current_asset_reference_candidates(&mut pending_actions, &best, height)?;
         retain_one_native_controlled_asset_action(&mut pending_actions);
         let v8_actions = pending_actions
@@ -6551,15 +6850,14 @@ impl NativeNode {
         let reserved_coinbase_count = usize::from(reserved_coinbase_bytes != 0);
         // The reward consumes a source-authorized action slot too. Reserve
         // against this network's exact cap before selecting transactions.
-        let max_v8_proof_actions = if reserved_coinbase_count != 0
-            || pending_actions.iter().any(is_poseidon2_v8_action)
-        {
-            self.require_native_proof_binding_at(height)
-                .map_err(|e| anyhow!("template V8 source authority rejected: {e}"))?
-                .max_proof_actions_per_block()
-        } else {
-            MAX_POSEIDON2_V8_ACTIONS_PER_BLOCK
-        };
+        let max_v8_proof_actions =
+            if reserved_coinbase_count != 0 || pending_actions.iter().any(is_poseidon2_v8_action) {
+                self.require_native_proof_binding_at(height)
+                    .map_err(|e| anyhow!("template V8 source authority rejected: {e}"))?
+                    .max_proof_actions_per_block()
+            } else {
+                MAX_POSEIDON2_V8_ACTIONS_PER_BLOCK
+            };
         let da_selection = select_native_da_action_prefix_with_reservation(
             &pending_actions,
             reserved_coinbase_count,
@@ -6756,12 +7054,20 @@ impl NativeNode {
         // Re-evaluate the single source authority over the final template,
         // after miner-local coinbase insertion. This is the convergence point
         // that prevents 512 V8 transaction proofs plus a 513th mint action.
+        self.validate_network_coinbase_accounting(&actions, height)?;
         self.validate_network_block_proof_policy(best.height, height, &actions)?;
         let timestamp_ms = template_timestamp_ms.max(best.timestamp_ms.saturating_add(1));
-        let supply_digest = match advance_native_supply_digest(best.supply_digest, &actions, height)
-        {
+        let supply_digest = match advance_native_supply_digest_with_policy(
+            best.supply_digest,
+            &actions,
+            height,
+            self.treasury_reward_policy(),
+        ) {
             Ok(supply_digest) => supply_digest,
             Err(err) => {
+                if self.treasury_reward_policy().entitlement(height).is_some_and(|e| e.payout > 0) {
+                    return Err(err.context("mandatory treasury template supply accounting"));
+                }
                 cacheable = false;
                 warn!(error = %err, "dropping native pending actions with invalid supply accounting");
                 actions = Vec::new();
@@ -6822,6 +7128,12 @@ impl NativeNode {
             tx_count,
         );
         pre_header.chain_id = self.config.chain_id();
+        pre_header.rules_hash =
+            consensus_light_client::native_rules_hash(&pre_header.chain_id, height);
+        pre_header.version_commitment = native_mining_version_commitment(
+            &pre_header.rules_hash,
+            consensus_light_client::BITCOIN80_VERSION,
+        );
         let pre_hash = pre_header.pre_hash();
         {
             let state = self.state.read();
@@ -6843,6 +7155,7 @@ impl NativeNode {
         }
         Ok((
             NativeWork {
+                mining_version: consensus_light_client::BITCOIN80_VERSION,
                 height,
                 parent_hash: best.hash,
                 pre_hash,
@@ -7057,6 +7370,7 @@ impl NativeNode {
         {
             return Ok(None);
         }
+        validate_native_fresh_timestamp_at(work.timestamp_ms, native_admission_time_ms())?;
         let expected_pow_bits = self.expected_child_pow_bits(&snapshot.best)?;
         if work.pow_bits != expected_pow_bits {
             debug!(
@@ -7067,6 +7381,7 @@ impl NativeNode {
             return Ok(None);
         }
 
+        self.validate_network_coinbase_accounting(&actions, work.height)?;
         self.validate_network_block_proof_policy(snapshot.best.height, work.height, &actions)?;
         let (preview_state_root, preview_nullifier_root, preview_extrinsics_root, preview_tx_count) =
             match preview_pending_roots(&self.da_ciphertext_tree, &snapshot, &actions) {
@@ -7084,8 +7399,12 @@ impl NativeNode {
         let preview_message_root = bridge_message_root(&preview_bridge_messages);
         let (expected_header_mmr_root, expected_header_mmr_len) =
             header_mmr_commitment_after_best(&snapshot.best, &snapshot.header_mmr_peaks)?;
-        let supply_digest =
-            advance_native_supply_digest(snapshot.best.supply_digest, &actions, work.height)?;
+        let supply_digest = advance_native_supply_digest_with_policy(
+            snapshot.best.supply_digest,
+            &actions,
+            work.height,
+            self.treasury_reward_policy(),
+        )?;
         match evaluate_native_block_commitment_admission(NativeBlockCommitmentAdmissionInput {
             tx_count_matches: preview_tx_count == work.tx_count,
             state_root_matches: preview_state_root == work.state_root,
@@ -7110,13 +7429,14 @@ impl NativeNode {
             }
             Err(_) => return Ok(None),
         }
-        let (fee_total, has_coinbase) = native_block_replay_supply_parts(&actions, work.height)?;
+        let (fee_total, has_coinbase) = native_block_replay_supply_parts_with_policy(&actions, work.height, self.treasury_reward_policy())?;
         evaluate_native_block_replay_refinement_for_actions(
             "native mined block replay refinement failed",
             &self.da_ciphertext_tree,
             Some(&self.ciphertext_archive_tree),
             &snapshot,
             &actions,
+            self.treasury_reward_policy(),
             native_block_replay_refinement_input_from_state(
                 &snapshot,
                 work.height,
@@ -7135,8 +7455,16 @@ impl NativeNode {
             ),
         )?;
         let meta = NativeBlockMeta {
+            mining_version: native_mining_version_rolling_active(
+                &self.config.chain_id(),
+                work.height,
+            )
+            .then_some(work.mining_version),
             chain_id: self.config.chain_id(),
-            rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE,
+            rules_hash: consensus_light_client::native_rules_hash(
+                &self.config.chain_id(),
+                work.height,
+            ),
             height: work.height,
             hash: seal.work_hash,
             parent_hash: work.parent_hash,
@@ -7306,7 +7634,13 @@ impl NativeNode {
         Ok(Some(meta))
     }
 
-    pub(crate) fn import_announced_block(&self, meta: NativeBlockMeta) -> Result<bool> {
+    /// Accept an owned or borrowed body so local ASERT backpressure can retain
+    /// and retry bounded import work without cloning or treating it as invalid.
+    pub(crate) fn import_announced_block(
+        &self,
+        meta: impl std::borrow::Borrow<NativeBlockMeta>,
+    ) -> Result<bool> {
+        let meta = meta.borrow();
         if meta.chain_id != self.config.chain_id() {
             return Err(anyhow!(
                 "announced native block chain id does not match selected network"
@@ -7333,6 +7667,10 @@ impl NativeNode {
         let Some(parent) = self.header_by_hash(&meta.parent_hash)? else {
             return Ok(false);
         };
+        // Reject malformed linkage, rules, timestamps and seals before doing
+        // ancestry I/O. This uses the advertised bits only as a cheap precheck;
+        // independently derived expected difficulty remains mandatory below.
+        validate_announced_block(&parent, &meta, meta.pow_bits)?;
         self.validate_stored_block_meta_parent_chain(&parent)?;
         let expected_pow_bits = self.expected_child_pow_bits(&parent)?;
         validate_announced_block(&parent, &meta, expected_pow_bits)?;
@@ -7369,6 +7707,7 @@ impl NativeNode {
             header_mmr_commitment_after_best(&parent_state.best, &parent_state.header_mmr_peaks)?;
         let actions = decode_block_actions(&meta)?;
         verify_decoded_action_root(&actions, &meta, "announced block action root")?;
+        self.validate_network_coinbase_accounting(&actions, meta.height)?;
         self.validate_network_block_proof_policy(parent_state.best.height, meta.height, &actions)?;
         let (state_root, nullifier_root, extrinsics_root, tx_count) =
             preview_pending_roots(&self.da_ciphertext_tree, &parent_state, &actions)?;
@@ -7377,13 +7716,14 @@ impl NativeNode {
         let message_root = bridge_message_root(&bridge_messages);
         let message_count = u32::try_from(bridge_messages.len())
             .map_err(|_| anyhow!("native bridge message count overflow"))?;
-        let (fee_total, has_coinbase) = native_block_replay_supply_parts(&actions, meta.height)?;
+        let (fee_total, has_coinbase) = native_block_replay_supply_parts_with_policy(&actions, meta.height, self.treasury_reward_policy())?;
         evaluate_native_block_replay_refinement_for_actions(
             "announced block replay refinement failed",
             &self.da_ciphertext_tree,
             Some(&self.ciphertext_archive_tree),
             &parent_state,
             &actions,
+            self.treasury_reward_policy(),
             native_block_replay_refinement_input_from_state(
                 &parent_state,
                 meta.height,
@@ -7527,7 +7867,7 @@ impl NativeNode {
                 self.persist_noncanonical_block_record(&meta)?;
                 let mut verified_replay = self.replay_verified_suffix_from_state(
                     parent_state.clone(),
-                    std::slice::from_ref(&meta),
+                    std::slice::from_ref(meta),
                 )?;
                 let mut checkpoint_rows = branch_checkpoint_rows;
                 checkpoint_rows.append(&mut verified_replay.checkpoint_rows);
@@ -7602,7 +7942,7 @@ impl NativeNode {
         if self.header_by_hash(&meta.parent_hash)?.is_none() {
             return Ok(NativeAnnouncedBlockImportOutcome::MissingParent);
         }
-        if self.import_announced_block(meta.clone())? {
+        if self.import_announced_block(meta)? {
             return Ok(NativeAnnouncedBlockImportOutcome::CanonicalAdvanced);
         }
         if self.header_by_hash(&meta.hash)?.is_some() {
@@ -7841,6 +8181,7 @@ impl NativeNode {
             }
         }
 
+        let admission_now_ms = native_admission_time_ms();
         let mut missing = Vec::new();
         let mut already_known = 0usize;
         for meta in metas {
@@ -7851,7 +8192,11 @@ impl NativeNode {
                 NativeSuppliedBlockRecordStatus::KnownExact => {
                     already_known = already_known.saturating_add(1);
                 }
-                NativeSuppliedBlockRecordStatus::Missing => missing.push(meta),
+                NativeSuppliedBlockRecordStatus::Missing => {
+                    validate_native_fresh_timestamp_at(meta.timestamp_ms, admission_now_ms)
+                        .map_err(NativeChainLoadError::Corrupt)?;
+                    missing.push(meta);
+                },
             }
         }
 
@@ -8812,9 +9157,10 @@ impl NativeNode {
             canonical_chain_ids_match: ancestry
                 .iter()
                 .all(|meta| meta.chain_id == self.config.chain_id()),
-            canonical_rules_hashes_match: ancestry
-                .iter()
-                .all(|meta| meta.rules_hash == HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE),
+            canonical_rules_hashes_match: ancestry.iter().all(|meta| {
+                meta.rules_hash
+                    == consensus_light_client::native_rules_hash(&meta.chain_id, meta.height)
+            }),
             canonical_hashes_match_work_hashes: ancestry
                 .iter()
                 .all(|meta| meta.hash == meta.work_hash),
@@ -8900,12 +9246,128 @@ impl NativeNode {
         Ok(Some(cursor))
     }
 
+    /// Resolve the fixed ASERT anchor through this parent's actual ancestry.
+    /// A validated sync prefix may not be in storage yet. Neither a side fork
+    /// nor a cache miss may substitute an anchor from the canonical height index.
+    fn asert_anchor_from_parent(
+        &self,
+        parent: &NativeBlockMeta,
+        validated_batch_prefix: &[NativeBlockMeta],
+    ) -> Result<(NativePowMetaProjection, NativePowMetaProjection)> {
+        let child_height = parent
+            .height
+            .checked_add(1)
+            .ok_or_else(|| anyhow!("native ASERT child height overflow"))?;
+        let activation = native_asert_activation_height(&parent.chain_id, child_height)
+            .ok_or_else(|| anyhow!("native ASERT anchor requested before activation"))?;
+        let load = |hash: &[u8; 32]| -> Result<NativePowMetaProjection> {
+            if let Some(row) = validated_batch_prefix
+                .iter()
+                .rev()
+                .find(|row| &row.hash == hash)
+            {
+                return Ok(NativePowMetaProjection::from(row));
+            }
+            self.inspect_stored_pow_metadata(hash, None, "native ASERT ancestor")?
+                .map(|(projection, _)| projection)
+                .ok_or_else(|| anyhow!("native ASERT missing ancestor {}", hex32(hash)))
+        };
+        let original = NativePowMetaProjection::from(parent);
+        let progress = self
+            .asert_anchor_cache
+            .lock()
+            .progress
+            .get(&original.hash)
+            .copied();
+        let mut cursor = if let Some((saved_original, saved_cursor)) = progress {
+            if saved_original != original
+                || load(&original.hash)? != original
+                || load(&saved_cursor.hash)? != saved_cursor
+            {
+                self.asert_anchor_cache
+                    .lock()
+                    .remove_progress(&original.hash);
+                return Err(anyhow!("native ASERT resumed ancestry metadata changed"));
+            }
+            saved_cursor
+        } else {
+            original
+        };
+        let mut hops = 0usize;
+        let (anchor, anchor_parent) = loop {
+            if cursor.chain_id != self.config.chain_id()
+                || cursor.rules_hash
+                    != consensus_light_client::native_rules_hash(&cursor.chain_id, cursor.height)
+                || cursor.hash != cursor.work_hash
+                || cursor.height < activation - 1
+            {
+                return Err(anyhow!("native ASERT ancestor identity mismatch"));
+            }
+            if cursor.height == activation - 1 {
+                break (cursor, load(&cursor.parent_hash)?);
+            }
+            let cached = self
+                .asert_anchor_cache
+                .lock()
+                .entries
+                .get(&cursor.hash)
+                .copied();
+            if let Some((cached_parent, anchor, anchor_parent)) = cached {
+                if cached_parent != cursor {
+                    return Err(anyhow!("native ASERT cached parent projection mismatch"));
+                }
+                // Retained metadata is never trusted simply because an earlier
+                // calculation cached it. Reread exact anchor identities.
+                if load(&anchor.hash)? != anchor || load(&anchor_parent.hash)? != anchor_parent {
+                    return Err(anyhow!("native ASERT cached anchor metadata changed"));
+                }
+                break (anchor, anchor_parent);
+            }
+            if hops == MAX_NATIVE_ASERT_ANCESTRY_HOPS_PER_CALL {
+                self.asert_anchor_cache
+                    .lock()
+                    .remember_progress(original, cursor);
+                return Err(NativeAsertResolutionDeferred {
+                    parent_hash: original.hash,
+                    resume_height: cursor.height,
+                }
+                .into());
+            }
+            let ancestor = load(&cursor.parent_hash)?;
+            if ancestor.height.checked_add(1) != Some(cursor.height)
+                || ancestor.hash != cursor.parent_hash
+                || ancestor.timestamp_ms >= cursor.timestamp_ms
+            {
+                return Err(anyhow!("native ASERT ancestor link mismatch"));
+            }
+            cursor = ancestor;
+            hops += 1;
+        };
+        validate_native_asert_anchor(parent.chain_id, activation, anchor, anchor_parent)?;
+        self.asert_anchor_cache
+            .lock()
+            .insert(original, anchor, anchor_parent);
+        Ok((anchor, anchor_parent))
+    }
+
     pub(crate) fn expected_child_pow_bits(&self, parent: &NativeBlockMeta) -> Result<u32> {
         let parent = self.stored_pow_parent(parent, "native PoW schedule")?;
         let new_height = parent
             .height
             .checked_add(1)
             .ok_or_else(|| anyhow!("native PoW child height overflow"))?;
+        if native_asert_activation_height(&parent.chain_id, new_height).is_some() {
+            let (anchor, anchor_parent) = self.asert_anchor_from_parent(parent, &[])?;
+            return native_asert_expected_pow_bits(
+                parent.height,
+                parent.timestamp_ms,
+                consensus_light_client::AsertAnchor {
+                    height: anchor.height,
+                    parent_timestamp_ms: anchor_parent.timestamp_ms,
+                    pow_bits: anchor.pow_bits,
+                },
+            );
+        }
         let anchor_timestamp_ms = self
             .pow_retarget_anchor_from_parent(parent, new_height, &[])?
             .map(|anchor| anchor.timestamp_ms);
@@ -8942,6 +9404,25 @@ impl NativeNode {
             .height
             .checked_add(1)
             .ok_or_else(|| anyhow!("native PoW child height overflow"))?;
+        if native_asert_activation_height(&parent.chain_id, new_height).is_some() {
+            let (anchor, anchor_parent) = self.asert_anchor_from_parent(parent, &[])?;
+            for row in [anchor, anchor_parent] {
+                if self.hash_by_height(row.height)? != Some(row.hash) {
+                    return Err(anyhow!(
+                        "canonical native ASERT anchor index disagrees with parent ancestry"
+                    ));
+                }
+            }
+            return native_asert_expected_pow_bits(
+                parent.height,
+                parent.timestamp_ms,
+                consensus_light_client::AsertAnchor {
+                    height: anchor.height,
+                    parent_timestamp_ms: anchor_parent.timestamp_ms,
+                    pow_bits: anchor.pow_bits,
+                },
+            );
+        }
         let anchor = self.pow_retarget_anchor_from_parent(parent, new_height, &[])?;
         let anchor_timestamp_ms = if let Some(anchor) = anchor {
             let indexed_anchor_hash = self.hash_by_height(anchor.height)?.ok_or_else(|| {
@@ -8991,6 +9472,19 @@ impl NativeNode {
             .height
             .checked_add(1)
             .ok_or_else(|| anyhow!("native PoW child height overflow"))?;
+        if native_asert_activation_height(&parent.chain_id, new_height).is_some() {
+            let (anchor, anchor_parent) =
+                self.asert_anchor_from_parent(parent, validated_batch_prefix)?;
+            return native_asert_expected_pow_bits(
+                parent.height,
+                parent.timestamp_ms,
+                consensus_light_client::AsertAnchor {
+                    height: anchor.height,
+                    parent_timestamp_ms: anchor_parent.timestamp_ms,
+                    pow_bits: anchor.pow_bits,
+                },
+            );
+        }
         let anchor_timestamp_ms = self
             .pow_retarget_anchor_from_parent(parent, new_height, validated_batch_prefix)?
             .map(|anchor| anchor.timestamp_ms);
@@ -9073,6 +9567,7 @@ impl NativeNode {
             })?;
         let actions = decode_block_actions(&meta)?;
         verify_decoded_action_root(&actions, &meta, "native replay action root")?;
+        self.validate_network_coinbase_accounting(&actions, meta.height)?;
         validate_block_actions_locked(state, &actions)?;
         let (state_root, nullifier_root, extrinsics_root, tx_count) =
             preview_pending_roots_with_archive(
@@ -9088,13 +9583,14 @@ impl NativeNode {
             .map_err(|_| anyhow!("native bridge message count overflow"))?;
         let (expected_header_mmr_root, expected_header_mmr_len) =
             header_mmr_commitment_after_best(&state.best, &state.header_mmr_peaks)?;
-        let (fee_total, has_coinbase) = native_block_replay_supply_parts(&actions, meta.height)?;
+        let (fee_total, has_coinbase) = native_block_replay_supply_parts_with_policy(&actions, meta.height, self.treasury_reward_policy())?;
         evaluate_native_block_replay_refinement_for_actions(
             "native replay refinement failed",
             &self.da_ciphertext_tree,
             Some(&self.ciphertext_archive_tree),
             state,
             &actions,
+            self.treasury_reward_policy(),
             native_block_replay_refinement_input_from_state(
                 state,
                 meta.height,
@@ -9202,6 +9698,28 @@ impl NativeNode {
             .height
             .checked_add(1)
             .ok_or_else(|| anyhow!("native PoW child height overflow"))?;
+        if let Some(activation) = native_asert_activation_height(&parent.chain_id, new_height) {
+            let steps = usize::try_from(parent.height - (activation - 1))
+                .map_err(|_| anyhow!("native ASERT projection anchor offset overflow"))?;
+            let index = parent_index
+                .checked_sub(steps)
+                .ok_or_else(|| anyhow!("native ASERT projection missing anchor"))?;
+            let anchor = ancestry[index];
+            let anchor_parent = index
+                .checked_sub(1)
+                .and_then(|index| ancestry.get(index))
+                .ok_or_else(|| anyhow!("native ASERT projection missing anchor parent"))?;
+            validate_native_asert_anchor(parent.chain_id, activation, anchor, *anchor_parent)?;
+            return native_asert_expected_pow_bits(
+                parent.height,
+                parent.timestamp_ms,
+                consensus_light_client::AsertAnchor {
+                    height: anchor.height,
+                    parent_timestamp_ms: anchor_parent.timestamp_ms,
+                    pow_bits: anchor.pow_bits,
+                },
+            );
+        }
         let anchor_timestamp_ms = if let Some(anchor_steps) =
             consensus::pow::pow_retarget_anchor_steps(parent.height, new_height)
         {
@@ -9248,6 +9766,7 @@ impl NativeNode {
             })?;
         let actions = decode_block_actions(&meta)?;
         verify_decoded_action_root(&actions, &meta, "native replay action root")?;
+        self.validate_network_coinbase_accounting(&actions, meta.height)?;
         self.validate_network_block_proof_policy(state.best.height, meta.height, &actions)?;
         validate_block_actions_locked(state, &actions)?;
         let (state_root, nullifier_root, extrinsics_root, tx_count) =
@@ -9264,13 +9783,14 @@ impl NativeNode {
             .map_err(|_| anyhow!("native bridge message count overflow"))?;
         let (expected_header_mmr_root, expected_header_mmr_len) =
             header_mmr_commitment_after_best(&state.best, &state.header_mmr_peaks)?;
-        let (fee_total, has_coinbase) = native_block_replay_supply_parts(&actions, meta.height)?;
+        let (fee_total, has_coinbase) = native_block_replay_supply_parts_with_policy(&actions, meta.height, self.treasury_reward_policy())?;
         evaluate_native_block_replay_refinement_for_actions(
             "native replay refinement failed",
             &self.da_ciphertext_tree,
             Some(&self.ciphertext_archive_tree),
             state,
             &actions,
+            self.treasury_reward_policy(),
             native_block_replay_refinement_input_from_state(
                 state,
                 meta.height,
@@ -9344,7 +9864,10 @@ impl NativeNode {
             if parent.hash != cursor.parent_hash
                 || parent.height.saturating_add(1) != cursor.height
                 || parent.chain_id != cursor.chain_id
-                || parent.rules_hash != cursor.rules_hash
+                || parent.rules_hash
+                    != consensus_light_client::native_rules_hash(&parent.chain_id, parent.height)
+                || cursor.rules_hash
+                    != consensus_light_client::native_rules_hash(&cursor.chain_id, cursor.height)
             {
                 return Err(anyhow!(
                     "invalid native side-branch parent link at height {}",
@@ -9680,7 +10203,8 @@ impl NativeNode {
                             })
                     });
         if undo.schema_version != NATIVE_CANONICAL_UNDO_SCHEMA_V1
-            || undo.rules_hash != HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE
+            || undo.rules_hash
+                != consensus_light_client::native_rules_hash(&delta.meta.chain_id, undo.height)
             || undo.rules_hash != delta.meta.rules_hash
             || undo.height != delta.meta.height
             || undo.block_hash != delta.meta.hash
@@ -9957,7 +10481,9 @@ impl NativeNode {
                 "native sync tip-extension batch does not extend the canonical tip"
             ));
         }
+        let admission_now_ms = native_admission_time_ms();
         for (index, meta) in metas.iter().enumerate() {
+            validate_native_fresh_timestamp_at(meta.timestamp_ms, admission_now_ms)?;
             let expected_parent = if index == 0 {
                 &snapshot.best
             } else {
@@ -10116,6 +10642,10 @@ impl NativeNode {
         if !native_meta_better_than(&target, &snapshot.best) {
             return Ok(None);
         }
+        // Canonical adoption is fresh admission even when a prior process
+        // stored this branch. Deterministic ancestry replay stays clock-free.
+        validate_native_fresh_timestamp_at(target.timestamp_ms, native_admission_time_ms())
+            .map_err(NativeChainLoadError::Corrupt)?;
         let height_entries = ancestry
             .iter()
             .map(|meta| (meta.height, meta.hash))
@@ -10418,6 +10948,7 @@ impl NativeNode {
                 "native reorg target does not beat the canonical tip"
             ));
         }
+        validate_native_fresh_timestamp_at(target.timestamp_ms, native_admission_time_ms())?;
         // A sync caller may supply a validated contiguous prefix whose rows do
         // not exist locally yet. Other hot paths pass only a stored target and
         // retain O(fork-depth) backwards traversal.
@@ -10450,7 +10981,8 @@ impl NativeNode {
             if meta.height != expected_parent.height.saturating_add(1)
                 || meta.parent_hash != expected_parent.hash
                 || meta.chain_id != self.config.chain_id()
-                || meta.rules_hash != HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE
+                || meta.rules_hash
+                    != consensus_light_client::native_rules_hash(&meta.chain_id, meta.height)
                 || meta.hash != meta.work_hash
             {
                 return Err(anyhow!(
@@ -11229,7 +11761,8 @@ impl NativeNode {
             let undo_commitment_end = undo.commitment_start.checked_add(undo.commitment_count);
             let undo_nullifier_end = undo.nullifier_start.checked_add(undo.nullifier_count);
             if undo.schema_version != NATIVE_CANONICAL_UNDO_SCHEMA_V1
-                || undo.rules_hash != HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE
+                || undo.rules_hash
+                    != consensus_light_client::native_rules_hash(&meta.chain_id, undo.height)
                 || undo.rules_hash != meta.rules_hash
                 || undo.height != meta.height
                 || undo.block_hash != meta.hash
@@ -11985,7 +12518,8 @@ impl NativeNode {
         let Some(meta) = self.header_by_hash(&block_hash)? else {
             return Ok(None);
         };
-        if meta.rules_hash != HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE {
+        if meta.rules_hash != consensus_light_client::native_rules_hash(&meta.chain_id, meta.height)
+        {
             return Err(anyhow!(
                 "chain_getBlockActionsChunk serves only active native blocks"
             ));
@@ -12088,7 +12622,8 @@ impl NativeNode {
         let meta = self
             .header_by_hash(&block_hash)?
             .ok_or_else(|| anyhow!("unknown native block {}", hex32(&block_hash)))?;
-        if meta.rules_hash != HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE {
+        if meta.rules_hash != consensus_light_client::native_rules_hash(&meta.chain_id, meta.height)
+        {
             return Err(anyhow!(
                 "DA chunks are served only for active native V3 blocks"
             ));

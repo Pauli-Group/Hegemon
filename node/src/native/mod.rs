@@ -4,6 +4,7 @@
 //! It keeps the existing JSON-RPC compatibility surface while the ledger,
 //! mempool, sync, and shielded state machines are native.
 
+use self::treasury::treasury_reward_policy_for_network;
 use anyhow::{anyhow, Context, Result};
 use axum::extract::{DefaultBodyLimit, State};
 use axum::http::{header, HeaderValue, StatusCode};
@@ -674,21 +675,17 @@ mod development_candidate_cli_tests {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct NativeBlockMeta {
     chain_id: [u8; 32],
     rules_hash: [u8; 32],
     height: u64,
     hash: [u8; 32],
     parent_hash: [u8; 32],
-    #[serde(with = "serde_array48")]
     state_root: [u8; 48],
-    #[serde(with = "serde_array48")]
     kernel_root: [u8; 48],
-    #[serde(with = "serde_array48")]
     nullifier_root: [u8; 48],
     extrinsics_root: [u8; 32],
-    #[serde(with = "serde_array48")]
     message_root: [u8; 48],
     message_count: u32,
     header_mmr_root: [u8; 32],
@@ -697,22 +694,17 @@ pub(crate) struct NativeBlockMeta {
     pow_bits: u32,
     nonce: [u8; 32],
     work_hash: [u8; 32],
-    #[serde(with = "serde_array48")]
     cumulative_work: [u8; 48],
     supply_digest: u128,
     tx_count: u32,
-    #[serde(default)]
     action_bytes: Vec<Vec<u8>>,
-    #[serde(default = "native_empty_digest48_default", with = "serde_array48")]
     da_root: [u8; 48],
-    #[serde(default)]
     da_chunk_size: u32,
-    #[serde(default)]
     da_sample_count: u32,
-    #[serde(default)]
     da_blob_len: u64,
-    #[serde(default)]
     da_chunk_count: u32,
+    /// None preserves historical bytes; Some is the explicit combined payload.
+    mining_version: Option<u32>,
 }
 
 /// Fresh-genesis native V3 wire/canonical metadata.  Unlike the internal sled
@@ -949,6 +941,7 @@ pub(crate) struct LegacyIdentityNativeBlockMetaV2 {
 
 #[derive(Clone, Debug)]
 pub(crate) struct NativeWork {
+    mining_version: u32,
     height: u64,
     parent_hash: [u8; 32],
     pre_hash: [u8; 32],
@@ -3114,6 +3107,8 @@ pub(crate) struct NativeBlockReplayRefinementInput {
     height: u64,
     fee_total: u64,
     has_coinbase: bool,
+    /// Exact gross issued-note amount when composed from canonical actions.
+    issued_coinbase_amount: Option<u64>,
     claimed_supply: u128,
     tx_count_matches: bool,
     state_root_matches: bool,
@@ -4487,6 +4482,7 @@ pub(crate) struct BitcoinAsicJobCache {
 
 #[derive(Clone)]
 pub(crate) struct BitcoinAsicJob {
+    chain_id: [u8; 32],
     work: NativeWork,
     created_at: Instant,
     pending_generation: u64,
@@ -4666,6 +4662,7 @@ pub struct NativeNode {
     work_template_build_lock: Mutex<()>,
     work_template_cache: Mutex<Option<NativeWorkTemplateCacheEntry>>,
     bitcoin_asic_jobs: Mutex<BitcoinAsicJobCache>,
+    asert_anchor_cache: Mutex<node_impl::NativeAsertAnchorCache>,
     pending_action_group_commit: NativePendingActionGroupCommit,
     pending_proof_admissions_in_flight: Arc<Mutex<BTreeSet<ActionSemanticId48>>>,
     rejected_pending_actions: Mutex<RejectedPendingActionCache>,
@@ -4720,6 +4717,8 @@ pub struct NativeNode {
 
 mod admission;
 mod asic_mining;
+mod mining_payload;
+use mining_payload::*;
 mod asset_native;
 mod asset_recovery_native;
 mod asset_recovery_profile;
@@ -4744,16 +4743,26 @@ mod mining;
 mod native_proof_binding;
 pub mod network_profile;
 mod node_impl;
+pub(crate) use node_impl::{
+    NativeAsertResolutionDeferred, MAX_NATIVE_ASERT_ANCESTRY_HOPS_PER_CALL,
+};
 mod nullifier_accumulator;
 mod poseidon2_v8_pending;
 pub(crate) mod poseidon2_v8_state;
 pub(crate) mod poseidon2_v8_verifier;
 mod rp06_verifier;
 pub use network_profile::{NativeNetworkIdentity, NativeNetworkManifest, NativeNetworkProfile};
+#[cfg(test)]
+mod asert_tests;
 mod pow;
 mod public_admission;
 #[cfg(test)]
 mod reorg_wal;
+mod timestamp_admission;
+#[cfg(test)]
+mod timestamp_admission_tests;
+#[cfg(test)]
+mod timestamp_asic_tests;
 pub use public_admission::PublicRpcLimits;
 pub(crate) use public_admission::{
     public_submit_action_route_allowed, PublicRpcAdmission, PublicSubmissionPermit,
@@ -4769,6 +4778,11 @@ mod service;
 pub(crate) mod smallwood_v8_lifetime;
 mod storage;
 mod sync_chunks;
+mod treasury;
+#[cfg(test)]
+mod treasury_formal_tests;
+#[cfg(test)]
+mod treasury_lifecycle_tests;
 mod util;
 
 pub(crate) use admission::*;
@@ -4794,6 +4808,7 @@ pub use service::run;
 pub(crate) use service::*;
 pub(crate) use storage::*;
 pub(crate) use sync_chunks::*;
+pub(crate) use timestamp_admission::*;
 pub(crate) use util::*;
 
 #[cfg(test)]

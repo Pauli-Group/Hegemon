@@ -1210,13 +1210,19 @@ def check_ci_workflow(path: Path) -> None:
         ("app-no-ssh-e2e", 30),
         ("security-adversarial", 30),
         ("native-backend-security", 30),
-        ("release-binaries", 30),
+        ("release-binaries", 120),
     ):
         require_contains(
             f"{timed_job} wall-clock budget",
             job_block(workflow, timed_job),
             f"timeout-minutes: {timeout_minutes}",
         )
+    release_binary_timeouts = re.findall(
+        r"(?m)^    timeout-minutes:[ \t]*(.*?)[ \t]*$",
+        job_block(workflow, "release-binaries"),
+    )
+    if release_binary_timeouts != ["120"]:
+        raise SystemExit("release-binaries wall-clock budget must be exactly one job-level timeout-minutes: 120")
     release_build = job_block(workflow, "release-build")
     dependency_audit = job_block(workflow, "dependency-audit")
     formal_core = job_block(workflow, "formal-core")

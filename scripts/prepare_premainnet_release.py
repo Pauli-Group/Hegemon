@@ -437,7 +437,98 @@ def adapt_preparation_arm_runner(builds: str) -> str:
     return builds.replace(old, new, 1)
 
 
-def expected_workflow(release: str, *, v0113: bool = False) -> str:
+def combined_lean_setup(*, windows: bool = False) -> str:
+    """Bootstrap pinned Lean on each isolated final-artifact runner."""
+    if windows:
+        return r'''      - name: Install candidate qualification Lean toolchain
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = 'v4.2.2'
+          $release = Invoke-RestMethod -Uri "https://api.github.com/repos/leanprover/elan/releases/tags/$version"
+          if ($release.tag_name -ne $version) { throw 'elan release version differs' }
+          $assets = @($release.assets | Where-Object { $_.name -eq 'elan-x86_64-pc-windows-msvc.zip' })
+          if ($assets.Count -ne 1 -or $assets[0].digest -notmatch '^sha256:[0-9a-f]{64}$') { throw 'exact elan asset SHA256 unavailable' }
+          $stage = Join-Path $env:RUNNER_TEMP 'combined-elan'
+          New-Item -ItemType Directory -Force $stage | Out-Null
+          $archive = Join-Path $stage 'elan.zip'
+          Invoke-WebRequest -Uri $assets[0].browser_download_url -OutFile $archive
+          $expected = $assets[0].digest.Substring(7)
+          if ((Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant() -ne $expected) { throw 'elan asset SHA256 differs' }
+          Expand-Archive -Path $archive -DestinationPath $stage -Force
+          & (Join-Path $stage 'elan-init.exe') -y --default-toolchain none
+          if ($LASTEXITCODE -ne 0) { throw 'elan installation failed' }
+          $bin = Join-Path $env:USERPROFILE '.elan/bin'
+          Add-Content -Path $env:GITHUB_PATH -Value $bin
+          $toolchain = (Get-Content -Raw 'formal/asert/lean-toolchain').Trim()
+          & (Join-Path $bin 'elan.exe') toolchain install $toolchain
+          if ($LASTEXITCODE -ne 0) { throw 'pinned Lean installation failed' }
+          & (Join-Path $bin 'elan.exe') run $toolchain lean --version
+          if ($LASTEXITCODE -ne 0) { throw 'pinned Lean execution failed' }
+
+'''
+    return '''      - name: Install candidate qualification Lean toolchain
+        shell: bash
+        env:
+          ELAN_INIT_SHA256: a620ff1641616222c8d37c54845492004bb84d6877cdbc944dd65c1aa685bf53
+        run: |
+          set -euo pipefail
+          ELAN_INIT="$RUNNER_TEMP/combined-elan-init.sh"
+          curl --proto '=https' --tlsv1.2 --fail --location --show-error https://elan.lean-lang.org/elan-init.sh -o "$ELAN_INIT"
+          python3 -I -B -c 'import hashlib,pathlib,sys; assert hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest() == sys.argv[2]' "$ELAN_INIT" "$ELAN_INIT_SHA256"
+          sh "$ELAN_INIT" -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+          "$HOME/.elan/bin/elan" toolchain install "$(cat formal/asert/lean-toolchain)"
+          (cd formal/asert && "$HOME/.elan/bin/lean" --version)
+
+'''
+
+
+def adapt_combined_candidate(workflow: str) -> str:
+    """Explicit new candidate scope; historical generation remains unchanged."""
+    old = "scripts/check_v0113_release_successor.py --require-authorized"
+    if workflow.count(old) != 5 or workflow.count("--require-final-artifact") != 4:
+        raise ValueError("expected exactly one source and four final v0.11.3 gates")
+    workflow = workflow.replace(old, "scripts/check_combined_upgrade_candidate.py --require-authorized")
+    workflow = workflow.replace("scripts/check_combined_upgrade_candidate.py --require-authorized",
+                                "scripts/check_combined_upgrade_candidate.py --prepare", 1)
+    scope = ("scripts/test_check_v0113_release_successor.py --source-root . "
+             "--predecessor-root target/v011-predecessor")
+    if workflow.count(scope) != 1:
+        raise ValueError("expected exactly one old exact-source mutation suite")
+    workflow = workflow.replace(scope, "scripts/test_check_combined_upgrade_candidate.py", 1)
+    # Old immutable gate tests remain useful; their old source scope is no longer
+    # the candidate source authority. The new mutation suite owns that boundary.
+    policy = "      - name: v0.11.3 preparation routing regression controls\n"
+    workflow = workflow.replace(policy,
+        "      - name: Combined candidate mutation and routing controls\n"
+        "        run: python3 -I -B scripts/test_check_combined_upgrade_candidate.py\n"
+        "      - name: Actual combined qualification producer rejection controls\n"
+        "        run: python3 -I -B scripts/test_qualify_combined_upgrade.py\n"
+        + policy, 1)
+    checkout = "          persist-credentials: false\n"
+    workflow = workflow.replace(checkout, checkout + "          fetch-depth: 0\n")
+    workflow = workflow.replace("name: Prepare pre-mainnet release", "name: Prepare pre-mainnet release", 1)
+    workflow = workflow.replace("scripts/check_v0113_formatting.py --manifest ", "scripts/check_combined_candidate_formatting.py --manifest ")
+    workflow = workflow.replace("scripts/test_check_v0113_release_successor.py", "scripts/test_check_combined_upgrade_candidate.py")
+    workflow = workflow.replace("scripts/test_check_v0113_formatting.py", "scripts/test_check_combined_upgrade_candidate.py")
+    workflow = workflow.replace("scripts/prepare_premainnet_release.py --check",
+                                "scripts/prepare_premainnet_release.py --check --combined-candidate", 1)
+    for job in ('build-linux', 'build-macos-intel', 'build-macos-arm', 'build-windows'):
+        marker = '  ' + job + ':\n'
+        start = workflow.index(marker)
+        following = re.search(r'\n  [A-Za-z0-9_-]+:\n', workflow[start + len(marker):])
+        end = start + len(marker) + following.start() if following else len(workflow)
+        block = workflow[start:end]
+        anchor = '      - name: Validate final common proof authorization and affected lifecycle\n'
+        if block.count(anchor) != 1:
+            raise ValueError('exact final qualification step required in ' + job)
+        block = block.replace(anchor, combined_lean_setup(windows=job == 'build-windows') + anchor, 1)
+        workflow = workflow[:start] + block + workflow[end:]
+    return workflow
+
+
+def expected_workflow(release: str, *, v0113: bool = False, combined: bool = False) -> str:
     if release.count("\njobs:\n") != 1:
         raise ValueError("release workflow must have one canonical jobs block")
     jobs = release.split("\njobs:\n", 1)[1]
@@ -457,13 +548,15 @@ def expected_workflow(release: str, *, v0113: bool = False) -> str:
     builds = adapt_known_loser_regressions(builds)
     builds = adapt_sync_import_regressions(builds)
     output = HEADER + builds.rstrip() + "\n" + ASSEMBLE
-    if v0113:
+    if v0113 or combined:
         output = adapt_v0113_successor(output)
+    if combined:
+        output = adapt_combined_candidate(output)
     return "\n".join(line.rstrip() for line in output.splitlines()) + "\n"
 
 
-def verify_preparation(release: str, preparation: str, *, v0113: bool = False) -> None:
-    expected = expected_workflow(release, v0113=v0113)
+def verify_preparation(release: str, preparation: str, *, v0113: bool = False, combined: bool = False) -> None:
+    expected = expected_workflow(release, v0113=v0113, combined=combined)
     if preparation != expected:
         diff = "".join(difflib.unified_diff(
             preparation.splitlines(keepends=True),
@@ -481,16 +574,17 @@ def main() -> None:
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--check", action="store_true")
     mode.add_argument("--write", action="store_true")
+    parser.add_argument("--combined-candidate", action="store_true", help="generate or check the attributed combined software candidate lane")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     release = (root / ".github/workflows/release.yml").read_text(encoding="utf-8")
     output = root / ".github/workflows/prepare-premainnet-release.yml"
     try:
         if args.write:
-            output.write_text(expected_workflow(release, v0113=True), encoding="utf-8")
+            output.write_text(expected_workflow(release, v0113=True, combined=args.combined_candidate), encoding="utf-8")
             print(f"Generated {output.relative_to(root)}; tag workflow unchanged")
         else:
-            verify_preparation(release, output.read_text(encoding="utf-8"), v0113=True)
+            verify_preparation(release, output.read_text(encoding="utf-8"), v0113=True, combined=args.combined_candidate)
             print("Preparation preserves all seven jobs, runtime and final artifact replay; PR exhaustive formal checks deferred; non-PR full gates retained; publication absent")
     except (OSError, ValueError) as error:
         raise SystemExit(str(error)) from error

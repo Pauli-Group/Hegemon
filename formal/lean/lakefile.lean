@@ -88,6 +88,9 @@ lean_exe gen_recursive_semantic_input_vectors where
 lean_exe gen_supply_vectors where
   root := `Hegemon.Consensus.GenerateSupplyVectors
 
+lean_exe gen_treasury_batch_supply_vectors where
+  root := `Hegemon.Consensus.GenerateTreasuryBatchSupplyVectors
+
 lean_exe gen_supply_invariant_vectors where
   root := `Hegemon.Consensus.GenerateSupplyInvariantVectors
 

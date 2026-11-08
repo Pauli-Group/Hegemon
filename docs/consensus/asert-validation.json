@@ -1,0 +1,452 @@
+{
+  "schema": "hegemon.asert-preparation-validation.v1",
+  "recorded_at": "2026-10-29T07:56:44Z",
+  "status": "focused_preparation_checks_passed",
+  "base_commit": "74910ff86514c2cbd93d7a7039e6b90b6e4600b6",
+  "branch": "codex/asert-activation",
+  "source_binding": "SHA-256 of selected implementation, test, fixture, policy and build-input files; not a hermetic build closure or release attestation. Documentation and this record are not part of the source-input digest list.",
+  "toolchain": {
+    "rustc": "rustc 1.91.1 (ed61e7d7e 2025-11-07)",
+    "cargo": "cargo 1.91.1 (ea2d97820 2025-10-10)",
+    "lean": "leanprover/lean4:v4.32.2"
+  },
+  "parameters": {
+    "target_spacing_ms": 60000,
+    "half_life_ms": 3600000,
+    "pre_mainnet_activation_height": null,
+    "development_rehearsal_activation_height": 20,
+    "reference_height": "H-1",
+    "reference_time": "timestamp(H-2)",
+    "candidate_timestamp_affects_target": false
+  },
+  "checks": [
+    {
+      "name": "light-client",
+      "command": "cargo test --locked -p consensus-light-client --release -j 2 --lib",
+      "exit_code": 0,
+      "tests_passed": 60,
+      "result": "Includes all 14,000 BCH reference cases and boundary arithmetic checks.",
+      "log": ".agent/asert-validation-20261029/hegemon-asert-light-client.log",
+      "log_sha256": "60e47cd563133a8e24e6978b95714c7b505199c2d7c2ae4e42452047e4aae53e"
+    },
+    {
+      "name": "no-std",
+      "command": "cargo check --locked -p consensus-light-client --release -j 2 --no-default-features",
+      "exit_code": 0,
+      "tests_passed": null,
+      "result": "no_std library compilation.",
+      "log": ".agent/asert-validation-20261029/hegemon-asert-no-std.log",
+      "log_sha256": "9b990f00a536f48156fb676e4f1b4d94b48b6a5de5c3f44ca930299528cc51da"
+    },
+    {
+      "name": "profile",
+      "command": "cargo test --locked -p consensus-light-client --release -j 2 --lib --features asert-rehearsal asert_",
+      "exit_code": 0,
+      "tests_passed": 7,
+      "result": "Rehearsal is confined to legacy development identity; live pre-mainnet remains unscheduled.",
+      "log": ".agent/asert-validation-20261029/hegemon-asert-profile.log",
+      "log_sha256": "8a5e69f17e3c3e557fca6e4ca217031368d1855a05db461af9f8cfadf0eba645"
+    },
+    {
+      "name": "formal-rust",
+      "command": "cargo test --locked -p consensus-light-client --release -j 2 --test asert_formal",
+      "exit_code": 0,
+      "tests_passed": 1,
+      "result": "62 arithmetic and 45 activation vectors from the independent Lean model.",
+      "log": ".agent/asert-validation-20261029/hegemon-asert-formal-rust.log",
+      "log_sha256": "5d23f3764dd35de3c48c995960f87445c382f0f03a62759b9d74ee5f745ccd9e"
+    },
+    {
+      "name": "native-bounded-final",
+      "command": "cargo test --locked -p hegemon-node --release -j 2 --lib --features asert-rehearsal asert_ -- --nocapture",
+      "exit_code": 0,
+      "tests_passed": 16,
+      "result": "Real native mining/import, sync prefix, activation, target/rules rejection, branch anchors, reorg, restart, fresh sync, 540-block cold ancestry, exact retry ownership and queue limits.",
+      "log": ".agent/asert-validation-20261029/hegemon-asert-native-bounded-final.log",
+      "log_sha256": "f57afb158bf8e3783db2992b491da9d3693bba867326f7f29f8c3041c36c6097"
+    },
+    {
+      "name": "service-legacy",
+      "command": "cargo test --locked -p hegemon-node --release -j 2 --lib native::service::",
+      "exit_code": 0,
+      "tests_passed": 17,
+      "result": "Default-profile service and retained-work admission regressions.",
+      "log": ".agent/asert-validation-20261029/hegemon-asert-service-legacy.log",
+      "log_sha256": "8cb56b90825ce3385edd8828aa6a2ba86255a80e93a4536c9c9f1ac4edc2e3a5"
+    },
+    {
+      "name": "sync-legacy",
+      "command": "cargo test --locked -p hegemon-node --release -j 2 --lib sync_import",
+      "exit_code": 0,
+      "tests_passed": 3,
+      "result": "Default-profile sync-import regressions.",
+      "log": ".agent/asert-validation-20261029/hegemon-asert-sync-legacy.log",
+      "log_sha256": "c48542c0f9809e934021a51b6b835402fe84d342ac79395c2aed2368b7630077"
+    },
+    {
+      "name": "legacy-pow",
+      "command": "cargo test --locked -p hegemon-node --release -j 2 --lib pow_",
+      "exit_code": 0,
+      "tests_passed": 12,
+      "result": "Legacy PoW regressions; run before final service-only ownership refinements.",
+      "log": ".agent/asert-validation-20261029/hegemon-asert-legacy-pow.log",
+      "log_sha256": "67048433a6cd1d43fbee566d9a7cb60960745abec14fc82e70aceaa9d786b5bd"
+    },
+    {
+      "name": "asic",
+      "command": "cargo test --locked -p hegemon-node --release -j 2 --lib native::bitcoin_asic_tests",
+      "exit_code": 0,
+      "tests_passed": 7,
+      "result": "Bitcoin80 mining regressions; run before final service-only ownership refinements.",
+      "log": ".agent/asert-validation-20261029/hegemon-asert-asic.log",
+      "log_sha256": "95453f9e3e1bf230955b5e39d7411844534f67764e8db0d9140733030f211b02"
+    },
+    {
+      "name": "consensus",
+      "command": "cargo test --locked -p consensus --release -j 2 --lib pow::tests",
+      "exit_code": 0,
+      "tests_passed": 7,
+      "result": "Existing retarget regression tests.",
+      "log": ".agent/asert-validation-20261029/hegemon-asert-consensus.log",
+      "log_sha256": "71db9164906435925b7ed5c12ec18eeb88b2903259a86164ca12ebf72e2be059"
+    },
+    {
+      "name": "formal",
+      "command": "bash scripts/check_asert_formal.sh --lean-only",
+      "exit_code": 0,
+      "tests_passed": null,
+      "result": "Rebuilt standalone Lean model, regenerated byte-identical vectors, audited 14 roots for standard Lean axioms.",
+      "log": ".agent/asert-validation-20261029/hegemon-asert-formal.log",
+      "log_sha256": "dd5f4a02955f76b830a81126c85ac8bd60fa655e9a910ca137d8ea81e1a9095d"
+    },
+    {
+      "name": "formatting",
+      "command": "python3 -I -B scripts/check_qualified_formatting.py --manifest workspace",
+      "exit_code": 0,
+      "tests_passed": null,
+      "result": "Repository qualified formatting gate; existing debt exemptions unchanged.",
+      "log": ".agent/asert-validation-20261029/hegemon-asert-formatting.log",
+      "log_sha256": "e247fd24f085f3d5d84503075a207f849b5b32e7142225ed4fde8be7064f4203"
+    },
+    {
+      "name": "clippy-qualified",
+      "command": "CARGO_BUILD_JOBS=2 python3 -I -B scripts/check_qualified_clippy.py -p hegemon-node -p consensus-light-client --all-targets",
+      "exit_code": 0,
+      "tests_passed": null,
+      "result": "Repository qualified Clippy gate; existing exceptions unchanged. Existing warnings remain.",
+      "log": ".agent/asert-validation-20261029/hegemon-asert-clippy-qualified.log",
+      "log_sha256": "f5b8c280ac2e211ff79695caf015532601fcdbda42b999f1e9cf85f21291e56e"
+    },
+    {
+      "name": "startup-policy",
+      "command": "python3 -I -B scripts/check_native_startup_policy.py",
+      "exit_code": 0,
+      "tests_passed": null,
+      "result": "Native startup policy check.",
+      "log": ".agent/asert-validation-20261029/hegemon-asert-startup-policy.log",
+      "log_sha256": "2d26f03cd710a2d81c280b4414c24b82d4b018681e934eb3afb59ddb7f0783ac"
+    },
+    {
+      "name": "ci-policy",
+      "command": "python3 -I -B scripts/test_check_ci_release_gate_policy.py",
+      "exit_code": 0,
+      "tests_passed": null,
+      "result": "CI/release executable-step policy and negative tests.",
+      "log": ".agent/asert-validation-20261029/hegemon-asert-ci-policy.log",
+      "log_sha256": "a2b74e65d68dbd9413254c93c8d34b118f9fa4aeab80b2f76113936091c36758"
+    },
+    {
+      "name": "governance",
+      "command": "CARGO_TARGET_DIR=target/formal-core-ci-repair CARGO_BUILD_JOBS=2 cargo test --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml governance_",
+      "exit_code": 0,
+      "tests_passed": 14,
+      "result": "Governance receipt regressions.",
+      "log": ".agent/asert-validation-20261029/hegemon-asert-governance.log",
+      "log_sha256": "93576a94b16f1307556b2709215d679fdb4433c53e7e9e263f09b72fb2dcf291"
+    },
+    {
+      "name": "inventory",
+      "command": "cargo run --locked --manifest-path scripts/hegemon_formal_core/Cargo.toml --target-dir target/formal-core-ci-repair -j 2 -- check-formal-inventory --root .",
+      "exit_code": 0,
+      "tests_passed": null,
+      "result": "Existing formal inventory presence check.",
+      "log": ".agent/asert-validation-20261029/hegemon-asert-inventory.log",
+      "log_sha256": "ba380b98a7ff8bbef85c96611b222f0929fb16702df48b2a6299724b07aea584"
+    },
+    {
+      "name": "claims",
+      "command": "target/formal-core-ci-repair/debug/hegemon-formal-core check-claims config/formal-security-claims.json",
+      "exit_code": 0,
+      "tests_passed": null,
+      "result": "Existing conditional claims preserved.",
+      "log": ".agent/asert-validation-20261029/hegemon-asert-claims.log",
+      "log_sha256": "dd5b24077c898c24553b2fc0612fa3d4af121fc53d570b5e07e53f928606b931"
+    },
+    {
+      "name": "blueprint",
+      "command": "target/formal-core-ci-repair/debug/hegemon-formal-core check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json",
+      "exit_code": 0,
+      "tests_passed": null,
+      "result": "Final source order, dominance, result obligations and exact source bindings.",
+      "log": ".agent/asert-validation-20261029/hegemon-asert-blueprint.log",
+      "log_sha256": "5f4a1f8b4fca3534f26abd13289bfb56d543851add13d6f473f79a31167c3bc7"
+    },
+    {
+      "name": "active-goal-policy",
+      "command": "target/formal-core-ci-repair/debug/hegemon-formal-core check-active-goal-progress config/active-goal-progress.json",
+      "exit_code": 0,
+      "tests_passed": null,
+      "result": "Repository policy fixture only; does not complete or resume the separate paused launch goal.",
+      "log": ".agent/asert-validation-20261029/hegemon-asert-active-goal-policy.log",
+      "log_sha256": "265c4fa2e6853347d981d985acf960450db39158856d7ac50ab26aaddf85e329"
+    },
+    {
+      "name": "system-model-policy",
+      "command": "target/formal-core-ci-repair/debug/hegemon-formal-core check-system-model-gates config/system-model-assumption-gates.json",
+      "exit_code": 0,
+      "tests_passed": null,
+      "result": "Existing system model assumptions gate.",
+      "log": ".agent/asert-validation-20261029/hegemon-asert-system-model-policy.log",
+      "log_sha256": "7909d2bec34ed5113ea1a27a47611118d14e4cf7a2534e52cc28ea8f28a9a8a4"
+    },
+    {
+      "name": "bounded-scenarios",
+      "command": "cargo run --locked -p consensus-light-client --release -j 2 --example asert_scenarios",
+      "exit_code": 0,
+      "result": "330,777 simulated blocks across fixed seeded bounded scenarios; censoring and idealized burst limits are explicit.",
+      "output": "docs/consensus/asert-scenarios.md",
+      "output_sha256": "bacc168e3bad58d82bbde166086ee7bbceb1e8be60e91ad96e8dedd607001dd7"
+    }
+  ],
+  "metadata_refresh": [
+    {
+      "path": "config/formal-security-claims.json",
+      "source_digest_refreshes": 0,
+      "all_non_digest_and_non_execution_time_values_unchanged": true
+    },
+    {
+      "path": "config/active-goal-progress.json",
+      "source_digest_refreshes": 0,
+      "all_non_digest_and_non_execution_time_values_unchanged": true
+    },
+    {
+      "path": "config/formal-security-blueprint.json",
+      "source_digest_refreshes": 86,
+      "all_non_digest_and_non_execution_time_values_unchanged": true
+    }
+  ],
+  "source_inputs": [
+    {
+      "path": ".cargo/config.toml",
+      "sha256": "7f30caa1659fc8e0f55618d78c6da0a976de0fd49a27d1a53d599b545ae0e20c"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "sha256": "60ebc471a47cd19c0dc1c4f85f41b03c20031462a7f949769131dbbeb22c3d47"
+    },
+    {
+      "path": "Cargo.lock",
+      "sha256": "1c243bf3858f4ee22fa4441c7a2ee6d49b16d264147b0f3a2de845e760821719"
+    },
+    {
+      "path": "Cargo.toml",
+      "sha256": "5d70ee21856d12c36244d7ca57d03c3b4ba3ae19a28e5f057e48d40a6a5fa83f"
+    },
+    {
+      "path": "config/active-goal-progress.json",
+      "sha256": "362674441bc5a87fed5cf8db282e2070771819e77cf72c45380ffb3ce4ae523b"
+    },
+    {
+      "path": "config/formal-security-blueprint.json",
+      "sha256": "dfeb595754e3e90295c15d6e0d8b2b155ee8e36ce846f01652f5035436aacf91"
+    },
+    {
+      "path": "config/formal-security-claims.json",
+      "sha256": "522ac6170cf88ca0d578a4f64963e799e9d107f96345fef02f1987dd7ef95b06"
+    },
+    {
+      "path": "consensus-light-client/Cargo.toml",
+      "sha256": "d2b898949df9c39184f9022fea96a8a192d72499e00a0f94824c02db527fcfbc"
+    },
+    {
+      "path": "consensus-light-client/examples/asert_scenarios.rs",
+      "sha256": "8ff2bed5da51127b3efe0a549b15223fb33074159107dd05b460c225aef60ba7"
+    },
+    {
+      "path": "consensus-light-client/src/asert.rs",
+      "sha256": "fb2bcf5539d0792e37a263741c778a373af9679b07c9b240d88254a5b788fe29"
+    },
+    {
+      "path": "consensus-light-client/src/bitcoin_pow.rs",
+      "sha256": "bae03d9d021c00a396ee76d0c409fdb5094f6435827e73d1a9dad472e4af896b"
+    },
+    {
+      "path": "consensus-light-client/src/lib.rs",
+      "sha256": "7e9054d4a1b5f11e16e21bf3aaa11b6bff348eb25b0a2d9c2f71aed32583f5a7"
+    },
+    {
+      "path": "consensus-light-client/src/pow_rules.rs",
+      "sha256": "dec12e35ba73c3e87723d678628a1aa49f354917ccaee41105b1ac445bdf4718"
+    },
+    {
+      "path": "consensus-light-client/testdata/asert/README.md",
+      "sha256": "14f6ca35f98c78fd926f3aa012a351ca8e1d7871c86c3e3617828cf78a3e6899"
+    },
+    {
+      "path": "consensus-light-client/testdata/asert/run01",
+      "sha256": "bfdbac6a3eb2ffaeecb8475ab7be4de61b780f1abc2ad858846a44d69d4a496e"
+    },
+    {
+      "path": "consensus-light-client/testdata/asert/run02",
+      "sha256": "0db6f9bc26a3bb29a06ea2dec44606803c76aca8b903de0658e1cd40c00efc7d"
+    },
+    {
+      "path": "consensus-light-client/testdata/asert/run03",
+      "sha256": "a21049dca0426086d4bc399ad962861e7e032f22a89e0bf7da8d0e1f99c7b790"
+    },
+    {
+      "path": "consensus-light-client/testdata/asert/run04",
+      "sha256": "3d195813853c758920d49ce54e0d2048b5dbf66264d669a200c0b5b66138e025"
+    },
+    {
+      "path": "consensus-light-client/testdata/asert/run05",
+      "sha256": "02d8a492d91f166fad424391830f8921de650f9820483300f8c90ba72a67238a"
+    },
+    {
+      "path": "consensus-light-client/testdata/asert/run06",
+      "sha256": "12a0f7672327cf8887367cf93ed22c36ae1c3778352e922de771af15496812fe"
+    },
+    {
+      "path": "consensus-light-client/testdata/asert/run07",
+      "sha256": "8dae763a095cfe8ab6721e0bad23d433a4596ed8b0a9d9db9bc551c73be64111"
+    },
+    {
+      "path": "consensus-light-client/testdata/asert/run08",
+      "sha256": "7d19ee783dea42989d4a2d3ddf475a8c26e1f31fc1b517d348a4e3f7e6ec8403"
+    },
+    {
+      "path": "consensus-light-client/testdata/asert/run09",
+      "sha256": "430d771c8c6c853e0aa8190e049826add47f517dfb9898a2bf0b5c7a3280c717"
+    },
+    {
+      "path": "consensus-light-client/testdata/asert/run10",
+      "sha256": "34dff0a33085043626be6f1290a4089e18bd037010084b37bc67f14141121621"
+    },
+    {
+      "path": "consensus-light-client/testdata/asert/run11",
+      "sha256": "f912d4fb2edcf65037fa7e8c279c49a291e8e74ce507b15b3478146fe653ad88"
+    },
+    {
+      "path": "consensus-light-client/testdata/asert/run12",
+      "sha256": "897418f85dcb17814ea7b7556547565271c524723ece8af8d47fab4bdc0ab179"
+    },
+    {
+      "path": "consensus-light-client/tests/asert_formal.rs",
+      "sha256": "5411460d7816996f3c877799c7a77832806aedb79cb1436350c82845140d940b"
+    },
+    {
+      "path": "formal/asert/Hegemon/Consensus/Asert.lean",
+      "sha256": "338a4a35b055e8248a41d43ea2c54e071511500fb34ccc5a024c7a0c93b465d0"
+    },
+    {
+      "path": "formal/asert/Hegemon/Consensus/Asert.roots",
+      "sha256": "b8d9bce51bae0f73490336b03c327088d5b1da7a16e24502f677d7d415278f59"
+    },
+    {
+      "path": "formal/asert/Hegemon/Consensus/GenerateAsertVectors.lean",
+      "sha256": "87d2e20d4ea869f25534c1f72d6729654f3c75a6f4ba0d8bbbe94f457b185b73"
+    },
+    {
+      "path": "formal/asert/fixtures/asert-v1.json",
+      "sha256": "2835f354a6d11e11b6f006eda66ab0ee3411e5c31958dca81138fe4ffc670bd9"
+    },
+    {
+      "path": "formal/asert/lean-toolchain",
+      "sha256": "2bdc48adfa58d0017e538a0ad117c5d73d35deec879978f909406a80c8037273"
+    },
+    {
+      "path": "node/Cargo.toml",
+      "sha256": "961655ef7a94e6c1c4cf0665c0fb33947615a26bbe5e98fac3527e21dbe44370"
+    },
+    {
+      "path": "node/src/native/asert_tests.rs",
+      "sha256": "68f525bac6ae69eeadbdd9c302581d90385e00352a89f68e975c88e851274bd1"
+    },
+    {
+      "path": "node/src/native/block_flow.rs",
+      "sha256": "6bee9c2946ad7b688c56a9dd956e81d4fb836c6b87c01d97e8cab519ee325464"
+    },
+    {
+      "path": "node/src/native/mod.rs",
+      "sha256": "13317cd25d89759f2f48a94ab1735e298f9231662b49c767732ffca056c15eb7"
+    },
+    {
+      "path": "node/src/native/node_impl.rs",
+      "sha256": "69c73755487b721572000738b6f6ebb2a6869d3fc738662e460af26f69da5a1a"
+    },
+    {
+      "path": "node/src/native/pow.rs",
+      "sha256": "e2c80c8469630dc945e92ba4c2ce4f6bcb374824ae288f3252417c966f7f887a"
+    },
+    {
+      "path": "node/src/native/rpc.rs",
+      "sha256": "aa0dadd60fd0f11307d3290e8ad8a35ef839592aacca9cfd7c91540b4d9550ea"
+    },
+    {
+      "path": "node/src/native/service.rs",
+      "sha256": "d2b3f50e40034ca99f5a42577ccca43d4ddad716e191b960f8a11ed4b2efc788"
+    },
+    {
+      "path": "node/src/native/storage.rs",
+      "sha256": "8c0fc038f3dd4036f9bab41e63a218505a79017e853f25f0286facc451c848e7"
+    },
+    {
+      "path": "rust-toolchain.toml",
+      "sha256": "b84d00b8767f77f522f340f9c417da28d5f8ed55ee6cd825fc854abeda9ce852"
+    },
+    {
+      "path": "scripts/check-core.sh",
+      "sha256": "8c506894039662b60f0d487a656ae3a7f1b0c7f415dea828edb8cc96890f81c2"
+    },
+    {
+      "path": "scripts/check_asert_formal.sh",
+      "sha256": "58ad555c3c7480764755be245c015dc913cb395dbe0523a5beec1bbb444fc73c"
+    },
+    {
+      "path": "scripts/check_qualified_clippy.py",
+      "sha256": "dfb34adcb1bdf5245e1515be2224ee51e4f272e84525c13efca7114de1a2d3eb"
+    },
+    {
+      "path": "scripts/check_qualified_formatting.py",
+      "sha256": "4475265a0b1a4c7b34d97e28a44583b18e022c21d56ef0026f443800884b6605"
+    },
+    {
+      "path": "scripts/hegemon_formal_core/Cargo.lock",
+      "sha256": "61aea8d4accd2e1858abb4c7e25c766628222233d3ad61613a0b21a6a23974a9"
+    },
+    {
+      "path": "scripts/hegemon_formal_core/Cargo.toml",
+      "sha256": "239968d8999fa9aa9c43fc161cdc9660538a080e35c3195e13d9b09baa8392f5"
+    },
+    {
+      "path": "scripts/hegemon_formal_core/src/lib.rs",
+      "sha256": "4987f1a5634898eae53bcc0103af21e48b775546884af84488399923b87773d3"
+    },
+    {
+      "path": "scripts/hegemon_formal_core/src/main.rs",
+      "sha256": "a6b25727291e96dcc4102d9ac8567dc9464fec93380eb779552f3c34652a8a37"
+    }
+  ],
+  "limits": [
+    "Finite regression tests and standalone Lean arithmetic/activation lemmas do not establish general Rust refinement, mining incentive optimality or full protocol security.",
+    "No full release qualification, packaged binary attestation or live multi-node activation rehearsal is claimed.",
+    "The live activation height is unset. Existing node databases, wallets and shared network services were not changed.",
+    "ASERT changes targets after completed blocks; it cannot ease an ongoing blockless gap.",
+    "Raw node Clippy initially reported two unchanged reversed-empty-range cases; the required qualified Clippy wrapper passed with existing exact exceptions unchanged.",
+    "Earlier source-binding failures exposed retry paths bypassing fresh admission checks; retained retries now preserve original admission and exact ownership, and the final unchanged policy checker passed.",
+    "The 12 BCH reference fixture files retain upstream bytes and pinned hashes, including upstream trailing whitespace and final blank lines. Git whitespace checks pass outside these exact imported fixtures."
+  ],
+  "release_authorized": false,
+  "published": false,
+  "deployed": false
+}

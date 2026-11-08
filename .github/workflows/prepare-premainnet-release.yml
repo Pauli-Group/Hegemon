@@ -28,8 +28,9 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Verify preparation scope and release build gates
-        run: /usr/bin/python3 -I -B scripts/prepare_premainnet_release.py --check
+        run: /usr/bin/python3 -I -B scripts/prepare_premainnet_release.py --check --combined-candidate
       - name: Preparation workflow regression controls
         run: /usr/bin/python3 -I -B scripts/prepare_premainnet_release_test.py
       - name: v0.11 launcher boundary regressions without live peers
@@ -39,11 +40,15 @@ jobs:
       - name: ASIC adapter solution-retention regressions
         run: python3 -I -B scripts/test_bitcoin_asic_stratum.py
       - name: v0.11.3 successor policy rejection controls
-        run: /usr/bin/python3 -I -B scripts/test_check_v0113_release_successor.py
+        run: /usr/bin/python3 -I -B scripts/test_check_combined_upgrade_candidate.py
+      - name: Combined candidate mutation and routing controls
+        run: python3 -I -B scripts/test_check_combined_upgrade_candidate.py
+      - name: Actual combined qualification producer rejection controls
+        run: python3 -I -B scripts/test_qualify_combined_upgrade.py
       - name: v0.11.3 preparation routing regression controls
         run: /usr/bin/python3 -I -B scripts/test_prepare_v0113_release.py
       - name: v0.11.3 formatting policy rejection controls
-        run: /usr/bin/python3 -I -B scripts/test_check_v0113_formatting.py
+        run: /usr/bin/python3 -I -B scripts/test_check_combined_upgrade_candidate.py
 
   transaction-proof-authorization:
     needs: preparation-policy
@@ -53,6 +58,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - name: Install retained-artifact verifier build dependencies
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev clang lld
@@ -65,7 +71,7 @@ jobs:
         run: python3 -I -B scripts/materialize_v011_predecessor.py --destination target/v011-predecessor --reserve-bytes 4294967296
 
       - name: Current successor scope rejection controls
-        run: python3 -I -B scripts/test_check_v0113_release_successor.py --source-root . --predecessor-root target/v011-predecessor
+        run: python3 -I -B scripts/test_check_combined_upgrade_candidate.py
 
       - name: Current successor final-consumer rejection controls
         run: python3 -I -B scripts/tests/v011_current_successor/test_successor_consumer.py --consumer scripts/check_release_crypto_profile.py --receipt-fixture scripts/tests/v011_current_successor/synthetic-final-receipt.json --artifact-manifest scripts/tests/v011_current_successor/synthetic-artifact-manifest.json --registry scripts/tests/v011_current_successor/synthetic-historical-registry.json
@@ -80,7 +86,7 @@ jobs:
         run: python3 -I -B scripts/test_check_v011_current_binary_proofs.py
 
       - name: Transaction-proof successor authorization release gate
-        run: /usr/bin/python3 -I -B scripts/check_v0113_release_successor.py --require-authorized --predecessor-root target/v011-predecessor
+        run: /usr/bin/python3 -I -B scripts/check_combined_upgrade_candidate.py --prepare --predecessor-root target/v011-predecessor
 
       - name: Release workflow policy regression
         run: /usr/bin/python3 -I -B scripts/test_check_ci_release_gate_policy.py
@@ -98,6 +104,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev clang lld
@@ -110,9 +117,9 @@ jobs:
       - name: v0.11.3 successor formatting gates
         run: |
           set -euo pipefail
-          python3 -I -B scripts/check_v0113_formatting.py --manifest workspace
-          python3 -I -B scripts/check_v0113_formatting.py --manifest htlc
-          python3 -I -B scripts/check_v0113_formatting.py --manifest proof-backend
+          python3 -I -B scripts/check_combined_candidate_formatting.py --manifest workspace
+          python3 -I -B scripts/check_combined_candidate_formatting.py --manifest htlc
+          python3 -I -B scripts/check_combined_candidate_formatting.py --manifest proof-backend
 
       - name: Install cargo-audit
         run: cargo install cargo-audit --version 0.22.2 --locked
@@ -268,6 +275,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - name: Install app dependencies
         run: npm ci --prefix hegemon-app
@@ -299,6 +307,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - name: Install dependencies
         run: |
@@ -318,8 +327,22 @@ jobs:
       - name: Restore authenticated unchanged v0.11 predecessor
         run: python3 -I -B scripts/materialize_v011_predecessor.py --destination target/v011-predecessor --reserve-bytes 4294967296
 
+      - name: Install candidate qualification Lean toolchain
+        shell: bash
+        env:
+          ELAN_INIT_SHA256: a620ff1641616222c8d37c54845492004bb84d6877cdbc944dd65c1aa685bf53
+        run: |
+          set -euo pipefail
+          ELAN_INIT="$RUNNER_TEMP/combined-elan-init.sh"
+          curl --proto '=https' --tlsv1.2 --fail --location --show-error https://elan.lean-lang.org/elan-init.sh -o "$ELAN_INIT"
+          python3 -I -B -c 'import hashlib,pathlib,sys; assert hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest() == sys.argv[2]' "$ELAN_INIT" "$ELAN_INIT_SHA256"
+          sh "$ELAN_INIT" -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+          "$HOME/.elan/bin/elan" toolchain install "$(cat formal/asert/lean-toolchain)"
+          (cd formal/asert && "$HOME/.elan/bin/lean" --version)
+
       - name: Validate final common proof authorization and affected lifecycle
-        run: python3 -I -B scripts/check_v0113_release_successor.py --require-authorized --predecessor-root target/v011-predecessor --artifact-manifest target/release/hegemon-release-artifacts.json --require-final-artifact
+        run: python3 -I -B scripts/check_combined_upgrade_candidate.py --require-authorized --predecessor-root target/v011-predecessor --artifact-manifest target/release/hegemon-release-artifacts.json --require-final-artifact
 
       - name: Release PQ binary audit
         run: ./scripts/security-audit.sh --require-binary --binary-manifest target/release/hegemon-release-artifacts.json --node-bin target/release/hegemon-node --binary target/release/wallet --binary target/release/walletd --binary target/release/private-spend
@@ -341,6 +364,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - name: Install dependencies
         run: |
@@ -360,8 +384,22 @@ jobs:
       - name: Restore authenticated unchanged v0.11 predecessor
         run: python3 -I -B scripts/materialize_v011_predecessor.py --destination target/v011-predecessor --reserve-bytes 4294967296
 
+      - name: Install candidate qualification Lean toolchain
+        shell: bash
+        env:
+          ELAN_INIT_SHA256: a620ff1641616222c8d37c54845492004bb84d6877cdbc944dd65c1aa685bf53
+        run: |
+          set -euo pipefail
+          ELAN_INIT="$RUNNER_TEMP/combined-elan-init.sh"
+          curl --proto '=https' --tlsv1.2 --fail --location --show-error https://elan.lean-lang.org/elan-init.sh -o "$ELAN_INIT"
+          python3 -I -B -c 'import hashlib,pathlib,sys; assert hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest() == sys.argv[2]' "$ELAN_INIT" "$ELAN_INIT_SHA256"
+          sh "$ELAN_INIT" -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+          "$HOME/.elan/bin/elan" toolchain install "$(cat formal/asert/lean-toolchain)"
+          (cd formal/asert && "$HOME/.elan/bin/lean" --version)
+
       - name: Validate final common proof authorization and affected lifecycle
-        run: python3 -I -B scripts/check_v0113_release_successor.py --require-authorized --predecessor-root target/v011-predecessor --artifact-manifest target/x86_64-apple-darwin/release/hegemon-release-artifacts.json --require-final-artifact
+        run: python3 -I -B scripts/check_combined_upgrade_candidate.py --require-authorized --predecessor-root target/v011-predecessor --artifact-manifest target/x86_64-apple-darwin/release/hegemon-release-artifacts.json --require-final-artifact
 
       - name: Release PQ binary audit
         run: ./scripts/security-audit.sh --require-binary --binary-manifest target/x86_64-apple-darwin/release/hegemon-release-artifacts.json --node-bin target/x86_64-apple-darwin/release/hegemon-node --binary target/x86_64-apple-darwin/release/wallet --binary target/x86_64-apple-darwin/release/walletd --binary target/x86_64-apple-darwin/release/private-spend
@@ -383,6 +421,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - name: Install dependencies
         run: |
@@ -401,8 +440,22 @@ jobs:
       - name: Restore authenticated unchanged v0.11 predecessor
         run: python3 -I -B scripts/materialize_v011_predecessor.py --destination target/v011-predecessor --reserve-bytes 4294967296
 
+      - name: Install candidate qualification Lean toolchain
+        shell: bash
+        env:
+          ELAN_INIT_SHA256: a620ff1641616222c8d37c54845492004bb84d6877cdbc944dd65c1aa685bf53
+        run: |
+          set -euo pipefail
+          ELAN_INIT="$RUNNER_TEMP/combined-elan-init.sh"
+          curl --proto '=https' --tlsv1.2 --fail --location --show-error https://elan.lean-lang.org/elan-init.sh -o "$ELAN_INIT"
+          python3 -I -B -c 'import hashlib,pathlib,sys; assert hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest() == sys.argv[2]' "$ELAN_INIT" "$ELAN_INIT_SHA256"
+          sh "$ELAN_INIT" -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+          "$HOME/.elan/bin/elan" toolchain install "$(cat formal/asert/lean-toolchain)"
+          (cd formal/asert && "$HOME/.elan/bin/lean" --version)
+
       - name: Validate final common proof authorization and affected lifecycle
-        run: python3 -I -B scripts/check_v0113_release_successor.py --require-authorized --predecessor-root target/v011-predecessor --artifact-manifest target/release/hegemon-release-artifacts.json --require-final-artifact
+        run: python3 -I -B scripts/check_combined_upgrade_candidate.py --require-authorized --predecessor-root target/v011-predecessor --artifact-manifest target/release/hegemon-release-artifacts.json --require-final-artifact
 
       - name: Release PQ binary audit
         run: ./scripts/security-audit.sh --require-binary --binary-manifest target/release/hegemon-release-artifacts.json --node-bin target/release/hegemon-node --binary target/release/wallet --binary target/release/walletd --binary target/release/private-spend
@@ -424,6 +477,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - name: Install LLVM
         run: choco install llvm -y
@@ -452,9 +506,35 @@ jobs:
         shell: bash
         run: python3 -I -B scripts/materialize_v011_predecessor.py --destination target/v011-predecessor --reserve-bytes 4294967296
 
+      - name: Install candidate qualification Lean toolchain
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = 'v4.2.2'
+          $release = Invoke-RestMethod -Uri "https://api.github.com/repos/leanprover/elan/releases/tags/$version"
+          if ($release.tag_name -ne $version) { throw 'elan release version differs' }
+          $assets = @($release.assets | Where-Object { $_.name -eq 'elan-x86_64-pc-windows-msvc.zip' })
+          if ($assets.Count -ne 1 -or $assets[0].digest -notmatch '^sha256:[0-9a-f]{64}$') { throw 'exact elan asset SHA256 unavailable' }
+          $stage = Join-Path $env:RUNNER_TEMP 'combined-elan'
+          New-Item -ItemType Directory -Force $stage | Out-Null
+          $archive = Join-Path $stage 'elan.zip'
+          Invoke-WebRequest -Uri $assets[0].browser_download_url -OutFile $archive
+          $expected = $assets[0].digest.Substring(7)
+          if ((Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant() -ne $expected) { throw 'elan asset SHA256 differs' }
+          Expand-Archive -Path $archive -DestinationPath $stage -Force
+          & (Join-Path $stage 'elan-init.exe') -y --default-toolchain none
+          if ($LASTEXITCODE -ne 0) { throw 'elan installation failed' }
+          $bin = Join-Path $env:USERPROFILE '.elan/bin'
+          Add-Content -Path $env:GITHUB_PATH -Value $bin
+          $toolchain = (Get-Content -Raw 'formal/asert/lean-toolchain').Trim()
+          & (Join-Path $bin 'elan.exe') toolchain install $toolchain
+          if ($LASTEXITCODE -ne 0) { throw 'pinned Lean installation failed' }
+          & (Join-Path $bin 'elan.exe') run $toolchain lean --version
+          if ($LASTEXITCODE -ne 0) { throw 'pinned Lean execution failed' }
+
       - name: Validate final common proof authorization and affected lifecycle
         shell: bash
-        run: python3 -I -B scripts/check_v0113_release_successor.py --require-authorized --predecessor-root target/v011-predecessor --artifact-manifest target/release/hegemon-release-artifacts.json --require-final-artifact
+        run: python3 -I -B scripts/check_combined_upgrade_candidate.py --require-authorized --predecessor-root target/v011-predecessor --artifact-manifest target/release/hegemon-release-artifacts.json --require-final-artifact
 
       - name: Release PQ binary audit
         shell: bash
@@ -477,6 +557,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Download all prepared binaries
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:

@@ -972,7 +972,17 @@ pub(crate) fn load_best_or_genesis_for_network(
         if best.chain_id != network.chain_id() {
             return Err(anyhow!("stored native database belongs to another network; use a separate base path (stored chain_id={}, selected chain_id={})", hex32(&best.chain_id), hex32(&network.chain_id())));
         }
-        if best.rules_hash != HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE {
+        let expected_rules_hash =
+            consensus_light_client::native_rules_hash(&best.chain_id, best.height);
+        if best.rules_hash != expected_rules_hash {
+            if consensus_light_client::is_bitcoin80_rules(&best.rules_hash) {
+                return Err(anyhow!(
+                    "stored native database rules hash does not match the scheduled rules at height {} (stored rules_hash={}, expected rules_hash={}); preserve this database and verify the selected upgrade release",
+                    best.height,
+                    hex32(&best.rules_hash),
+                    hex32(&expected_rules_hash),
+                ));
+            }
             let profile = if best.rules_hash == HEGEMON_LIGHT_CLIENT_RULES_HASH_V1 {
                 "legacy V1"
             } else if best.rules_hash == HEGEMON_LIGHT_CLIENT_RULES_HASH_V2 {
@@ -983,7 +993,7 @@ pub(crate) fn load_best_or_genesis_for_network(
             return Err(anyhow!(
                 "stored native database uses {profile} consensus rules; Bitcoin80 ASIC PoW requires a fresh genesis and a new base path (stored rules_hash={}, active rules_hash={})",
                 hex32(&best.rules_hash),
-                hex32(&HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE),
+                hex32(&expected_rules_hash),
             ));
         }
         return Ok(best);
@@ -1148,6 +1158,7 @@ pub(crate) fn genesis_meta_for_network(
     ]);
 
     Ok(NativeBlockMeta {
+        mining_version: None,
         chain_id: network.chain_id(),
         rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE,
         height: 0,
@@ -1678,7 +1689,8 @@ pub(crate) fn validate_loaded_block_indexes_for_network(
         if meta.chain_id != network.chain_id() {
             canonical_chain_ids_match = false;
         }
-        if meta.rules_hash != HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE {
+        if meta.rules_hash != consensus_light_client::native_rules_hash(&meta.chain_id, meta.height)
+        {
             canonical_rules_hashes_match = false;
         }
         if meta.hash != meta.work_hash {
@@ -2767,6 +2779,74 @@ pub(crate) fn validate_loaded_bridge_replay_state(
         };
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod asert_startup_rules_tests {
+    use super::*;
+
+    #[test]
+    #[cfg(feature = "asert-rehearsal")]
+    fn best_record_guard_accepts_scheduled_rules_and_rejects_boundary_mismatches() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = sled::open(temp.path()).unwrap();
+        let meta_tree = db.open_tree("meta").unwrap();
+        let height_tree = db.open_tree("block_hash_by_height").unwrap();
+        let block_tree = db.open_tree("block_meta_by_hash").unwrap();
+        let network = NativeNetworkIdentity::legacy();
+        let old_rules = HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE;
+        let asert_rules = consensus_light_client::native_rules_hash(&network.chain_id(), 20);
+        assert_ne!(
+            old_rules, asert_rules,
+            "rehearsal activates ASERT at height 20"
+        );
+
+        // This exercises only the startup best-record identity guard. Full
+        // header/PoW and canonical-chain validation run separately on open.
+        for (height, expected, forbidden) in [
+            (19, old_rules, asert_rules),
+            (20, asert_rules, old_rules),
+            (21, asert_rules, old_rules),
+        ] {
+            let mut best = genesis_meta_for_network(0x207f_ffff, &network).unwrap();
+            best.height = height;
+            best.rules_hash = expected;
+            let encoded = bincode::serialize(&best).unwrap();
+            meta_tree.insert(META_BEST_KEY, encoded).unwrap();
+            assert_eq!(
+                load_best_or_genesis_for_network(
+                    &db,
+                    &meta_tree,
+                    &height_tree,
+                    &block_tree,
+                    0x207f_ffff,
+                    &network,
+                )
+                .unwrap(),
+                best,
+            );
+
+            best.rules_hash = forbidden;
+            let encoded = bincode::serialize(&best).unwrap();
+            meta_tree.insert(META_BEST_KEY, encoded.clone()).unwrap();
+            let error = load_best_or_genesis_for_network(
+                &db,
+                &meta_tree,
+                &height_tree,
+                &block_tree,
+                0x207f_ffff,
+                &network,
+            )
+            .unwrap_err();
+            assert!(error.to_string().contains("scheduled rules"));
+            assert_eq!(
+                meta_tree.get(META_BEST_KEY).unwrap().unwrap().as_ref(),
+                encoded.as_slice()
+            );
+            assert!(height_tree.is_empty());
+            assert!(block_tree.is_empty());
+        }
+    }
 }
 
 #[cfg(test)]

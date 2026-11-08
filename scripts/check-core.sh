@@ -7,7 +7,7 @@ fi
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/check-core.sh [lint|test|test-base|test-transaction-lib|test-transaction-integration|test-wallet|test-wallet-base|test-wallet-multisig-setup|test-wallet-multisig-builders|test-node|test-node-default|test-node-minimal|build|all]
+Usage: ./scripts/check-core.sh [lint|test|test-base|test-transaction-lib|test-transaction-integration|test-wallet|test-wallet-base|test-wallet-multisig-setup|test-wallet-multisig-builders|test-node|test-node-default|test-node-minimal|test-asert|build|all]
 
 lint   Run the default formatting and lint gate.
 test   Run the default fast Rust test gate.
@@ -21,6 +21,7 @@ test-wallet-multisig-builders Run the multisig value-lock authorization rejectio
 test-node        Run both hegemon-node library feature profiles.
 test-node-default Run the default hegemon-node library feature profile.
 test-node-minimal Run the no-default-features hegemon-node library profile.
+test-asert       Run isolated ASERT activation and arithmetic regressions.
 build  Build the release node, wallet, and walletd binaries.
 all    Run lint, test, and build gates.
 EOF
@@ -29,9 +30,13 @@ EOF
 run_lint() {
   python3 -I -B scripts/test_check_qualified_formatting.py
   python3 -I -B scripts/test_check_qualified_clippy.py
-  python3 -I -B scripts/check_qualified_formatting.py --manifest workspace
-  python3 -I -B scripts/check_qualified_formatting.py --manifest htlc
-  python3 -I -B scripts/check_qualified_formatting.py --manifest proof-backend
+  local formatting_checker=scripts/check_qualified_formatting.py
+  if [ -f config/combined-upgrade-candidate-20261108.json ]; then
+    formatting_checker=scripts/check_combined_candidate_formatting.py
+  fi
+  python3 -I -B "$formatting_checker" --manifest workspace
+  python3 -I -B "$formatting_checker" --manifest htlc
+  python3 -I -B "$formatting_checker" --manifest proof-backend
   python3 scripts/check_native_startup_policy.py
   python3 -B scripts/check_smallwood_v5_candidate_gate.py
   # Keep correctness and suspicious-code diagnostics blocking. Style and unused
@@ -78,6 +83,7 @@ run_test_base() {
   python3 -B scripts/test_check_release_launcher_policy.py
   python3 -B scripts/test_release_launcher_boundaries.py
   python3 -B scripts/test_release_artifact_manifest.py
+  python3 -I -B scripts/test_qualify_combined_upgrade.py
   python3 -B scripts/test_check_release_crypto_profile.py
   python3 -B .agent/hardening/smallwood-pqc-zk/test_strict_profile.py
   python3 -B scripts/test_check_smallwood_v5_candidate_gate.py
@@ -153,11 +159,20 @@ run_test_wallet_multisig_builders() {
 run_test_node_default() {
   prepare_test_environment
   cargo test -p hegemon-node --lib
+  run_test_asert
 }
 
 run_test_node_minimal() {
   prepare_test_environment
   cargo test -p hegemon-node --lib --no-default-features
+}
+
+run_test_asert() {
+  prepare_test_environment
+  cargo test --locked -p consensus-light-client --lib
+  cargo test --locked -p consensus-light-client --test asert_formal
+  cargo check --locked -p consensus-light-client --no-default-features
+  cargo test --locked -p hegemon-node --lib --features asert-rehearsal asert_
 }
 
 run_test_node() {
@@ -213,6 +228,9 @@ case "${1:-all}" in
     ;;
   test-node-minimal)
     run_test_node_minimal
+    ;;
+  test-asert)
+    run_test_asert
     ;;
   build)
     run_build

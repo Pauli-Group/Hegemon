@@ -235,7 +235,11 @@ fn bitcoin_asic_pending_generation_change_refreshes_work_and_retains_valid_old_j
 }
 
 fn synthetic_retarget_parent_chain(bits: u32, elapsed_ms: u64) -> Vec<NativeBlockMeta> {
-    let genesis = genesis_meta(bits).unwrap();
+    let mut genesis = genesis_meta(bits).unwrap();
+    // This arithmetic-only fixture deliberately selects the legacy schedule,
+    // including when the separate H20 ASERT rehearsal feature is compiled.
+    genesis.chain_id = [0x55; 32];
+    genesis.rules_hash = consensus_light_client::native_rules_hash(&genesis.chain_id, 0);
     let mut chain = vec![genesis.clone()];
     let interval = consensus::reward::RETARGET_WINDOW;
     for height in 1..(interval * 2) {
@@ -372,4 +376,246 @@ fn old_native_v2_genesis_is_rejected_without_rewriting_best() {
         meta.get(META_BEST_KEY).unwrap().unwrap().as_ref(),
         legacy_record.as_slice()
     );
+}
+
+#[cfg(feature = "combined-upgrade-rehearsal")]
+fn combined_asic_test_config(path: &Path) -> NativeConfig {
+    let manifest = std::env::var_os("HEGEMON_COMBINED_REHEARSAL_MANIFEST")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("testdata/combined-upgrade-rehearsal/manifest.json")
+        });
+    let mut config = asic_test_config(path);
+    config.network =
+        NativeNetworkIdentity::load(&manifest, NativeNetworkProfile::Development).unwrap();
+    assert_eq!(
+        config.chain_id(),
+        consensus_light_client::COMBINED_REHEARSAL_CHAIN_ID,
+        "the rehearsal override must retain the exact source-pinned disposable identity"
+    );
+    config.pow_bits = config.network.pow_bits(config.pow_bits);
+    config.miner_address = config.network.funding_address().map(str::to_owned);
+    config
+}
+
+#[cfg(feature = "combined-upgrade-rehearsal")]
+fn solve_combined_asic_job(node: &NativeNode, job: &Value, version: u32) -> Value {
+    let id = job["job_id"].as_str().unwrap();
+    let work = node
+        .bitcoin_asic_jobs
+        .lock()
+        .jobs
+        .get(id)
+        .unwrap()
+        .work
+        .clone();
+    for candidate in 0..1_000_000u32 {
+        let mut nonce = [0; 32];
+        nonce[..4].copy_from_slice(&candidate.to_le_bytes());
+        let hash = consensus_light_client::bitcoin80_work_hash_with_version(
+            &work.pre_hash,
+            &work.parent_hash,
+            work.timestamp_ms,
+            work.pow_bits,
+            nonce,
+            version,
+        )
+        .unwrap();
+        if native_seal_meets_target(&hash, work.pow_bits) {
+            return json!({"job_id": id, "nonce": format!("{candidate:08x}"),
+                "extranonce": "00".repeat(28), "ntime": job["ntime"],
+                "mining_version": format!("{version:08x}")});
+        }
+    }
+    panic!("bounded easy-target rehearsal job must have a solution");
+}
+
+// The inherited retarget samples WINDOW-1 parent-to-anchor intervals. This
+// whole-second historical cadence keeps its real target easy without disabling
+// retargets, changing nBits, or advancing the process wall clock.
+#[cfg(feature = "combined-upgrade-rehearsal")]
+const COMBINED_HISTORICAL_BLOCK_INTERVAL_MS: u64 = (consensus::reward::RETARGET_TIMESPAN_MS
+    / (consensus::reward::RETARGET_WINDOW - 1))
+    .div_ceil(1_000)
+    * 1_000;
+
+/// Finite historical software-mined integration; the separate process harness
+/// uses its real wall clock. Neither fixture qualifies physical ASIC hardware.
+#[cfg(feature = "combined-upgrade-rehearsal")]
+#[test]
+fn combined_mining_version_boundary_import_restart_reorg_and_fresh_sync() {
+    let a_dir = tempfile::tempdir().unwrap();
+    let b_dir = tempfile::tempdir().unwrap();
+    let fork_dir = tempfile::tempdir().unwrap();
+    let fresh_dir = tempfile::tempdir().unwrap();
+    let a_config = combined_asic_test_config(a_dir.path());
+    let node = NativeNode::open(a_config.clone()).unwrap();
+    let peer = NativeNode::open(combined_asic_test_config(b_dir.path())).unwrap();
+    let fork = NativeNode::open(combined_asic_test_config(fork_dir.path())).unwrap();
+    let genesis_timestamp_ms = node.best_meta().timestamp_ms;
+    let historical_time = |height: u64| {
+        genesis_timestamp_ms
+            .checked_add(
+                height
+                    .checked_mul(COMBINED_HISTORICAL_BLOCK_INTERVAL_MS)
+                    .unwrap(),
+            )
+            .unwrap()
+    };
+    let mut common = Vec::new();
+    for height in 1..119 {
+        let work =
+            with_native_admission_time(historical_time(height), || node.prepare_work()).unwrap();
+        assert_eq!(work.height, height);
+        assert_eq!(work.timestamp_ms, historical_time(height));
+        assert_eq!(
+            work.pow_bits, node.config.pow_bits,
+            "real scheduled historical target stays easy"
+        );
+        let seal = mine_native_round(work.clone(), 0).unwrap();
+        let meta = with_native_admission_time(historical_time(height), || {
+            node.import_mined_block(&work, seal)
+        })
+        .unwrap()
+        .unwrap();
+        assert_eq!(meta.mining_version, None);
+        with_native_admission_time(historical_time(height), || {
+            peer.import_announced_block(meta.clone())
+        })
+        .unwrap();
+        with_native_admission_time(historical_time(height), || {
+            fork.import_announced_block(meta.clone())
+        })
+        .unwrap();
+        common.push(meta);
+    }
+    let before =
+        with_native_admission_time(historical_time(119), || node.bitcoin_asic_work()).unwrap();
+    assert_eq!(before["height"], 119);
+    assert_eq!(before["version_rolling_mask"], "00000000");
+    let mut premature =
+        solve_combined_asic_job(&node, &before, consensus_light_client::BITCOIN80_VERSION);
+    premature["mining_version"] = json!("20000020");
+    assert!(with_native_admission_time(historical_time(119), || node
+        .bitcoin_asic_submit(premature))
+    .unwrap_err()
+    .to_string()
+    .contains("version"));
+    let fixed = solve_combined_asic_job(&node, &before, consensus_light_client::BITCOIN80_VERSION);
+    assert_eq!(
+        with_native_admission_time(historical_time(119), || node.bitcoin_asic_submit(fixed))
+            .unwrap()["accepted"],
+        true
+    );
+    let last_legacy = node.best_meta();
+    assert_eq!(last_legacy.mining_version, None);
+    with_native_admission_time(historical_time(119), || {
+        peer.import_announced_block(last_legacy.clone())
+    })
+    .unwrap();
+    with_native_admission_time(historical_time(119), || {
+        fork.import_announced_block(last_legacy.clone())
+    })
+    .unwrap();
+    common.push(last_legacy);
+
+    let activated =
+        with_native_admission_time(historical_time(120), || node.bitcoin_asic_work()).unwrap();
+    assert_eq!(activated["height"], 120);
+    assert_eq!(activated["version_rolling_mask"], "1fffffe0");
+    let version = consensus_light_client::BITCOIN80_VERSION | 0x0000_0020;
+    let solution = solve_combined_asic_job(&node, &activated, version);
+    let mut reserved = solution.clone();
+    reserved["mining_version"] = json!("20000021");
+    assert!(with_native_admission_time(historical_time(120), || node
+        .bitcoin_asic_submit(reserved))
+    .unwrap_err()
+    .to_string()
+    .contains("version"));
+    let response =
+        with_native_admission_time(historical_time(120), || node.bitcoin_asic_submit(solution))
+            .unwrap();
+    assert_eq!(response["accepted"], true);
+    let rolled = node.best_meta();
+    assert_eq!(rolled.mining_version, Some(version));
+    assert_eq!(
+        pow_header_from_meta(&rolled).mining_version().unwrap(),
+        version
+    );
+    assert_eq!(
+        pow_header_json(&pow_header_from_meta(&rolled))["mining_version"],
+        version
+    );
+    let wire = bincode::serialize(&NativeSyncMessage::Announce(Box::new(rolled.clone()))).unwrap();
+    let decoded: NativeSyncMessage = bincode_deserialize_exact(&wire, "rolled announce").unwrap();
+    let NativeSyncMessage::Announce(decoded) = decoded else {
+        panic!("announce variant changed")
+    };
+    assert_eq!(*decoded, rolled);
+    let mut tampered = rolled.clone();
+    tampered.mining_version = Some(version ^ 0x40);
+    assert!(with_native_admission_time(historical_time(120), || peer
+        .import_announced_block(tampered))
+    .is_err());
+    assert_eq!(peer.best_meta().height, 119);
+    with_native_admission_time(historical_time(120), || {
+        peer.import_announced_block(*decoded)
+    })
+    .unwrap();
+    assert_eq!(peer.best_meta(), rolled);
+    node.expected_child_pow_bits(&rolled).unwrap(); // bounded marked metadata projection
+    drop(node);
+    let reopened = NativeNode::open(a_config.clone()).unwrap();
+    assert_eq!(reopened.best_meta(), rolled);
+    // Direct import requires verified in-process ancestor checkpoints. Rebuild
+    // them through the existing production replay seam after this cold reopen.
+    assert_eq!(
+        reopened
+            .verify_canonical_checkpoints_after_restart_for_test(rolled.hash)
+            .unwrap()
+            .best,
+        rolled
+    );
+
+    // Build a longer independently verified sibling using the fixed version
+    // after activation, then adopt it across the explicit payload boundary.
+    let mut suffix = Vec::new();
+    for height in [120, 121] {
+        let work =
+            with_native_admission_time(historical_time(height), || fork.prepare_work()).unwrap();
+        assert_eq!(work.height, height);
+        assert_eq!(work.timestamp_ms, historical_time(height));
+        assert_eq!(
+            work.pow_bits, fork.config.pow_bits,
+            "real combined historical target stays easy"
+        );
+        let seal = mine_native_round(work.clone(), 0).unwrap();
+        let meta = with_native_admission_time(historical_time(height), || {
+            fork.import_mined_block(&work, seal)
+        })
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            meta.mining_version,
+            Some(consensus_light_client::BITCOIN80_VERSION)
+        );
+        with_native_admission_time(historical_time(height), || {
+            reopened.import_announced_block(meta.clone())
+        })
+        .unwrap();
+        suffix.push(meta);
+    }
+    assert_eq!(reopened.best_meta(), fork.best_meta());
+    drop(reopened);
+    let reopened = NativeNode::open(a_config).unwrap();
+    assert_eq!(reopened.best_meta(), fork.best_meta());
+    let fresh = NativeNode::open(combined_asic_test_config(fresh_dir.path())).unwrap();
+    for meta in common.into_iter().chain(suffix) {
+        with_native_admission_time(historical_time(meta.height), || {
+            fresh.import_announced_block(meta)
+        })
+        .unwrap();
+    }
+    assert_eq!(fresh.best_meta(), fork.best_meta());
 }

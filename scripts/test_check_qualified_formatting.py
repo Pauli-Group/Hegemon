@@ -82,6 +82,19 @@ class FormattingTests(unittest.TestCase):
         with self.assertRaises(gate.Rejected): gate.load_baseline(file, hashlib.sha256(raw).hexdigest())
 
     def test_all_checked_in_migrations_bind_exact_current_files_and_old_debt(self):
+        candidate_config=gate.ROOT/'config/combined-upgrade-candidate-20261108.json'
+        if candidate_config.is_file():
+            # A source-selected candidate has its own exact predecessor/delta
+            # policy; the immutable old checker remains tested by fixtures.
+            spec=importlib.util.spec_from_file_location('combined_formatting_controls',gate.ROOT/'scripts/check_combined_candidate_formatting.py')
+            candidate=importlib.util.module_from_spec(spec);spec.loader.exec_module(candidate)
+            config=candidate.gate.load_config(gate.ROOT)
+            if config['status']=='pending':
+                with self.assertRaisesRegex(candidate.gate.CandidateError,'frozen'):
+                    candidate.policy(gate.ROOT)
+            else:
+                candidate.policy(gate.ROOT)
+            return
         baseline = gate.load_baseline(gate.ROOT / gate.BASELINE)
         self.assertEqual(len(gate.REVIEWED_SOURCE_MIGRATIONS), 3)
         for row in gate.REVIEWED_SOURCE_MIGRATIONS:

@@ -1,0 +1,219 @@
+{
+  "all_nodes_stopped_for_copy": true,
+  "destination": "F/native-chain.sled",
+  "files": [
+    {
+      "bytes": 131714,
+      "path": "blobs/10860651",
+      "sha256": "0800eb84dd0feb190b79830394a9865604a2db5e865f9d24e26e34e7f7a9e076"
+    },
+    {
+      "bytes": 137681,
+      "path": "blobs/11699280",
+      "sha256": "dcd8b52722c35b3027d2df619d24d9bc6382a55607b6d6ee6c44b670bcbd3db7"
+    },
+    {
+      "bytes": 151452,
+      "path": "blobs/12603107",
+      "sha256": "f8ffdd9e2f9b2d2b9df234a20042e84058c4f6b62ca37eb0fb64e15c486a5283"
+    },
+    {
+      "bytes": 368254,
+      "path": "blobs/16503321",
+      "sha256": "783346da4c2881fc9a359fe8a01551d627c6d311cf9ed7158ec3d6431a4f86ca"
+    },
+    {
+      "bytes": 166233,
+      "path": "blobs/16530600",
+      "sha256": "24260c9d24124ca4ed8b9b7dea214c6fcb90b746d13dd662417e63a316b72f92"
+    },
+    {
+      "bytes": 228137,
+      "path": "blobs/17556089",
+      "sha256": "6023139933e3c9114f75fb3ce2c119646449fe4897e08a6c245b820d7ed59423"
+    },
+    {
+      "bytes": 193910,
+      "path": "blobs/20309100",
+      "sha256": "eff3bd5dda7a854b2938e4be85dbb0d73fb7f6865bd2e22bea717e3d61206e5e"
+    },
+    {
+      "bytes": 253562,
+      "path": "blobs/21373098",
+      "sha256": "6fc84f826df957a4f101e3cf7dd2d5189ca835ecb9cb95fde86a96f369ebcff3"
+    },
+    {
+      "bytes": 256540,
+      "path": "blobs/25298091",
+      "sha256": "2a5579fafaf6e5e122f73139a070e68db59d7000a0922d99e88e88e6617b95a3"
+    },
+    {
+      "bytes": 364852,
+      "path": "blobs/27043020",
+      "sha256": "452e0ca29c06e93425dca626270a9d2d282638246f40948be8a4e14094f72488"
+    },
+    {
+      "bytes": 323888,
+      "path": "blobs/29881886",
+      "sha256": "a048a2bb4e3eca14158f2c9d13f1961dfe69a2ebdd9f3a440633bbc419d384fb"
+    },
+    {
+      "bytes": 200891,
+      "path": "blobs/30885859",
+      "sha256": "6b0d7ac3e020158ecc9b2298e883b772d9ac6c84c6d81c67afef6b391ffb3338"
+    },
+    {
+      "bytes": 384739,
+      "path": "blobs/31132671",
+      "sha256": "bcae9510bffed5cb8957de31e4902fa79ca5a4baf812e00a3fceb5519b79c192"
+    },
+    {
+      "bytes": 259835,
+      "path": "blobs/31164178",
+      "sha256": "451c6caffee438cce34a4124c476ba752c0394c9bbae5ce96bc9c4359493cb65"
+    },
+    {
+      "bytes": 254860,
+      "path": "blobs/31299358",
+      "sha256": "9138746c864f39fc1d8dbadfdf17028ad7f98542da2bb146e86a2cb10495074a"
+    },
+    {
+      "bytes": 311012,
+      "path": "blobs/33672441",
+      "sha256": "84245cd60ce95d131fd086d9d41f3b5cdff039610aff444d97ba19ada3cc5265"
+    },
+    {
+      "bytes": 287291,
+      "path": "blobs/33694321",
+      "sha256": "2eb0baf254703e9d3c7b3f7027dd88c5ff7bb21e1492e678077e18d44f7f7b1c"
+    },
+    {
+      "bytes": 331731,
+      "path": "blobs/33694337",
+      "sha256": "f94a57f5168ea4d9ddc2858022f65291109d73510c87e1d35787f92170c17210"
+    },
+    {
+      "bytes": 335707,
+      "path": "blobs/33826495",
+      "sha256": "b50ac9b38070de45af9d6539f792ce12aa6c0c86a15647fd1be7c78a77ff7315"
+    },
+    {
+      "bytes": 312059,
+      "path": "blobs/34277603",
+      "sha256": "d35dfdac89679bf970915f66e34b504bb23b86be701d5427ecdecb7058788d13"
+    },
+    {
+      "bytes": 227003,
+      "path": "blobs/34278838",
+      "sha256": "d6d1bb0395878c3c3154755a4e7c7311c1ec5526d03dd4e73067cc37d717cb7b"
+    },
+    {
+      "bytes": 333199,
+      "path": "blobs/34422646",
+      "sha256": "cf32ef391906ad253b3f56de9b97ae2a880b48f839e9251be1cdc7848a178372"
+    },
+    {
+      "bytes": 177349,
+      "path": "blobs/34886161",
+      "sha256": "c1473e3e0b84dac36cba6cdb132f1d2b9b8ca6957481f1ecc20cb8f7191955dd"
+    },
+    {
+      "bytes": 182951,
+      "path": "blobs/34888493",
+      "sha256": "a20a704c269ba444c9503c875df5d49957156c520cc6b829d7d87bd6c4b7056d"
+    },
+    {
+      "bytes": 182979,
+      "path": "blobs/34888847",
+      "sha256": "e4f22fff7e119f63eb109d1c0ec37719ee612e5c7f5e7dbec0c19b3f3e1a5918"
+    },
+    {
+      "bytes": 177349,
+      "path": "blobs/34941481",
+      "sha256": "aa2336b8de0e07c70655a8eccc997814b2c91436c9021a7af73205179a390fab"
+    },
+    {
+      "bytes": 180550,
+      "path": "blobs/34944060",
+      "sha256": "497723ee99447c233dda84e8cb36c770db06f2399598c14efc3cc19bcdcd2740"
+    },
+    {
+      "bytes": 180575,
+      "path": "blobs/34944127",
+      "sha256": "1a2b60920a56bcaa280841c477a163e7ad7bac0c59e32349513fe17def741a2f"
+    },
+    {
+      "bytes": 206603,
+      "path": "blobs/35051940",
+      "sha256": "cd0fcce8f3e3d1cd371e03904d1278e87f80f10d216556b329c8ce8aef5f7163"
+    },
+    {
+      "bytes": 226890,
+      "path": "blobs/35051956",
+      "sha256": "836081731ceebf471f7e78585243a9ced84bcd66536f48032ae9bbd32732796c"
+    },
+    {
+      "bytes": 62,
+      "path": "conf",
+      "sha256": "916d2ae94a3f9440b0db932b60a323e5980da640ec4fb2d07d5cbd74df0497f2"
+    },
+    {
+      "bytes": 6815744,
+      "path": "db",
+      "sha256": "d445d27e25b14e6532e7e96c4e086e137db71c6806a0c0b069cc6604c2e75e78"
+    },
+    {
+      "bytes": 4121,
+      "path": "snap.00000000021451B1",
+      "sha256": "74feaa49df422c01c1a058f75f29f5c01856360b281f5acb5166f431fcc162bb"
+    }
+  ],
+  "fresh_fork_peer_identity_path": "F-fresh-peer-identity.seed",
+  "logical_bytes": 14149723,
+  "reference": {
+    "header": {
+      "chainId": "0xa6ddd1817d8c6987d584214ea5e393cbd0f96d138acc0aa216db4f7618be30f0",
+      "cumulativeWork": "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000520d97c9",
+      "daBlobLen": 4,
+      "daChunkCount": 2,
+      "daChunkSize": 1024,
+      "daRoot": "0xc2ef72b7d99eeb184f7f2d57cce3f28ccee45c6c91ef2ea6d8c70a819809b3c3212c719ac735cb3b59914c05e4c3b4a7",
+      "daSampleCount": 4,
+      "digest": {
+        "logs": []
+      },
+      "extrinsicsRoot": "0x68a3a05e2590903b2f02b50759b7d17db62122f3722a4c0438120758d20e9626",
+      "headerMmrLen": 315,
+      "headerMmrRoot": "0x75a2a86ab9342c269f7101085c64c7d66cdb69969e0085f8353901e7183c0060",
+      "kernelRoot": "0xc635167beb366100d847781206f8c7640d30f0df6fd068c46b82ad9fab60bdaca3a66e2bef330f98f1c5b6a95491f0c7",
+      "messageCount": 0,
+      "messageRoot": "0x71c0958a44cea9e2a023fbfbb14e065d621fe6452c75d34ebb299a846172915b4ed441a41a527e154f48a803e6cfb96c",
+      "miningVersion": 536870912,
+      "nonce": "0xbf6b670000000000000000000000000000000000000000000000000000000000",
+      "nullifierRoot": "0x9f43711f94a1b90522bc65c323abf73d106c3dcf9413c606cb90cf3522ad3c8b6bc7335f5a7b08ec644688b6c20e27f9",
+      "number": "0x13b",
+      "parentHash": "0x000000e34933e52cde6cec4b30c1881f9683c4650380310288ff47c7ed18a2bb",
+      "powBits": 503391031,
+      "rulesHash": "0xec304529f49e7ddc777e0ca78b189acec753d4fb18aafe15761e686ea3596b7f",
+      "stateRoot": "0x1d6f3c65c8bc2ed3737d11a0ecfb08d0453507f4675ad4cf6981493412653286"
+    },
+    "nodes": [
+      "A",
+      "B",
+      "C"
+    ],
+    "observed_clock_ms": [
+      1794132730130,
+      1794132730131,
+      1794132730131
+    ],
+    "status": {
+      "best_hash": "0x00000076005128da256c23307769fd3ece87e344734df2b68fb8fa74f93e1f64",
+      "height": 315,
+      "nullifier_root": "0x9f43711f94a1b90522bc65c323abf73d106c3dcf9413c606cb90cf3522ad3c8b6bc7335f5a7b08ec644688b6c20e27f9",
+      "state_root": "0x2a8a72dffb6beeff14bdf83547cba1705c22dc905a78e34efdada47daebc71a643db3c869586c5512f4642735beac5c6",
+      "supply_digest": 155900002000
+    }
+  },
+  "source": "A/native-chain.sled"
+}

@@ -8,6 +8,7 @@ fn sample_meta(seed: u8, action_bytes: Vec<Vec<u8>>) -> NativeBlockMeta {
     let mut cumulative_work = [0u8; 48];
     cumulative_work[47] = seed;
     NativeBlockMeta {
+        mining_version: None,
         chain_id: HEGEMON_CHAIN_ID_V1,
         rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE,
         height: u64::from(seed),

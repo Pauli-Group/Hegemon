@@ -3009,6 +3009,7 @@ fn historical_consensus_tx_from_action_for_deep_tests(
 fn mining_test_work(pow_bits: u32) -> NativeWork {
     let da = test_native_da_metadata(&[]);
     NativeWork {
+        mining_version: consensus_light_client::BITCOIN80_VERSION,
         height: 1,
         parent_hash: [0u8; 32],
         pre_hash: [0u8; 32],
@@ -11565,6 +11566,7 @@ fn mined_work_rejects_height_overflow() {
     }
     let da = test_native_da_metadata(&[]);
     let work = NativeWork {
+        mining_version: consensus_light_client::BITCOIN80_VERSION,
         height: u64::MAX,
         parent_hash: best.hash,
         pre_hash: [0u8; 32],
@@ -11713,6 +11715,7 @@ fn announced_block_proof_authority_precedes_replay_and_payload_validation() {
         block.tx_count,
     );
     let work = NativeWork {
+        mining_version: consensus_light_client::BITCOIN80_VERSION,
         height: block.height,
         parent_hash: block.parent_hash,
         pre_hash: pre_header.pre_hash(),
@@ -11783,6 +11786,7 @@ fn announced_block_action_root_mismatch_precedes_payload_materialization() {
         block.tx_count,
     );
     let work = NativeWork {
+        mining_version: consensus_light_client::BITCOIN80_VERSION,
         height: block.height,
         parent_hash: block.parent_hash,
         pre_hash: pre_header.pre_hash(),
@@ -15817,6 +15821,7 @@ fn native_fork_choice_meta(
 ) -> NativeBlockMeta {
     let da = test_native_da_metadata(&[]);
     NativeBlockMeta {
+        mining_version: None,
         chain_id: HEGEMON_CHAIN_ID_V1,
         rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE,
         height,
@@ -21776,6 +21781,7 @@ fn evaluate_native_block_action_replay_publication_case(
         height: case.replay_height,
         fee_total: case.replay_fee_total,
         has_coinbase: case.replay_has_coinbase,
+        issued_coinbase_amount: None,
         claimed_supply: parse_u128(&case.replay_claimed_supply),
         tx_count_matches: case.replay_tx_count_matches,
         state_root_matches: case.replay_state_root_matches,
@@ -23397,6 +23403,7 @@ fn verify_lean_block_replay_refinement_case(case: &LeanBlockReplayRefinementCase
         height: case.height,
         fee_total: case.fee_total,
         has_coinbase: case.has_coinbase,
+        issued_coinbase_amount: None,
         claimed_supply: parse_u128(&case.claimed_supply),
         tx_count_matches: case.tx_count_matches,
         state_root_matches: case.state_root_matches,
@@ -33323,12 +33330,14 @@ fn block_replay_refinement_rejects_unmaterialized_sidecar_ciphertext() {
         None,
         &state,
         &[transfer, candidate],
+        consensus::treasury::TreasuryRewardPolicy::disabled(),
         NativeBlockReplayRefinementInput {
             leaf_start: state.commitment_tree.leaf_count(),
             parent_supply: 0,
             height: 1,
             fee_total: 0,
             has_coinbase: false,
+            issued_coinbase_amount: None,
             claimed_supply: 0,
             tx_count_matches: true,
             state_root_matches: true,
@@ -36081,6 +36090,7 @@ fn announced_block_proof_policy_rejects_v2_v3_before_tx_leaf_decode() {
             block.tx_count,
         );
         let work = NativeWork {
+            mining_version: consensus_light_client::BITCOIN80_VERSION,
             height: block.height,
             parent_hash: block.parent_hash,
             pre_hash: pre_header.pre_hash(),
@@ -37231,6 +37241,7 @@ fn announced_block_rejects_inactive_v3_bridge_before_payload_or_persistence() {
         tx_count,
     );
     let work = NativeWork {
+        mining_version: consensus_light_client::BITCOIN80_VERSION,
         height,
         parent_hash: parent.hash,
         pre_hash: pre_header.pre_hash(),
@@ -37256,6 +37267,7 @@ fn announced_block_rejects_inactive_v3_bridge_before_payload_or_persistence() {
     };
     let seal = mine_native_round(work, 0).expect("malformed announced bridge seal");
     let meta = active_test_block_meta(NativeBlockMeta {
+        mining_version: None,
         chain_id: HEGEMON_CHAIN_ID_V1,
         rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE,
         height,
@@ -37382,6 +37394,7 @@ fn mined_empty_block_rejects_phantom_bridge_message_root() {
         0,
     );
     let work = NativeWork {
+        mining_version: consensus_light_client::BITCOIN80_VERSION,
         height: 1,
         parent_hash: parent.hash,
         pre_hash: pre_header.pre_hash(),
@@ -37742,6 +37755,7 @@ fn bridge_witness_latest_backscan_rejects_malformed_outbound_payload() {
         tx_count,
     );
     let work = NativeWork {
+        mining_version: consensus_light_client::BITCOIN80_VERSION,
         height,
         parent_hash: older_bridge.hash,
         pre_hash: pre_header.pre_hash(),
@@ -37767,6 +37781,7 @@ fn bridge_witness_latest_backscan_rejects_malformed_outbound_payload() {
     };
     let seal = mine_native_round(work, 0).expect("malformed bridge child seal");
     let malformed_meta = active_test_block_meta(NativeBlockMeta {
+        mining_version: None,
         chain_id: HEGEMON_CHAIN_ID_V1,
         rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE,
         height,
@@ -38128,6 +38143,7 @@ fn empty_child_work_for_chain(chain: &[NativeBlockMeta], genesis_pow_bits: u32) 
         0,
     );
     NativeWork {
+        mining_version: consensus_light_client::BITCOIN80_VERSION,
         height,
         parent_hash: parent.hash,
         pre_hash: pre_header.pre_hash(),
@@ -38155,6 +38171,7 @@ fn empty_child_work_for_chain(chain: &[NativeBlockMeta], genesis_pow_bits: u32) 
 
 fn signed_empty_child_meta_from_work(work: &NativeWork, seal: NativeSeal) -> NativeBlockMeta {
     active_test_block_meta(NativeBlockMeta {
+        mining_version: None,
         chain_id: HEGEMON_CHAIN_ID_V1,
         rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE,
         height: work.height,
@@ -38237,6 +38254,7 @@ fn mined_empty_child_at(
     );
     let pre_hash = pre_header.pre_hash();
     let work = NativeWork {
+        mining_version: consensus_light_client::BITCOIN80_VERSION,
         height,
         parent_hash: parent.hash,
         pre_hash,
@@ -38262,6 +38280,7 @@ fn mined_empty_child_at(
     };
     let seal = mine_native_round(work, round).expect("side seal");
     active_test_block_meta(NativeBlockMeta {
+        mining_version: None,
         chain_id: HEGEMON_CHAIN_ID_V1,
         rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE,
         height,
@@ -38361,6 +38380,7 @@ fn mined_empty_child_with_commitment_mutation(
     );
     let pre_hash = pre_header.pre_hash();
     let work = NativeWork {
+        mining_version: consensus_light_client::BITCOIN80_VERSION,
         height,
         parent_hash: parent.hash,
         pre_hash,
@@ -38386,6 +38406,7 @@ fn mined_empty_child_with_commitment_mutation(
     };
     let seal = mine_native_round(work, round).expect("mutated seal");
     active_test_block_meta(NativeBlockMeta {
+        mining_version: None,
         chain_id: HEGEMON_CHAIN_ID_V1,
         rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE,
         height,
@@ -38469,6 +38490,7 @@ fn mined_child_with_actions(
     );
     let pre_hash = pre_header.pre_hash();
     let work = NativeWork {
+        mining_version: consensus_light_client::BITCOIN80_VERSION,
         height,
         parent_hash: parent.hash,
         pre_hash,
@@ -38494,6 +38516,7 @@ fn mined_child_with_actions(
     };
     let seal = mine_native_round(work, round).expect("action child seal");
     active_test_block_meta(NativeBlockMeta {
+        mining_version: None,
         chain_id: HEGEMON_CHAIN_ID_V1,
         rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE,
         height,
@@ -38574,6 +38597,7 @@ fn mined_child_with_actions_for_chain(
         tx_count,
     );
     let work = NativeWork {
+        mining_version: consensus_light_client::BITCOIN80_VERSION,
         height,
         parent_hash: parent.hash,
         pre_hash: pre_header.pre_hash(),
@@ -38599,6 +38623,7 @@ fn mined_child_with_actions_for_chain(
     };
     let seal = mine_native_round(work, round).expect("action-chain seal");
     active_test_block_meta(NativeBlockMeta {
+        mining_version: None,
         chain_id: HEGEMON_CHAIN_ID_V1,
         rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE,
         height,

@@ -233,3 +233,252 @@ fn late_subsidy_canonically_omits_only_zero_funding() {
         None
     );
 }
+
+fn treasury_batch_fixture(
+    primary_amount: u64,
+    secondary_amount: u64,
+    primary_is_treasury: bool,
+) -> (PendingAction, ShieldedAddress) {
+    let treasury = RootSecret::from_bytes([0xa1; 32])
+        .derive()
+        .poseidon2_v8_address(0)
+        .unwrap()
+        .shielded_address();
+    let miner = RootSecret::from_bytes([0xa2; 32])
+        .derive()
+        .poseidon2_v8_address(0)
+        .unwrap()
+        .shielded_address();
+    let args = wallet::poseidon2_v8_coinbase::build_poseidon2_v8_rewards_args(
+        if primary_is_treasury {
+            &treasury
+        } else {
+            &miner
+        },
+        primary_amount,
+        &treasury,
+        secondary_amount,
+        &mut StdRng::seed_from_u64(primary_amount + secondary_amount + 901),
+    )
+    .unwrap();
+    (treasury_action_from_args(args), treasury)
+}
+
+fn treasury_action_from_args(args: MintPoseidon2V8RewardsArgs) -> PendingAction {
+    let metadata = core::iter::once(&args.miner_note)
+        .chain(args.funding_note.iter())
+        .map(|note| {
+            coinbase_ciphertext_metadata(&note.encrypted_note)
+                .1
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let mut action = PendingAction {
+        tx_hash: ActionId48::ZERO,
+        binding: protocol_versioning::launch_candidate::RP06_VERSION_BINDING.into(),
+        family_id: FAMILY_SHIELDED_POOL,
+        action_id: ACTION_MINT_POSEIDON2_V8_REWARDS,
+        anchor: [0; 48],
+        nullifiers: vec![],
+        commitments: vec![],
+        ciphertext_hashes: metadata.iter().map(|(hash, _)| *hash).collect(),
+        ciphertext_sizes: metadata.iter().map(|(_, size)| *size).collect(),
+        public_args: args.encode(),
+        fee: 0,
+        candidate_artifact: None,
+    };
+    action.tx_hash = pending_action_hash(&action);
+    action
+}
+
+#[test]
+fn treasury_cadence_activation_is_exact_and_legacy_history_stays_valid() {
+    let policy = consensus::treasury::TreasuryRewardPolicy::at(120).unwrap();
+    let (historical, treasury) = rewards_fixture(119, 0, 0);
+    validate_coinbase_funding_accounting_with_policy(
+        &[historical.clone()],
+        119,
+        Some(&treasury),
+        policy,
+    )
+    .unwrap();
+    assert!(validate_coinbase_funding_accounting_with_policy(
+        &[historical],
+        120,
+        Some(&treasury),
+        policy
+    )
+    .is_err());
+    for height in [120, 178, 180] {
+        let (action, treasury) = treasury_batch_fixture(400_000_000, 0, false);
+        validate_coinbase_funding_accounting_with_policy(
+            &[action.clone()],
+            height,
+            Some(&treasury),
+            policy,
+        )
+        .unwrap();
+        validate_coinbase_funding_accounting_with_policy(&[], height, Some(&treasury), policy)
+            .unwrap();
+        assert_eq!(
+            native_supply_composition_projection_with_policy(&[action], height, policy)
+                .unwrap()
+                .supply_delta,
+            400_000_000
+        );
+    }
+    let (boundary, treasury) = treasury_batch_fixture(400_000_000, 6_000_000_000, false);
+    validate_coinbase_funding_accounting_with_policy(
+        &[boundary.clone()],
+        179,
+        Some(&treasury),
+        policy,
+    )
+    .unwrap();
+    assert_eq!(
+        advance_native_supply_digest_with_policy(23, &[boundary.clone()], 179, policy).unwrap(),
+        6_400_000_023
+    );
+    assert!(validate_coinbase_funding_accounting(&[boundary], 179, Some(&treasury)).is_err());
+    let fresh = consensus::treasury::TreasuryRewardPolicy::from_genesis();
+    for height in [1, 59, 61] {
+        let (action, treasury) = treasury_batch_fixture(400_000_000, 0, false);
+        validate_coinbase_funding_accounting_with_policy(&[action], height, Some(&treasury), fresh)
+            .unwrap();
+    }
+    for height in [60, 120] {
+        let (action, treasury) = treasury_batch_fixture(400_000_000, 6_000_000_000, false);
+        validate_coinbase_funding_accounting_with_policy(&[action], height, Some(&treasury), fresh)
+            .unwrap();
+    }
+}
+
+#[test]
+fn treasury_cadence_rejects_early_missing_duplicate_zero_wrong_value_and_policy() {
+    let policy = consensus::treasury::TreasuryRewardPolicy::from_genesis();
+    let (valid, treasury) = treasury_batch_fixture(400_000_000, 6_000_000_000, false);
+    let check = |actions: &[PendingAction], height| {
+        validate_coinbase_funding_accounting_with_policy(actions, height, Some(&treasury), policy)
+    };
+    assert!(check(&[valid.clone()], 59).is_err());
+    assert!(check(&[], 60).is_err());
+    assert!(check(&[valid.clone(), valid.clone()], 60).is_err());
+    let (miner_only, _) = treasury_batch_fixture(400_000_000, 0, false);
+    assert!(check(&[miner_only.clone()], 60).is_err());
+    for (miner, funding) in [
+        (400_000_001, 6_000_000_000),
+        (400_000_000, 5_999_999_999),
+        (400_000_000, 6_000_000_001),
+    ] {
+        let (action, _) = treasury_batch_fixture(miner, funding, false);
+        assert!(check(&[action], 60).is_err());
+    }
+    let (treasury_only, _) = treasury_batch_fixture(6_000_000_000, 0, true);
+    check(&[treasury_only.clone()], 60).unwrap();
+    let (wrong_recipient, _) = treasury_batch_fixture(6_000_000_000, 0, false);
+    assert!(check(&[wrong_recipient], 60).is_err());
+    assert!(
+        validate_coinbase_funding_accounting_with_policy(&[treasury_only], 60, None, policy)
+            .is_err()
+    );
+    let mut args: MintPoseidon2V8RewardsArgs =
+        decode_scale_exact(&valid.public_args, "treasury mutation").unwrap();
+    args.funding_note = Some(args.miner_note.clone());
+    assert!(check(&[treasury_action_from_args(args)], 60).is_err());
+    let mut args: MintPoseidon2V8RewardsArgs =
+        decode_scale_exact(&valid.public_args, "treasury mutation").unwrap();
+    args.funding_note.as_mut().unwrap().opening.value = 0;
+    assert!(check(&[treasury_action_from_args(args)], 60).is_err());
+    // A valid exact-amount note with a different authorization extension cannot
+    // redirect the mandatory payout even when recipient_key is unchanged.
+    let mut wrong_policy = treasury.clone();
+    wrong_policy.pk_auth_extension[0] ^= 1;
+    assert!(validate_coinbase_funding_accounting_with_policy(
+        &[valid.clone()],
+        60,
+        Some(&wrong_policy),
+        policy
+    )
+    .is_err());
+    let mut trailing = miner_only;
+    trailing.action_id = ACTION_SHIELDED_TRANSFER_INLINE;
+    trailing.family_id = FAMILY_SHIELDED_POOL;
+    trailing.tx_hash = pending_action_hash(&trailing);
+    assert!(check(&[valid, trailing], 60).is_err());
+}
+
+#[test]
+fn treasury_cadence_miner_forfeiture_fees_and_actual_supply_are_independent() {
+    let policy = consensus::treasury::TreasuryRewardPolicy::from_genesis();
+    let (paired, treasury) = treasury_batch_fixture(400_000_017, 6_000_000_000, false);
+    let mut fee = paired.clone();
+    fee.action_id = ACTION_SHIELDED_TRANSFER_INLINE;
+    fee.fee = 17;
+    fee.tx_hash = pending_action_hash(&fee);
+    let actions = vec![fee.clone(), paired];
+    validate_coinbase_funding_accounting_with_policy(&actions, 60, Some(&treasury), policy)
+        .unwrap();
+    assert_eq!(
+        native_supply_composition_projection_with_policy(&actions, 60, policy)
+            .unwrap()
+            .supply_delta,
+        6_400_000_017
+    );
+    let (treasury_only, _) = treasury_batch_fixture(6_000_000_000, 0, true);
+    let forfeited = vec![fee, treasury_only];
+    validate_coinbase_funding_accounting_with_policy(&forfeited, 60, Some(&treasury), policy)
+        .unwrap();
+    assert_eq!(
+        native_supply_composition_projection_with_policy(&forfeited, 60, policy)
+            .unwrap()
+            .supply_delta,
+        6_000_000_000
+    );
+    assert!(advance_native_supply_digest_with_policy(u128::MAX, &forfeited, 60, policy).is_err());
+    // Omission at every intermediate height never modifies scheduled accrual.
+    for height in 1..60 {
+        validate_coinbase_funding_accounting_with_policy(&[], height, Some(&treasury), policy)
+            .unwrap();
+    }
+    assert_eq!(policy.entitlement(60).unwrap().payout, 6_000_000_000);
+}
+
+#[test]
+fn treasury_cadence_zero_batches_and_final_exhaustion_residual() {
+    let height = 64 * consensus::reward::HALVING_INTERVAL + 60;
+    let policy = consensus::treasury::TreasuryRewardPolicy::from_genesis();
+    assert_eq!(consensus::reward::block_subsidy(height), 0);
+    assert_eq!(policy.entitlement(height).unwrap().payout, 0);
+    let (_, treasury) = treasury_batch_fixture(1, 0, true);
+    validate_coinbase_funding_accounting_with_policy(&[], height, Some(&treasury), policy).unwrap();
+    let (forbidden, _) = treasury_batch_fixture(1, 0, true);
+    assert!(validate_coinbase_funding_accounting_with_policy(
+        &[forbidden],
+        height,
+        Some(&treasury),
+        policy
+    )
+    .is_err());
+    // The last positive treasury share may occur before the final subsidy atom.
+    // Choose a batch beginning at a positive entitlement and ending after its
+    // source epoch, then independently sum every rounded scheduled share.
+    let mut last_positive = 0;
+    for epoch in 0..64 {
+        let end = (epoch + 1) * consensus::reward::HALVING_INTERVAL;
+        if consensus::reward::block_subsidy(end) >= 5 {
+            last_positive = end;
+        }
+    }
+    assert!(last_positive > 0);
+    let residual_policy =
+        consensus::treasury::TreasuryRewardPolicy::at(last_positive - 19).unwrap();
+    let payout_height = last_positive + 40;
+    let exact: u64 = (last_positive - 19..=payout_height)
+        .map(|h| consensus::reward::block_subsidy(h) / 5)
+        .sum();
+    assert!(exact > 0);
+    assert_eq!(
+        residual_policy.entitlement(payout_height).unwrap().payout,
+        exact
+    );
+}

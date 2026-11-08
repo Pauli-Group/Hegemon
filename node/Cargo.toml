@@ -54,6 +54,9 @@ codec = { workspace = true }
 
 [features]
 default = []
+# Isolated legacy development-chain activation at height 20; never pre-mainnet.
+asert-rehearsal = ["consensus-light-client/asert-rehearsal"]
+combined-upgrade-rehearsal = ["consensus-light-client/combined-upgrade-rehearsal"]
 hx512-working-proof = [
     "transaction_circuit/hx512-working-proof-runner",
     "wallet/hx512-working-proof",

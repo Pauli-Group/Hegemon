@@ -1,0 +1,25 @@
+{
+  "schema": "hegemon.combined-upgrade.independent-review.v1",
+  "decision": "ACCEPT_SOFTWARE_CANDIDATE_SCOPE",
+  "review_kind": "independent_model_review",
+  "reviewer": "Codex independent integration and candidate-scope reviewer (/root/combined_final_scope_review)",
+  "candidate_binding_sha256": "deda477f3c825eeb13b80089d95495be2c7f80a7b4cf1d599c51b095d9f131ff",
+  "source_inventory_sha256": "d184fcdf167f517466e93a0a8964cb45e7450ee4c5e06ba8a7d35bef380c8de3",
+  "qualification_commands_sha256": "626c6991a79d5ffdebc1ceaf61ca2e66be0b0ab6deb61a7b93ab01e6c0c2528e",
+  "runtime_receipt_sha256": "2188f5fd28873c1c8621e2aefc9a8bc9d3e2d0571fc733fe1bdaf458c8f707bd",
+  "production_authorized": false,
+  "mainnet_authorized": false,
+  "activation_authorized": false,
+  "public_cutover_authorized": false,
+  "deployment_verified": false,
+  "physical_asic_qualified": false,
+  "limitations": [
+    "Accepts only the exact frozen software candidate source, retained public local-rehearsal evidence and six reviewed future qualification commands. This is not final artifact, release, deployment or activation acceptance.",
+    "This independent bounded model review inspected source and retained bytes and executed read-only evidence predicates and hash/arithmetic checks. The reviewer did not run builds, focused tests, native proof verification, nodes or the runtime rehearsal.",
+    "All required focused source suites, exact-head full CI, ordinary per-target final proof verification and isolated H0 checks remain mandatory separate receipts; this decision does not assert that they passed.",
+    "Runtime evidence is a default-off Development H120 rehearsal on one host and clock. The same-owner HTLC and cloned-wallet race exercise does not establish independent refund custody, public-network operation or sustained proving throughput.",
+    "The unchanged current proof relation and locked dependencies preserve identity, not a new cryptographic soundness proof. Finite Lean/vector/source-guard and runtime evidence does not establish universal compiled Rust refinement or whole-chain, scheduler, storage or network guarantees.",
+    "Source records, reviewed harness pins, executable hashes and retained process observations are not a hermetic compiler or build-input attestation. Public-bundle secret inspection is bounded and does not constitute a general secret-detection guarantee.",
+    "A compiled production-height change requires a replacement source freeze and affected requalification. Mainnet genesis/bootstrap, physical ASIC model/firmware qualification, publication, operator rollout and activation remain outside this decision."
+  ]
+}

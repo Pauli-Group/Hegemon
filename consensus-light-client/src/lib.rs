@@ -9,13 +9,20 @@ use alloc::vec::Vec;
 use codec::{Decode, Encode};
 use core::cmp::Ordering;
 
+mod asert;
 mod bitcoin_pow;
+mod pow_rules;
+pub use asert::{asert_next_bits, AsertAnchor};
+pub use pow_rules::*;
 mod v3;
 pub use bitcoin_pow::{
-    bitcoin80_coinbase_prefix, bitcoin80_hash_header, bitcoin80_header, bitcoin80_validate_compact,
-    bitcoin80_work_hash, normalize_legacy_compact_for_bitcoin, BITCOIN80_COINBASE_DOMAIN,
-    BITCOIN80_COINBASE_SUFFIX, BITCOIN80_EXTRANONCE_LEN, BITCOIN80_HEADER_LEN,
-    BITCOIN80_POW_LIMIT_BITS, BITCOIN80_VERSION,
+    bitcoin80_coinbase_prefix, bitcoin80_hash_header, bitcoin80_header,
+    bitcoin80_header_with_version, bitcoin80_mining_version_from_payload,
+    bitcoin80_mining_version_payload, bitcoin80_validate_compact,
+    bitcoin80_validate_mining_version, bitcoin80_work_hash, bitcoin80_work_hash_with_version,
+    normalize_legacy_compact_for_bitcoin, BITCOIN80_COINBASE_DOMAIN, BITCOIN80_COINBASE_SUFFIX,
+    BITCOIN80_EXTRANONCE_LEN, BITCOIN80_HEADER_LEN, BITCOIN80_MINING_VERSION_TAG,
+    BITCOIN80_POW_LIMIT_BITS, BITCOIN80_VERSION, BITCOIN80_VERSION_ROLLING_MASK,
 };
 pub use v3::*;
 
@@ -74,7 +81,8 @@ pub const HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_ASIC: Hash32 = [
     0xa0, 0x8f, 0xc9, 0xec, 0x38, 0x3e, 0xec, 0x2b, 0xff, 0x55, 0x4c, 0x64, 0x08, 0x5b, 0xed, 0x80,
     0x91, 0x60, 0x24, 0x1b, 0x89, 0xce, 0xe8, 0x4c, 0xf2, 0xc8, 0xf2, 0x71, 0x70, 0xa7, 0xe4, 0x1f,
 ];
-/// The only rules hash accepted by active native consensus paths.
+/// Frozen genesis rules hash. Native headers select their rules by chain and
+/// height using `native_rules_hash`; manifests and launch identity retain this hash.
 pub const HEGEMON_LIGHT_CLIENT_RULES_HASH_ACTIVE: Hash32 =
     HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_ASIC;
 pub const HEGEMON_NATIVE_LIGHT_CLIENT_VERIFIER_HASH_V1: Hash32 = [
@@ -98,7 +106,13 @@ pub const HEGEMON_RISC0_BRIDGE_IMAGE_ID_V1: Hash32 = [
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LightClientError {
+    InvalidMiningVersion,
     InvalidCompactTarget,
+    InvalidAsertParameters,
+    InvalidAsertAnchor,
+    AsertArithmeticOverflow,
+    InvalidPowRulesSchedule,
+    UnsupportedDifficultySchedule,
     InsufficientWork,
     ParentHashMismatch,
     HeightMismatch,
@@ -458,17 +472,41 @@ impl PowHeaderV2 {
     }
 
     pub fn pre_hash(&self) -> Hash32 {
-        hash32(&self.canonical_bytes())
+        // Version rolling changes only the final 80-byte header. A chip cannot
+        // rebuild the coinbase prehash for each version it tries. The payload
+        // remains explicit in canonical/SCALE carriage; only this profile's
+        // valid tagged field is normalized for the mining prehash.
+        if self.rules_hash == HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_COMBINED
+            && bitcoin80_mining_version_from_payload(&self.version_commitment).is_ok()
+        {
+            let mut normalized = self.clone();
+            normalized.version_commitment = [0; 48];
+            hash32(&normalized.canonical_bytes())
+        } else {
+            hash32(&self.canonical_bytes())
+        }
+    }
+
+    pub fn mining_version(&self) -> Result<u32, LightClientError> {
+        if self.rules_hash == HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_COMBINED {
+            bitcoin80_mining_version_from_payload(&self.version_commitment)
+        } else {
+            Ok(BITCOIN80_VERSION)
+        }
     }
 
     pub fn pow_hash(&self) -> Hash32 {
-        if self.rules_hash == HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_ASIC {
-            bitcoin80_work_hash(
+        if is_bitcoin80_rules(&self.rules_hash) {
+            let Ok(mining_version) = self.mining_version() else {
+                return [0xff; 32];
+            };
+            bitcoin80_work_hash_with_version(
                 &self.pre_hash(),
                 &self.parent_hash,
                 self.timestamp_ms,
                 self.pow_bits,
                 self.nonce,
+                mining_version,
             )
             .unwrap_or([0xff; 32])
         } else {
@@ -1415,20 +1453,48 @@ pub fn verify_pow_header_v2(
     parent: &TrustedCheckpointV2,
     header: &PowHeaderV2,
 ) -> Result<Hash32, LightClientError> {
+    // This historical interface has no anchor history and assumes fixed bits.
+    if is_asert_rules(&parent.rules_hash) || is_asert_rules(&header.rules_hash) {
+        return Err(LightClientError::UnsupportedDifficultySchedule);
+    }
     verify_pow_header_v2_with_expected_bits(parent, header, parent.pow_bits)
 }
 
+/// Verify a V2 header against independently derived expected difficulty.
+/// The caller must authenticate the parent branch and derive the ASERT target
+/// from that branch's anchor; this function checks the supplied target and the
+/// source-owned rules transition, but does not receive the anchor history.
 pub fn verify_pow_header_v2_with_expected_bits(
     parent: &TrustedCheckpointV2,
     header: &PowHeaderV2,
     expected_pow_bits: u32,
 ) -> Result<Hash32, LightClientError> {
+    verify_pow_header_v2_with_expected_bits_and_schedule(
+        parent,
+        header,
+        expected_pow_bits,
+        native_pow_rules(&parent.chain_id),
+    )
+}
+
+// Private schedule seam exercises transitions without enabling a live network.
+fn verify_pow_header_v2_with_expected_bits_and_schedule(
+    parent: &TrustedCheckpointV2,
+    header: &PowHeaderV2,
+    expected_pow_bits: u32,
+    schedule: PowRulesSchedule,
+) -> Result<Hash32, LightClientError> {
+    header.mining_version()?;
     if header.chain_id != parent.chain_id {
         return Err(LightClientError::ChainIdMismatch);
     }
-    if header.rules_hash != parent.rules_hash {
-        return Err(LightClientError::RulesHashMismatch);
-    }
+    pow_rules::validate_rules_pair(
+        schedule,
+        parent.height,
+        &parent.rules_hash,
+        header.height,
+        &header.rules_hash,
+    )?;
     if header.parent_hash != parent.header_hash {
         return Err(LightClientError::ParentHashMismatch);
     }
@@ -1438,15 +1504,14 @@ pub fn verify_pow_header_v2_with_expected_bits(
     if header.timestamp_ms <= parent.timestamp_ms {
         return Err(LightClientError::TimestampDidNotAdvance);
     }
-    if header.rules_hash == HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_ASIC
-        && u32::try_from(header.timestamp_ms / 1_000).is_err()
+    if is_bitcoin80_rules(&header.rules_hash) && u32::try_from(header.timestamp_ms / 1_000).is_err()
     {
         return Err(LightClientError::TimestampOutOfRange);
     }
     if header.pow_bits != expected_pow_bits {
         return Err(LightClientError::PowBitsMismatch);
     }
-    let target = if header.rules_hash == HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_ASIC {
+    let target = if is_bitcoin80_rules(&header.rules_hash) {
         bitcoin80_validate_compact(header.pow_bits)?
     } else {
         compact_to_target(header.pow_bits)?
@@ -2973,6 +3038,19 @@ fn verify_long_range_header_shape_v2(
     block_work: &Work48,
     target: &Hash32,
 ) -> Result<Hash32, LightClientError> {
+    // This proof format derives cumulative work from one fixed checkpoint
+    // target, so it cannot authenticate the ASERT schedule or a transition.
+    if is_asert_rules(&checkpoint.rules_hash) || is_asert_rules(&header.rules_hash) {
+        return Err(LightClientError::UnsupportedDifficultySchedule);
+    }
+    pow_rules::validate_rules_pair(
+        native_pow_rules(&checkpoint.chain_id),
+        checkpoint.height,
+        &checkpoint.rules_hash,
+        header.height,
+        &header.rules_hash,
+    )?;
+
     if header.chain_id != checkpoint.chain_id {
         return Err(LightClientError::ChainIdMismatch);
     }
