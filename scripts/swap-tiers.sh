@@ -74,7 +74,7 @@ fast() {
   step "JavaScript: swap-ui"
   node --test swap-ui/*.test.mjs
   step "JavaScript: relay and Worker"
-  node --test swap-service/server.test.mjs swap-service/server-identity.test.mjs swap-service/swap-session.test.mjs swap-service/cloudflare/worker.test.mjs
+  node --test swap-service/server.test.mjs swap-service/server-identity.test.mjs swap-service/swap-session.test.mjs swap-service/session-protocol.test.mjs swap-service/cloudflare/worker.test.mjs
   run_python_tests
   echo
   echo "swap-test: all fast-tier suites passed"

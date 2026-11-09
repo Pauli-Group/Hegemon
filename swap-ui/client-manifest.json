@@ -6,12 +6,12 @@
   "local": "index.html"
  },
  "import_map": {
-  "source": "sha256-ObndOAFDReMZKOB0i6KxJ/rjlD5tghfgs1OnHab5rag=",
-  "modules": 37
+  "source": "sha256-pZS2hFHl3VZ7i503knr0NPAV4MOBFMllzHu8QfjY1JE=",
+  "modules": 41
  },
  "csp": {
-  "hosted": "default-src 'self'; script-src 'self' 'sha256-ObndOAFDReMZKOB0i6KxJ/rjlD5tghfgs1OnHab5rag='; style-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
-  "local": "default-src 'self'; script-src 'self' 'sha256-ObndOAFDReMZKOB0i6KxJ/rjlD5tghfgs1OnHab5rag='; style-src 'self'; connect-src 'self' http://127.0.0.1:8788; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+  "hosted": "default-src 'self'; script-src 'self' 'sha256-pZS2hFHl3VZ7i503knr0NPAV4MOBFMllzHu8QfjY1JE='; style-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+  "local": "default-src 'self'; script-src 'self' 'sha256-pZS2hFHl3VZ7i503knr0NPAV4MOBFMllzHu8QfjY1JE='; style-src 'self'; connect-src 'self' http://127.0.0.1:8788; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
  },
  "headers": {
   "x-content-type-options": "nosniff",
@@ -101,8 +101,8 @@
    "bytes": 16892
   },
   "hosted.html": {
-   "sha256": "376ab2bdc609ad39baccd6b9fbe396d1520353de7b8ca551c319f4e3d2141136",
-   "bytes": 68813
+   "sha256": "dffca489ce8abc6127a330e2e1696ae9b4c04b60f0841a76a31591d3d97144aa",
+   "bytes": 69123
   },
   "identity-flow.mjs": {
    "sha256": "887417777f3780141cc89670e0252af511c10a323f5b523d4a5c60f368c5d7c6",
@@ -125,8 +125,8 @@
    "bytes": 3697
   },
   "index.html": {
-   "sha256": "25f963021530208af0201f259fe86256ee95f7d55d0a0c2c5cd3d481cd80a5d8",
-   "bytes": 69076
+   "sha256": "34c2e3294840ea5b13dd408bd9d9cdf7653716a14e0df36770acb1ef183e6031",
+   "bytes": 69386
   },
   "journey-ui.mjs": {
    "sha256": "87594031f7cf0639823712d84885de24a4d985a009fb8195e6889f9c85230e52",
@@ -167,6 +167,22 @@
   "sepolia-verifier.mjs": {
    "sha256": "e7e7c1b2032758893a59cc070dd3c06834bbc76b37553df85a4f8eec7f2078bb",
    "bytes": 2497
+  },
+  "session-channel.mjs": {
+   "sha256": "a7656ac34d070d30e55e9f1406c6ab2630ec4d1bf7b66eae0cab913d79b164a0",
+   "bytes": 6515
+  },
+  "session-identity.mjs": {
+   "sha256": "90b1d71d04371bc8f65f86d4253dcb8a5d0735874fc10d097ef4f11702d7dd2f",
+   "bytes": 8229
+  },
+  "session-packets.mjs": {
+   "sha256": "68564d6e5cc2f88783153c9d43fec4aaba4f4fb9453f9f916d9e55dd3c02351f",
+   "bytes": 10682
+  },
+  "session-recovery.mjs": {
+   "sha256": "86741729ce57cdcb09ae07469ad3c7fd2c73f08e16c1165d677223d05f1b47ac",
+   "bytes": 10051
   },
   "style.css": {
    "sha256": "ea746a0485dd56e6c64949745a53ae01875e5243296fc125688348b77f90a4ff",

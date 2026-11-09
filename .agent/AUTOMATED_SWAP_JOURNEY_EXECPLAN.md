@@ -12,7 +12,7 @@ The scope is the existing testnet preview: Hegemon, Bitcoin, Ethereum, and Carda
 
 - [x] (2026-11-09 19:00Z) Read the relay, identity, hosted wallet, state-machine and node-companion interfaces. The existing site requires manual coordination and the browser's engine view only reads pasted data. Asked how to sign; the user chose an explicit wallet approval for every transaction.
 - [x] (2026-11-09 19:06Z) Replaced the technical explanation with a responsive SVG showing the participants and their actions, a text alternative, and a simple refund branch. Checked desktop and phone layouts, passed the fast suite and guided browser scenario, committed and pushed `0f338ca1`, and deployed the diagram; live verification is in progress.
-- [ ] Design and implement authenticated, replay-resistant structured coordination that binds both participants, all terms, and each escrow reference. Completed: additive long-lived relay sessions with owner/taker authentication, offer closure on session creation, independent reservation lifetime, ordered idempotent opaque packets, and both relay tests. Remaining: authenticated client protocol, private recovery, and user-facing integration.
+- [ ] Design and implement authenticated, replay-resistant structured coordination that binds both participants, all terms, and each escrow reference. Completed: additive long-lived relay sessions, owner/taker wallet-bound identity statements, a channel key independent of the share link, encrypted and signed ordered packets, exact asset terms, encrypted recovery backup, and a two-party protocol test with synthetic wallets. Remaining: durable browser journaling, user-facing integration and actual chain actions.
 - [ ] Connect the coordinated session to real per-chain observation, deadline policy and wallet approvals, including safe retry, claim and refund behavior. Extend the native-only engine and wallet checks where necessary for Ethereum tokens/NFTs, Cardano native assets, and Hegemon; never enable an unverified chain or asset path.
 - [ ] Exercise two parties through real browser UI, isolated chain software or representative chain adapters, including failures and reloads, and document supported and unsupported behavior. Push and deploy tested work; verify the hosted result without creating live offers or transactions.
 
@@ -32,7 +32,7 @@ The hosted page currently cannot connect to the Hegemon loopback companion becau
 
 ## Outcomes & Retrospective
 
-The requested SVG is deployed and passed 110 live integrity checks and desktop/mobile browser checks. The additive durable relay session is implemented and passed both relay implementations and migration tests. Research and implementation of the client protocol and coordinated swap are in progress; the interface remains a testnet preview, not a completed automated swap service.
+The requested SVG is deployed and passed 110 live integrity checks and desktop/mobile browser checks. The additive durable relay session, wallet-bound participant statements, encrypted signed packet protocol and encrypted recovery envelope are implemented and tested using synthetic wallets. A two-party test exchanges terms and an escrow reference without chat or transactions. The browser does not yet persist session progress or drive real wallet actions; the interface remains a testnet preview, not a completed automated swap service.
 
 ## Context and Orientation
 
@@ -81,3 +81,5 @@ Revision note: initial plan records the chosen signing model and the architectur
 Revision note: recorded the SVG milestone and its deliberately honest preview status before beginning the separate coordination changes.
 
 Revision note: recorded the durable relay transport milestone and its limits; packet authenticity and the actual swap are still unimplemented.
+
+Revision note: added and tested client-side authentication, encryption and recovery primitives, while preserving the explicit gap to real user-facing execution.
