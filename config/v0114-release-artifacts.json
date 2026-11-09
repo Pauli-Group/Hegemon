@@ -1,0 +1,40 @@
+{
+  "build_index_tree": "59c070a405d3177a0dc104a833720a6167fb6543",
+  "build_source_head": "5c1d278af03c7bd0b0a61a8383bf4d8aede94e59",
+  "cargo_lock_sha256": "1c243bf3858f4ee22fa4441c7a2ee6d49b16d264147b0f3a2de845e760821719",
+  "ci_preparation": {
+    "conclusion": "success",
+    "event": "workflow_dispatch",
+    "head_sha": "5c1d278af03c7bd0b0a61a8383bf4d8aede94e59",
+    "repository": "Pauli-Group/Hegemon",
+    "run_id": 42570410778,
+    "run_record_sha256": "ad39ab98a302dc01b5fae98b51466078ba840b7af5c87d2f9fb9de6facd9174b",
+    "run_url": "https://github.com/Pauli-Group/Hegemon/actions/runs/42570410778",
+    "status": "completed",
+    "successful_jobs": [
+      "app-no-ssh-e2e",
+      "assemble-prepared-release",
+      "build-linux",
+      "build-macos-arm",
+      "build-macos-intel",
+      "build-windows",
+      "preparation-policy",
+      "security-gates",
+      "transaction-proof-authorization"
+    ],
+    "workflow": "Prepare pre-mainnet release"
+  },
+  "network_release": "v0.11",
+  "platform_manifests_sha256": {
+    "linux-x86_64": "640eeba7ade00998386b406a7b0f742a0835ea1ffdfac8ffe90c7fe773d57301",
+    "macos-arm64": "497446496f47a8ac7c3646f4f620a9e732830efda5032b5b7049f9021d780266",
+    "macos-x86_64": "05f3fdeadcfb188466b4c37d96cde006144003282141d91d9438462ef7105a9b",
+    "windows-x86_64": "78f7fade06c4ad34a3726724198b8cf057b7c2081af87c42cf1627cce105ec89"
+  },
+  "release_source_head": "5c1d278af03c7bd0b0a61a8383bf4d8aede94e59",
+  "schema": "hegemon.v0114.release-artifacts.v1",
+  "software_release": "v0.11.4",
+  "software_version": "0.11.4",
+  "source_tree_sha256": "e12efdfa948c4fb1b0635718e7fb028fa6420d7a64677f3b34600b79a8ce3e12",
+  "status": "accepted"
+}
