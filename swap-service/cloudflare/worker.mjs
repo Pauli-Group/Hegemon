@@ -49,6 +49,38 @@ async function identityError(blob,row,role,reservationId){
 }
 async function get(db,id){return db.prepare('SELECT * FROM offers WHERE id=?').bind(id).first();}
 function participant(row,hash,t){if(!hash)return null;if(hash===row.owner_hash)return 'owner';return hash===row.reservation_hash&&row.reservation_expires>t?'taker':null;}
+// Swap sessions outlive the offer listing and reservation. The relay stores opaque
+// packets only; clients must authenticate and validate their contents themselves.
+const SWAP_SESSION_LIFETIME=180*86400;
+const sessionId=(offerId,reservationId)=>digest('hegemon.swap.session.v1:'+offerId+':'+reservationId);
+function sessionParticipant(row,hash,t){if(!row||!hash||row.expires<=t)return null;if(hash===row.owner_hash)return 'owner';return hash===row.taker_hash?'taker':null;}
+function sessionPresentation(row){return {id:row.id,offerId:row.offer_id,reservationId:row.reservation_id,offer:JSON.parse(row.offer_snapshot),created:row.created,expires:row.expires};}
+async function sessionApi(req,db,id,op,hash,t,url){
+  const row=await db.prepare('SELECT * FROM swap_sessions WHERE id=?').bind(id).first(),who=sessionParticipant(row,hash,t);
+  if(!who)return reply(401,{error:'unauthorized'});
+  if(req.method==='GET'&&!op&&url.searchParams.size===0)return reply(200,sessionPresentation(row));
+  if(op==='packets'&&req.method==='GET'){
+    const raw=url.searchParams.get('after')??'0';
+    if(!/^(0|[1-9][0-9]{0,15})$/.test(raw)||url.searchParams.size>(url.searchParams.has('after')?1:0)||!Number.isSafeInteger(Number(raw)))return reply(400,{error:'invalid cursor'});
+    const rows=await db.prepare(`SELECT id,sender,sequence,ciphertext,created FROM swap_packets
+      WHERE session_id=? AND id>? ORDER BY id LIMIT 100`).bind(id,Number(raw)).all();
+    return reply(200,{packets:rows.results});
+  }
+  if(op==='packets'&&req.method==='POST'&&url.searchParams.size===0){
+    const data=await body(req);
+    if(keys(data)!=='ciphertext,sequence'||!Number.isSafeInteger(data.sequence)||data.sequence<1||data.sequence>256||typeof data.ciphertext!=='string'||data.ciphertext.length>12000||!/^[A-Za-z0-9+/]+={0,2}$/.test(data.ciphertext))return reply(400,{error:'invalid packet'});
+    const previous=await db.prepare('SELECT id,ciphertext FROM swap_packets WHERE session_id=? AND sender=? AND sequence=?').bind(id,who,data.sequence).first();
+    if(previous)return previous.ciphertext===data.ciphertext?reply(200,{id:previous.id,duplicate:true}):reply(409,{error:'packet conflicts with an existing sequence'});
+    const inserted=await db.prepare(`INSERT OR IGNORE INTO swap_packets(session_id,sender,sequence,ciphertext,created)
+      SELECT ?,?,?,?,? WHERE EXISTS (SELECT 1 FROM swap_sessions WHERE id=? AND expires>? AND ${who==='owner'?'owner_hash':'taker_hash'}=?)
+      AND ?=(SELECT COALESCE(MAX(sequence),0)+1 FROM swap_packets WHERE session_id=? AND sender=?) RETURNING id`)
+      .bind(id,who,data.sequence,data.ciphertext,t,id,t,hash,data.sequence,id,who).first();
+    if(inserted)return reply(201,{id:inserted.id,duplicate:false});
+    const current=await db.prepare('SELECT id,ciphertext FROM swap_packets WHERE session_id=? AND sender=? AND sequence=?').bind(id,who,data.sequence).first();
+    return current&&current.ciphertext===data.ciphertext?reply(200,{id:current.id,duplicate:true}):reply(409,{error:'packet sequence changed or is out of order'});
+  }
+  return reply(404,{error:'not found'});
+}
 async function quota(req,env,t){
   const ip=req.headers.get('CF-Connecting-IP');
   if(!ip)return false;
@@ -317,10 +349,13 @@ async function api(req,env){
     await db.batch([
       db.prepare('DELETE FROM quotas WHERE window<?').bind(Math.floor(t/60)-10),
       db.prepare('DELETE FROM messages WHERE offer_id IN (SELECT id FROM offers WHERE expires<? LIMIT 100)').bind(t-604800),
-      db.prepare('DELETE FROM offers WHERE expires<? AND NOT EXISTS (SELECT 1 FROM messages WHERE offer_id=offers.id) AND id IN (SELECT id FROM offers WHERE expires<? LIMIT 100)').bind(t-604800,t-604800)
+      db.prepare('DELETE FROM offers WHERE expires<? AND NOT EXISTS (SELECT 1 FROM messages WHERE offer_id=offers.id) AND id IN (SELECT id FROM offers WHERE expires<? LIMIT 100)').bind(t-604800,t-604800),
+      db.prepare('DELETE FROM swap_packets WHERE session_id IN (SELECT id FROM swap_sessions WHERE expires<? LIMIT 100)').bind(t-604800),
+      db.prepare('DELETE FROM swap_sessions WHERE expires<? AND NOT EXISTS (SELECT 1 FROM swap_packets WHERE session_id=swap_sessions.id) AND id IN (SELECT id FROM swap_sessions WHERE expires<? LIMIT 100)').bind(t-604800,t-604800)
     ]);
   }
-  const match=url.pathname.match(/^\/offers\/([0-9a-f]{64})(?:\/(reserve|messages|close|identity))?$/);
+  const match=url.pathname.match(/^\/offers\/([0-9a-f]{64})(?:\/(reserve|messages|close|identity|session))?$/);
+  const sessionMatch=url.pathname.match(/^\/swap-sessions\/([0-9a-f]{64})(?:\/(packets))?$/);
   if(req.method==='GET'&&url.pathname==='/health')return reply(200,{status:'ok'});
   if(req.method==='GET'&&url.pathname==='/bitcoin-testnet4/escrow'){
     try{return await bitcoinEscrow(url);}catch{console.error('Bitcoin testnet provider unavailable or inconsistent');return reply(502,{error:'Bitcoin testnet service unavailable or inconsistent'});}
@@ -366,6 +401,8 @@ async function api(req,env){
     const rows=await db.prepare('SELECT * FROM offers WHERE public=1 AND closed=0 AND expires>? ORDER BY rowid DESC LIMIT 100').bind(t).all();
     return reply(200,{offers:rows.results.map(x=>presentation(x,t))});
   }
+  if(sessionMatch){const auth=req.headers.get('authorization')||'',secret=auth.startsWith('Bearer ')?auth.slice(7):'',hash=hex.test(secret)?await digest(secret):null;
+    return sessionApi(req,db,sessionMatch[1],sessionMatch[2],hash,t,url);}
   if(!match)return reply(404,{error:'not found'});
   const [,id,op]=match;let row=await get(db,id);if(!row)return reply(404,{error:'not found'});
   if(req.method==='GET'&&!op)return reply(200,presentation(row,t));
@@ -377,6 +414,26 @@ async function api(req,env){
   }
   const auth=req.headers.get('authorization')||'',secret=auth.startsWith('Bearer ')?auth.slice(7):'',hash=hex.test(secret)?await digest(secret):null;
   const who=participant(row,hash,t);if(!who)return reply(401,{error:'unauthorized'});
+  if(req.method==='POST'&&op==='session'&&url.searchParams.size===0){
+    if(who!=='owner')return reply(403,{error:'owner only'});
+    const data=await body(req);
+    if(keys(data)!=='reservationId'||typeof data.reservationId!=='string'||!hex.test(data.reservationId))return reply(400,{error:'invalid reservation'});
+    const sid=await sessionId(id,data.reservationId),existing=await db.prepare('SELECT * FROM swap_sessions WHERE id=?').bind(sid).first();
+    if(existing)return sessionParticipant(existing,hash,t)==='owner'?reply(200,sessionPresentation(existing)):reply(401,{error:'unauthorized'});
+    if(row.closed||row.expires<=t||row.reservation_id!==data.reservationId||row.reservation_expires<=t||!JSON.parse(row.offer).ownerPublicKey)return reply(409,{error:'active offer and reservation required'});
+    const snapshot=JSON.stringify({...presentation(row,t)});
+    const changes=await db.batch([
+      db.prepare(`INSERT OR IGNORE INTO swap_sessions(id,offer_id,reservation_id,owner_hash,taker_hash,offer_snapshot,created,expires)
+        SELECT ?,id,reservation_id,owner_hash,reservation_hash,?,?,? FROM offers
+        WHERE id=? AND owner_hash=? AND closed=0 AND expires>? AND reservation_id=? AND reservation_expires>?`)
+        .bind(sid,snapshot,t,t+SWAP_SESSION_LIFETIME,id,hash,t,data.reservationId,t),
+      db.prepare(`UPDATE offers SET closed=1 WHERE id=? AND owner_hash=? AND EXISTS
+        (SELECT 1 FROM swap_sessions WHERE id=? AND offer_id=offers.id AND reservation_id=?)`).bind(id,hash,sid,data.reservationId)
+    ]);
+    const created=await db.prepare('SELECT * FROM swap_sessions WHERE id=?').bind(sid).first();
+    const inserted=Number(changes?.[0]?.meta?.changes??changes?.[0]?.changes??0)>0;
+    return created&&sessionParticipant(created,hash,t)==='owner'?reply(inserted?201:200,sessionPresentation(created)):reply(409,{error:'offer or reservation changed'});
+  }
   if(req.method==='POST'&&op==='close'){
     if(who!=='owner')return reply(403,{error:'owner only'});
     await db.prepare('UPDATE offers SET closed=1 WHERE id=? AND owner_hash=?').bind(id,hash).run();return reply(200,{closed:true});
@@ -419,7 +476,7 @@ async function api(req,env){
 export default {async fetch(req,env){
   try{
     const url=new URL(req.url);
-    if(url.pathname==='/health'||url.pathname==='/offers'||url.pathname.startsWith('/offers/')||url.pathname==='/bitcoin-testnet4/escrow'||url.pathname==='/bitcoin-testnet4/utxos'||url.pathname==='/bitcoin-testnet4/broadcast'||url.pathname==='/bitcoin-testnet4/spend'||url.pathname==='/bitcoin-testnet4/head'||url.pathname==='/sepolia/escrow-events'||url.pathname==='/sepolia/rpc'||url.pathname==='/cardano-preview/spend'||url.pathname==='/cardano-preview/escrow'||url.pathname==='/cardano-preview/params'||url.pathname==='/cardano-preview/utxos')return await api(req,env);
+    if(url.pathname==='/health'||url.pathname==='/offers'||url.pathname.startsWith('/offers/')||url.pathname.startsWith('/swap-sessions/')||url.pathname==='/bitcoin-testnet4/escrow'||url.pathname==='/bitcoin-testnet4/utxos'||url.pathname==='/bitcoin-testnet4/broadcast'||url.pathname==='/bitcoin-testnet4/spend'||url.pathname==='/bitcoin-testnet4/head'||url.pathname==='/sepolia/escrow-events'||url.pathname==='/sepolia/rpc'||url.pathname==='/cardano-preview/spend'||url.pathname==='/cardano-preview/escrow'||url.pathname==='/cardano-preview/params'||url.pathname==='/cardano-preview/utxos')return await api(req,env);
     if(req.method!=='GET'&&req.method!=='HEAD')return reply(404,{error:'not found'});
     // The hosted page is a file in the manifest (swap-ui/hosted.html, built by scripts/build_client_manifest.mjs), not a rewrite
     // of index.html at the edge, so the served bytes are reproducible. Only files in the manifest are served.

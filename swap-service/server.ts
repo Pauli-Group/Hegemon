@@ -11,7 +11,10 @@ const db = new DatabaseSync(process.env.SWAP_DB ?? 'swap-offers.sqlite');
 db.exec(`PRAGMA journal_mode=WAL;
 CREATE TABLE IF NOT EXISTS offers (id TEXT PRIMARY KEY, owner_hash TEXT NOT NULL, public INTEGER NOT NULL, offer TEXT NOT NULL, expires INTEGER NOT NULL, closed INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS reservations (offer_id TEXT PRIMARY KEY REFERENCES offers(id), token_hash TEXT NOT NULL, expires INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, offer_id TEXT NOT NULL REFERENCES offers(id), sender TEXT NOT NULL, payload TEXT NOT NULL, created INTEGER NOT NULL);`);
+CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, offer_id TEXT NOT NULL REFERENCES offers(id), sender TEXT NOT NULL, payload TEXT NOT NULL, created INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS swap_sessions (id TEXT PRIMARY KEY, offer_id TEXT NOT NULL, reservation_id TEXT NOT NULL, owner_hash TEXT NOT NULL, taker_hash TEXT NOT NULL, offer_snapshot TEXT NOT NULL, created INTEGER NOT NULL, expires INTEGER NOT NULL, UNIQUE (offer_id, reservation_id));
+CREATE TABLE IF NOT EXISTS swap_packets (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, sender TEXT NOT NULL CHECK (sender IN ('owner', 'taker')), sequence INTEGER NOT NULL CHECK (sequence BETWEEN 1 AND 256), ciphertext TEXT NOT NULL, created INTEGER NOT NULL, UNIQUE (session_id, sender, sequence));
+CREATE INDEX IF NOT EXISTS swap_packets_session ON swap_packets(session_id, id);`);
 const reservationColumns=db.prepare('PRAGMA table_info(reservations)').all() as {name:string}[];
 if(!reservationColumns.some(column=>column.name==='reservation_id'))db.exec('ALTER TABLE reservations ADD COLUMN reservation_id TEXT');
 // P5 signed identity statements: additive columns only. A new reservation replaces its row, which clears the taker's identity.
@@ -62,6 +65,14 @@ function present(row:NonNullable<ReturnType<typeof getOffer>>) {
     return {id:row.id,visibility:row.public?'public':'private',...JSON.parse(row.offer),expires:row.expires,closed:!!row.closed,...(active?.reservation_id?{reservationId:active.reservation_id}:{}),
         ...(row.owner_identity?{ownerIdentity:row.owner_identity}:{}),...(active?.reservation_id&&active.identity?{reservationIdentity:active.identity}:{})};
 }
+const SWAP_SESSION_LIFETIME=180*86400;
+type SwapSession={id:string,offer_id:string,reservation_id:string,owner_hash:string,taker_hash:string,offer_snapshot:string,created:number,expires:number};
+function getSession(id:string):SwapSession|undefined {return db.prepare('SELECT * FROM swap_sessions WHERE id=?').get(id) as SwapSession|undefined;}
+function sessionParticipant(row:SwapSession|undefined,secret:string,t:number):string|null {
+    if(!row||row.expires<=t||!/^[0-9a-f]{64}$/.test(secret))return null;
+    const hash=digest(secret);if(equals(hash,row.owner_hash))return 'owner';return equals(hash,row.taker_hash)?'taker':null;
+}
+function sessionPresentation(row:SwapSession){return {id:row.id,offerId:row.offer_id,reservationId:row.reservation_id,offer:JSON.parse(row.offer_snapshot),created:row.created,expires:row.expires};}
 // Signed identity statements (swap-ui/identity.mjs). Structure, size and ids only: the relay never verifies signatures and
 // clients do not rely on it to. Mirrors swap-service/cloudflare/worker.mjs.
 function identityError(blob:unknown,offer:{id:string,offer:string},role:'owner'|'taker',reservationId:string):string|null {
@@ -86,7 +97,8 @@ const server=createServer(async (req,res)=>{
             res.writeHead(200,{'content-type':type+'; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff','referrer-policy':'no-referrer','content-security-policy':LOCAL_CSP});
             res.end(content);return;
         }
-        const match=url.pathname.match(/^\/offers\/([0-9a-f]{64})(?:\/(reserve|messages|close|identity))?$/);
+        const match=url.pathname.match(/^\/offers\/([0-9a-f]{64})(?:\/(reserve|messages|close|identity|session))?$/);
+        const sessionMatch=url.pathname.match(/^\/swap-sessions\/([0-9a-f]{64})(?:\/(packets))?$/);
         if(req.method==='GET' && url.pathname==='/health') return reply(res,200,{status:'ok'});
         if(req.method==='POST' && url.pathname==='/offers') {
             const data=await body(req);
@@ -98,6 +110,32 @@ const server=createServer(async (req,res)=>{
         if(req.method==='GET' && url.pathname==='/offers') {
             const rows=db.prepare('SELECT id,public,offer,expires,closed FROM offers WHERE public=1 AND closed=0 AND expires>? ORDER BY rowid DESC LIMIT 100').all(now()) as NonNullable<ReturnType<typeof getOffer>>[];
             return reply(res,200,{offers:rows.map(present)});
+        }
+        if(sessionMatch){
+            const [,sid,op]=sessionMatch,secret=credentials(req),row=getSession(sid),who=sessionParticipant(row,secret,now());
+            if(!who||!row)return reply(res,401,{error:'unauthorized'});
+            if(req.method==='GET'&&!op&&url.searchParams.size===0)return reply(res,200,sessionPresentation(row));
+            if(req.method==='GET'&&op==='packets'){
+                const raw=url.searchParams.get('after')??'0';
+                if(!/^(0|[1-9][0-9]{0,15})$/.test(raw)||url.searchParams.size>(url.searchParams.has('after')?1:0)||!Number.isSafeInteger(Number(raw)))return reply(res,400,{error:'invalid cursor'});
+                const packets=db.prepare('SELECT id,sender,sequence,ciphertext,created FROM swap_packets WHERE session_id=? AND id>? ORDER BY id LIMIT 100').all(sid,Number(raw));
+                return reply(res,200,{packets});
+            }
+            if(req.method==='POST'&&op==='packets'&&url.searchParams.size===0){
+                const data=await body(req);
+                if(!data||Object.keys(data).sort().join(',')!=='ciphertext,sequence'||!Number.isSafeInteger(data.sequence)||data.sequence<1||data.sequence>256||typeof data.ciphertext!=='string'||data.ciphertext.length>12000||!/^[A-Za-z0-9+/]+={0,2}$/.test(data.ciphertext))return reply(res,400,{error:'invalid packet'});
+                db.exec('BEGIN IMMEDIATE');
+                try{
+                    if(sessionParticipant(getSession(sid),secret,now())!==who){db.exec('ROLLBACK');return reply(res,401,{error:'unauthorized'});}
+                    const previous=db.prepare('SELECT id,ciphertext FROM swap_packets WHERE session_id=? AND sender=? AND sequence=?').get(sid,who,data.sequence) as {id:number,ciphertext:string}|undefined;
+                    if(previous){db.exec('COMMIT');return previous.ciphertext===data.ciphertext?reply(res,200,{id:previous.id,duplicate:true}):reply(res,409,{error:'packet conflicts with an existing sequence'});}
+                    const last=db.prepare('SELECT COALESCE(MAX(sequence),0) AS sequence FROM swap_packets WHERE session_id=? AND sender=?').get(sid,who) as {sequence:number};
+                    if(data.sequence!==last.sequence+1){db.exec('ROLLBACK');return reply(res,409,{error:'packet sequence changed or is out of order'});}
+                    const result=db.prepare('INSERT INTO swap_packets(session_id,sender,sequence,ciphertext,created) VALUES(?,?,?,?,?)').run(sid,who,data.sequence,data.ciphertext,now());
+                    db.exec('COMMIT');return reply(res,201,{id:Number(result.lastInsertRowid),duplicate:false});
+                }catch(e){db.exec('ROLLBACK');throw e;}
+            }
+            return reply(res,404,{error:'not found'});
         }
         if (!match) return reply(res,404,{error:'not found'});
         const [,id,op]=match;
@@ -119,6 +157,28 @@ const server=createServer(async (req,res)=>{
         }
         const who=participant(id,credentials(req));
         if(!who) return reply(res,401,{error:'unauthorized'});
+        if(req.method==='POST'&&op==='session'&&url.searchParams.size===0){
+            if(who!=='owner')return reply(res,403,{error:'owner only'});
+            const data=await body(req);
+            if(!data||Object.keys(data).sort().join(',')!=='reservationId'||typeof data.reservationId!=='string'||!/^[0-9a-f]{64}$/.test(data.reservationId))return reply(res,400,{error:'invalid reservation'});
+            const sid=digest('hegemon.swap.session.v1:'+id+':'+data.reservationId),secret=credentials(req);
+            db.exec('BEGIN IMMEDIATE');
+            try{
+                const existing=getSession(sid);
+                if(existing){db.exec('COMMIT');return sessionParticipant(existing,secret,now())==='owner'?reply(res,200,sessionPresentation(existing)):reply(res,401,{error:'unauthorized'});}
+                const fresh=getOffer(id),reservation=db.prepare('SELECT token_hash,reservation_id,expires FROM reservations WHERE offer_id=?').get(id) as {token_hash:string,reservation_id:string,expires:number}|undefined;
+                const at=now();
+                if(!fresh||fresh.closed||fresh.expires<=at||!reservation||reservation.reservation_id!==data.reservationId||reservation.expires<=at||!JSON.parse(fresh.offer).ownerPublicKey||participant(id,secret)!=='owner'){
+                    db.exec('ROLLBACK');return reply(res,409,{error:'active offer and reservation required'});
+                }
+                const ownerHash=digest(secret),snapshot=JSON.stringify(present(fresh));
+                db.prepare('INSERT INTO swap_sessions(id,offer_id,reservation_id,owner_hash,taker_hash,offer_snapshot,created,expires) VALUES(?,?,?,?,?,?,?,?)').run(sid,id,data.reservationId,ownerHash,reservation.token_hash,snapshot,at,at+SWAP_SESSION_LIFETIME);
+                db.prepare('UPDATE offers SET closed=1 WHERE id=? AND owner_hash=?').run(id,ownerHash);
+                const created=getSession(sid);
+                if(!created)throw Error('Session creation failed.');
+                db.exec('COMMIT');return reply(res,201,sessionPresentation(created));
+            }catch(e){db.exec('ROLLBACK');throw e;}
+        }
         if(req.method==='POST' && op==='close') {
             if(who!=='owner') return reply(res,403,{error:'owner only'});
             db.prepare('UPDATE offers SET closed=1 WHERE id=?').run(id);
