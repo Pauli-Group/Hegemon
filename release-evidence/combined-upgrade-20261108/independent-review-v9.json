@@ -1,0 +1,26 @@
+{
+  "schema": "hegemon.combined-upgrade.independent-review.v1",
+  "decision": "ACCEPT_SOFTWARE_CANDIDATE_SCOPE",
+  "review_kind": "independent_model_review",
+  "reviewer": "Codex independent integration and candidate-scope reviewer (/root/combined_final_scope_review)",
+  "candidate_binding_sha256": "142187ad76d4f4df4092f82f5a7c80794ef63d7d2a21a75088e84fbe4ef51d86",
+  "source_inventory_sha256": "69f427908538e810b20942d636cd85f10e8e6db942c54e25b43658c6c5281b36",
+  "qualification_commands_sha256": "c7ac37c415623c4e8c6c64323312d73673390c89c5eda499b98263d0575373cf",
+  "runtime_receipt_sha256": "362ae11042606354433fe3126e157af7d3b20cfe27bc054ae02afe4e33f63036",
+  "production_authorized": false,
+  "mainnet_authorized": false,
+  "activation_authorized": false,
+  "public_cutover_authorized": false,
+  "deployment_verified": false,
+  "physical_asic_qualified": false,
+  "limitations": [
+    "Accepts only the exact frozen v9 software source, exported actual09 local-rehearsal evidence and six reviewed future qualification commands. This is a new v9 scope decision, not relabeled v8 acceptance or final artifact, release, deployment or activation acceptance.",
+    "This independent bounded model review used source and exported public data, read-only evidence predicates, wire decoding and hash/arithmetic checks. The reviewer did not run builds, tests, native proofs, nodes or the rehearsal and did not open private fixture, raw-run, wallet/database, seed or witness files.",
+    "New exact-head full CI and all required four targets' actual ordinary final proof verification, isolated H0 checks, six affected suite executions, strict audit and packaging remain mandatory separate receipts; this decision does not assert that those v9 gates passed.",
+    "The Windows ucrt64 Git installation correction was reviewed through source and mock-test inspection. This same-host runtime rehearsal does not exercise that Windows branch. Actual new-head Windows Bash launch, Lean/ASERT and complete target qualification remain required; prior v8 non-Windows passes retain v8 attribution.",
+    "Runtime evidence is a default-off Development H120 rehearsal on one host and clock. Same-owner HTLC and cloned-wallet race evidence does not establish independent refund custody, public-network operation or sustained proving throughput.",
+    "Executable identities are bound to public recorded hashes and actual argv in this public-only final pass; external executable files were not rehashed here. Source/harness records and process observations are not hermetic compiler or build-input attestation. Windows Bash discovery retains the runner's existing PATH and adjacent Git installation trust.",
+    "Unchanged proof inputs and locked dependencies preserve identity, not a new soundness proof. Finite formal/vector/source/runtime evidence does not establish general compiled Rust refinement or whole-chain/network guarantees. Bounded public framing inspection is not universal secret detection, and separate content review is not claimed as this reviewer's work.",
+    "A compiled activation-height change requires a replacement freeze and affected requalification. Release publication, operator rollout, mainnet genesis/bootstrap, deployment, activation and physical ASIC model/firmware qualification remain outside this decision."
+  ]
+}

@@ -14,9 +14,10 @@ spec.loader.exec_module(p)
 
 
 def windows_paths_with_files(files):
+    files = {str(PureWindowsPath(path)).casefold() for path in files}
     class InstalledWindowsPath(PureWindowsPath):
         def is_file(self):
-            return str(self) in files
+            return str(self).casefold() in files
     return InstalledWindowsPath
 
 
@@ -33,6 +34,44 @@ class ProducerTests(unittest.TestCase):
                     self.assertEqual(p.qualification_argv(argv), [bash, argv[1]])
                 which.assert_called_once_with('git.exe')
                 self.assertEqual(argv, ['bash', 'scripts/check_asert_formal.sh'])
+
+    def test_windows_ucrt64_git_uses_existing_outer_git_bash(self):
+        git = r'C:\Program Files\Git\ucrt64\bin\git.exe'
+        outer_bash = r'C:\Program Files\Git\bin\bash.EXE'
+        expected_bash = r'C:\Program Files\Git\bin\bash.exe'
+        argv = ['bash', 'scripts/check_asert_formal.sh']
+        with patch.object(p.os, 'name', 'nt'), \
+                patch.object(p, 'Path', windows_paths_with_files({outer_bash})), \
+                patch.object(p.shutil, 'which', return_value=git) as which:
+            resolved = p.qualification_argv(argv)
+        self.assertEqual(resolved, [expected_bash, argv[1]])
+        self.assertTrue(PureWindowsPath(resolved[0]).is_absolute())
+        self.assertEqual(PureWindowsPath(resolved[0]), PureWindowsPath(outer_bash))
+        which.assert_called_once_with('git.exe')
+        self.assertEqual(argv, ['bash', 'scripts/check_asert_formal.sh'])
+
+    def test_windows_ucrt64_command_launch_records_outer_bash_and_exact_arguments(self):
+        git = r'C:\Program Files\Git\ucrt64\bin\git.exe'
+        outer_bash = r'C:\Program Files\Git\bin\bash.EXE'
+        expected_bash = r'C:\Program Files\Git\bin\bash.exe'
+        argv = ['bash', 'scripts/check_asert_formal.sh', 'literal argument with spaces']
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            with patch.object(p, 'ROOT', base), patch.object(p.os, 'name', 'nt'), \
+                    patch.object(p, 'Path', windows_paths_with_files({outer_bash})), \
+                    patch.object(p.shutil, 'which', return_value=git), \
+                    patch.object(p.subprocess, 'CREATE_NEW_PROCESS_GROUP', 512, create=True), \
+                    patch.object(p.subprocess, 'Popen') as popen:
+                process = popen.return_value
+                process.returncode = 0
+                process.communicate.return_value = (b'synthetic ucrt64 fixture output\r\n', b'')
+                result = p.run_command(argv, base, timeout=901)
+            self.assertEqual(popen.call_args.args[0], [expected_bash, *argv[1:]])
+            self.assertEqual(result['argv'], [expected_bash, *argv[1:]])
+            self.assertNotIn('shell', popen.call_args.kwargs)
+            process.communicate.assert_called_once_with(timeout=901)
+            self.assertEqual((base / result['log']).read_bytes(), b'synthetic ucrt64 fixture output\r\n')
+        self.assertEqual(argv, ['bash', 'scripts/check_asert_formal.sh', 'literal argument with spaces'])
 
     def test_windows_bash_accepts_git_lookup_and_git_usr_bin_layout(self):
         root = PureWindowsPath('D:/Installed Git')

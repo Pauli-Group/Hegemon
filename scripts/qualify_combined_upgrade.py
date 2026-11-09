@@ -92,7 +92,7 @@ def qualification_argv(argv):
     gate.require(git_executable is not None, message + ': Git was not found')
     git = Path(git_executable)
     gate.require(git.is_absolute(), message + ': Git path is not absolute')
-    if git.parent.name.lower() == 'bin' and git.parent.parent.name.lower() in ('mingw64', 'mingw32'):
+    if git.parent.name.lower() == 'bin' and git.parent.parent.name.lower() in ('mingw64', 'mingw32', 'ucrt64'):
         git_root = git.parent.parent.parent
     elif git.parent.name.lower() in ('cmd', 'bin'):
         git_root = git.parent.parent

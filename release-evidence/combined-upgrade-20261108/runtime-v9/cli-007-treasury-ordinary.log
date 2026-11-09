@@ -1,0 +1,9 @@
+Encrypted wallet passphrase: 
+Unlocking encrypted wallet…
+wallet-progress stage=unlock current=0 target=299 notes=0 elapsed_ms=0
+wallet-progress stage=unlock current=299 target=299 notes=0 elapsed_ms=356
+wallet-progress stage=unlock current=0 target=299 notes=0 elapsed_ms=0
+wallet-progress stage=unlock current=299 target=299 notes=0 elapsed_ms=358
+Syncing blocks: 298/298; new notes 0
+Sync complete at block 298
+candidate f9a5757dc95b2d3b09c71a82bec3984717be9c211b125881f35e8f5bdbfe18ee
