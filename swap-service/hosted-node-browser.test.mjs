@@ -35,8 +35,9 @@ test('hosted page connects only on request to a read-only local Hegemon companio
     });
   });
   rpc.listen(0, '127.0.0.1'); await once(rpc, 'listening');
-  const companion = spawn('python3', ['scripts/local_swap_companion.py','--hosted-node-status',
+  const startCompanion=()=>spawn('python3', ['scripts/local_swap_companion.py','--hosted-node-status',
     '--hegemon-rpc',`http://127.0.0.1:${rpc.address().port}`,'--token-file',join(directory,'token')], {stdio:['ignore','ignore','pipe']});
+  let companion=startCompanion();
   let browser;
   try {
     let token;
@@ -71,7 +72,9 @@ test('hosted page connects only on request to a read-only local Hegemon companio
     await page.goto(origin+'/');
     await page.waitForFunction(() => document.documentElement.dataset.journeyMode==='guided');
     assert.equal(localRequests.length,0,'the page does not contact the local companion without a user action');
-    await page.getByRole('button',{name:'Connect my Hegemon node'}).click();
+    const indicator=page.locator('#companion-indicator');
+    assert.equal(await indicator.getAttribute('data-state'),'disconnected');
+    await indicator.click();
     assert.equal(await page.locator('#hosted-node-instructions').isVisible(),true);
     await page.getByText('How do I start the local companion?').click();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),true);
@@ -81,9 +84,27 @@ test('hosted page connects only on request to a read-only local Hegemon companio
     await page.locator('#companion-status.error').waitFor();
     await page.locator('#companion-token').fill(token);
     await page.locator('#connect-companion').click();
-    try {await page.getByText(/Hegemon node connected · block 8659/).waitFor({timeout:5000});}
+    try {await page.locator('#companion-status').getByText(/Hegemon node connected · block 8659/).waitFor({timeout:5000});}
     catch {throw Error('Node status did not connect: '+await page.locator('#companion-status').innerText()+'; browser errors: '+browserErrors.join(' | '));}
     assert.match(await page.locator('#companion-status').innerText(),/status check; Hegemon swaps are not ready/);
+    assert.equal(await indicator.getAttribute('data-state'),'connected');
+    await indicator.click();
+    await page.locator('#companion-details[open]').waitFor();
+    await page.waitForFunction(()=>document.getElementById('companion-details-status').textContent.includes('block 8659'));
+    await page.locator('#companion-details button').click();
+    companion.kill('SIGTERM');
+    await once(companion,'exit');
+    await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
+    await page.waitForFunction(()=>document.getElementById('companion-indicator').dataset.state==='disconnected');
+    await indicator.click();
+    assert.equal(await page.locator('#hosted-node-instructions').isVisible(),true);
+    companion=startCompanion();
+    for(let i=0;i<100;i++){
+      try{if((await fetch('http://127.0.0.1:8788/health',{headers:{origin,authorization:'Bearer '+token}})).ok)break;}catch{}
+      await sleep(25);
+    }
+    await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
+    await page.waitForFunction(()=>document.getElementById('companion-indicator').dataset.state==='connected');
     assert.equal(await page.locator('#companion-token').inputValue(),'');
     assert.equal(await page.evaluate(secret => JSON.stringify({...localStorage,...sessionStorage}).includes(secret),token),false);
     assert.equal(localRequests.some(url => url.includes(token)),false,'the pairing code never appears in a URL');

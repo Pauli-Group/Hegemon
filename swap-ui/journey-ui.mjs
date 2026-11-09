@@ -404,5 +404,5 @@ export function initJourney({legacyForm, msg}) {
     window.scrollTo({top: 0, behavior: 'instant'});
   });
   render();
-  return {showSection(id) { if (mode === 'guided') navigate('tool:' + id); }};
+  return {showSection(id) { if (mode === 'guided') navigate('tool:' + id); }, showNode() { if (mode === 'guided') navigate('node'); }};
 }

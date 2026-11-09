@@ -141,3 +141,5 @@ Revision note: restored the branch into a separate checkout after the environmen
 Revision note: recorded the verified node-status deployment and the recreated Cardano post-approval checks. A failing post-signature safety gate is uncertain because a wallet has already seen the transaction; it is not evidence that the wallet did nothing independently.
 
 Revision note: recorded the verified deployment of the Cardano safeguard; the coordinated multi-chain user journey remains an open milestone.
+
+Revision note: added a guided-view companion connection indicator and details dialog. It checks only after explicit pairing, reports lost connections, and preserves the existing read-only and local-only boundaries.

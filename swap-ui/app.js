@@ -154,13 +154,36 @@ $('connect-cardano').addEventListener('click',async()=>{
   msg($('wallet-status'),'Cardano connected: '+String(wallet.name||id)+' · '+(network===1?'mainnet':'testnet')+'. No transaction has been requested.');
  }catch(e){msg($('wallet-status'),e.message,true);}
 });
-let companionToken=null,companionCapabilities=[];
-async function companion(path,token,body){
- const response=await fetch('http://127.0.0.1:8788'+path,{method:body?'POST':'GET',credentials:'omit',redirect:'error',headers:{authorization:'Bearer '+token,...(body?{'content-type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});
+let companionToken=null,companionCapabilities=[],companionState='disconnected',companionCheckBusy=false,companionCheckAgain=false;
+function companionIndicator(state,detail){
+ companionState=state;$('companion-indicator').dataset.state=state;
+ $('companion-indicator-label').textContent=state==='connected'?'Companion connected':state==='checking'?'Checking companion':'Companion not connected';
+ $('companion-details-status').textContent=detail;
+}
+async function companion(path,token,body,timeout=0){
+ const response=await fetch('http://127.0.0.1:8788'+path,{method:body?'POST':'GET',credentials:'omit',redirect:'error',...(timeout?{signal:AbortSignal.timeout(timeout)}:{}),headers:{authorization:'Bearer '+token,...(body?{'content-type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});
  const result=await response.json();if(!response.ok)throw Error(result.error||'Companion request failed');return result;
 }
+async function refreshCompanion(){
+ const token=companionToken;if(!token)return;if(companionCheckBusy){companionCheckAgain=true;return;}companionCheckBusy=true;
+ try{const health=await companion('/health',token,undefined,5000);if(companionToken!==token)return;
+  if(health.status!=='ok'||!Array.isArray(health.capabilities)||health.capabilities.join(',')!==companionCapabilities.join(','))throw Error('Companion capabilities changed.');
+  companionIndicator('connected',document.documentElement.hasAttribute('data-hosted-testnet')?'Companion connected. Checking your Hegemon node…':'Local companion connected.');
+  if(document.documentElement.hasAttribute('data-hosted-testnet')){
+   try{const node=await companion('/hegemon/status',token,undefined,15000);if(companionToken!==token)return;
+    if(node.network!=='v0.11 pre-mainnet'||typeof node.height!=='string'||!/^(0|[1-9][0-9]{0,19})$/.test(node.height)||typeof node.syncing!=='boolean'||!Number.isSafeInteger(node.peers)||node.peers<0||typeof node.wallet_rpc_ready!=='boolean')throw Error('Invalid node status.');
+    companionIndicator('connected','Hegemon node · block '+node.height+' · '+(node.syncing?'syncing':'not syncing')+' · '+node.peers+' peers. '+(node.wallet_rpc_ready?'The expected wallet RPC is available.':'Wallet RPC compatibility is not confirmed.')+' This checks status only; Hegemon swaps are not ready here yet.');
+   }catch{if(companionToken===token)companionIndicator('connected','Companion connected, but the Hegemon node status is unavailable.');}
+  }
+ }catch{if(companionToken===token)companionIndicator('disconnected','The companion connection was lost. Check that it is running and reconnect.');}
+ finally{companionCheckBusy=false;if(companionCheckAgain){companionCheckAgain=false;void refreshCompanion();}}
+}
+$('companion-indicator').addEventListener('click',()=>{if(companionState==='connected'){$('companion-details').showModal();void refreshCompanion();}else journey?.showNode();});
+setInterval(()=>{if(!document.hidden)void refreshCompanion();},15000);
+window.addEventListener('focus',()=>{if(companionToken){companionIndicator('checking','Checking the companion connection…');void refreshCompanion();}});
 $('connect-companion').addEventListener('click',async()=>{
  const token=$('companion-token').value;$('companion-token').value='';companionToken=null;companionCapabilities=[];$('hegemon-actions').hidden=true;$('ethereum-actions').hidden=true;$('bitcoin-actions').hidden=true;$('cardano-actions').hidden=true;
+ companionIndicator('checking','Checking the companion connection…');
  try{if(!/^[0-9a-f]{64}$/.test(token))throw Error('Enter the 64-character pairing token.');
   const result=await companion('/health',token);if(!Array.isArray(result.capabilities)||!result.capabilities.length)throw Error('No local verifiers are available.');
   if(document.documentElement.hasAttribute('data-hosted-testnet')){
@@ -169,12 +192,13 @@ $('connect-companion').addEventListener('click',async()=>{
    if(node.network!=='v0.11 pre-mainnet'||typeof node.height!=='string'||!/^(0|[1-9][0-9]{0,19})$/.test(node.height)||typeof node.syncing!=='boolean'||!Number.isSafeInteger(node.peers)||node.peers<0||typeof node.wallet_rpc_ready!=='boolean')throw Error('The local node returned an invalid status.');
    companionToken=token;companionCapabilities=result.capabilities;
    msg($('companion-status'),'Hegemon node connected · block '+node.height+' · '+(node.syncing?'syncing':'not syncing')+' · '+node.peers+' peers. '+(node.wallet_rpc_ready?'The expected wallet RPC is available.':'Wallet RPC compatibility is not confirmed.')+' This is a status check; Hegemon swaps are not ready here yet.');
+   companionIndicator('connected',$('companion-status').textContent);
    return;
   }
-  companionToken=token;companionCapabilities=result.capabilities;$('hegemon-actions').hidden=!companionCapabilities.includes('hegemon-local-actions');$('ethereum-actions').hidden=!companionCapabilities.includes('ethereum-local-anchor');$('bitcoin-actions').hidden=!companionCapabilities.includes('bitcoin-regtest-actions');$('cardano-actions').hidden=!companionCapabilities.includes('cardano-local-actions');msg($('companion-status'),companionCapabilities.includes('hegemon-local-actions')?'Local companion connected with experimental Hegemon actions enabled.':companionCapabilities.includes('bitcoin-regtest-actions')?'Local companion connected with experimental Bitcoin actions enabled.':companionCapabilities.includes('cardano-local-actions')?'Local companion connected with experimental Cardano actions enabled.':companionCapabilities.includes('ethereum-local-anchor')?'Local companion connected with an Ethereum test-chain anchor.':'Local read-only companion connected.');
+  companionToken=token;companionCapabilities=result.capabilities;$('hegemon-actions').hidden=!companionCapabilities.includes('hegemon-local-actions');$('ethereum-actions').hidden=!companionCapabilities.includes('ethereum-local-anchor');$('bitcoin-actions').hidden=!companionCapabilities.includes('bitcoin-regtest-actions');$('cardano-actions').hidden=!companionCapabilities.includes('cardano-local-actions');msg($('companion-status'),companionCapabilities.includes('hegemon-local-actions')?'Local companion connected with experimental Hegemon actions enabled.':companionCapabilities.includes('bitcoin-regtest-actions')?'Local companion connected with experimental Bitcoin actions enabled.':companionCapabilities.includes('cardano-local-actions')?'Local companion connected with experimental Cardano actions enabled.':companionCapabilities.includes('ethereum-local-anchor')?'Local companion connected with an Ethereum test-chain anchor.':'Local read-only companion connected.');companionIndicator('connected',$('companion-status').textContent);
  }catch(e){const hosted=document.documentElement.hasAttribute('data-hosted-testnet');
   const message=hosted&&e instanceof TypeError?'Cannot reach the local companion. Start it on this computer and allow local network access in your browser settings.':hosted&&e.message==='forbidden'?'Pairing code not accepted. Check the code in your local token file.':e.message;
-  msg($('companion-status'),message,true);}
+  msg($('companion-status'),message,true);companionIndicator('disconnected',message);}
 });
 const ethereumActionForm=$('ethereum-action-form');let ethereumActionBusy=false;
 function toggleEthereumActionFields(){const kind=ethereumActionForm.elements.kind.value,native=kind==='eth';for(const name of ['token','tokenId']){ethereumActionForm.elements[name].disabled=native;ethereumActionForm.elements[name].required=!native;}$('ethereum-token-steps').hidden=native;$('ethereum-revoke').hidden=kind!=='2';}

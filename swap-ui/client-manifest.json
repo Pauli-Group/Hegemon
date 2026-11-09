@@ -6,12 +6,12 @@
   "local": "index.html"
  },
  "import_map": {
-  "source": "sha256-THnhzL6KYLNzt2pdWAl986+Q4lc4d3M04Yj6dm7WzIY=",
+  "source": "sha256-U7CS17rljSCb4bVPFGCwWCYsLOnCOY3opkkBqJ6YaNs=",
   "modules": 41
  },
  "csp": {
-  "hosted": "default-src 'self'; script-src 'self' 'sha256-THnhzL6KYLNzt2pdWAl986+Q4lc4d3M04Yj6dm7WzIY='; style-src 'self'; connect-src 'self' http://127.0.0.1:8788; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
-  "local": "default-src 'self'; script-src 'self' 'sha256-THnhzL6KYLNzt2pdWAl986+Q4lc4d3M04Yj6dm7WzIY='; style-src 'self'; connect-src 'self' http://127.0.0.1:8788; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+  "hosted": "default-src 'self'; script-src 'self' 'sha256-U7CS17rljSCb4bVPFGCwWCYsLOnCOY3opkkBqJ6YaNs='; style-src 'self'; connect-src 'self' http://127.0.0.1:8788; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+  "local": "default-src 'self'; script-src 'self' 'sha256-U7CS17rljSCb4bVPFGCwWCYsLOnCOY3opkkBqJ6YaNs='; style-src 'self'; connect-src 'self' http://127.0.0.1:8788; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
  },
  "headers": {
   "x-content-type-options": "nosniff",
@@ -25,8 +25,8 @@
    "bytes": 10074
   },
   "app.js": {
-   "sha256": "f4106b73807b876d399a9a0442c2b462532805083af59a2a1314b38676082215",
-   "bytes": 79755
+   "sha256": "dc6f99823e30aa1bd60777a640721299b4050c34203cfb5c9480cdd71258a0ef",
+   "bytes": 82668
   },
   "bitcoin-psbt.mjs": {
    "sha256": "1409022bea941c40ff8d9583648c661a4eecaa362359e64a05e9071deddebcff",
@@ -101,8 +101,8 @@
    "bytes": 16892
   },
   "hosted.html": {
-   "sha256": "e6e5e75ac30cff3a4d7a04eaf04cd781bf5a57e2dcf2cf088f7b861d8f4377e2",
-   "bytes": 69901
+   "sha256": "7770fc8e9f2bcb841bd059a15331cb7ff3526a6e18f012d99ff12aa8838c601e",
+   "bytes": 70406
   },
   "identity-flow.mjs": {
    "sha256": "887417777f3780141cc89670e0252af511c10a323f5b523d4a5c60f368c5d7c6",
@@ -125,12 +125,12 @@
    "bytes": 3697
   },
   "index.html": {
-   "sha256": "4f2bde65dd080a0720fd9e4c7a04507384e268897e3464c93b4993d950d5520c",
-   "bytes": 70184
+   "sha256": "4806280ba1165b427e9b183886a669931d2018171207fdf2a43a5c27425a1299",
+   "bytes": 70689
   },
   "journey-ui.mjs": {
-   "sha256": "e3772ee2f5b1f4fe5f15e096696ad93e3e0811929b68f8dd02d2fcd895fde3df",
-   "bytes": 21899
+   "sha256": "06a6ddb42da1a4102872e762a6c7abc2d4f4cf354760564fa5a643222e89ed73",
+   "bytes": 21956
   },
   "observer-ui.mjs": {
    "sha256": "0add2433d57e126ce8684b4666ac9792b072b67659c4674288c8946c3a07a06d",
@@ -185,8 +185,8 @@
    "bytes": 10051
   },
   "style.css": {
-   "sha256": "05564bdf8d72f64254f0c8e0cc2c9f0f2356ba3c9c9f480e2d92da0484a7f825",
-   "bytes": 10302
+   "sha256": "8c5454e00bf387d25573633b9dadeae34e0fe213c43e04cdd949e6500b5d6b3e",
+   "bytes": 11211
   },
   "swap-flow.mjs": {
    "sha256": "1ae2394b9235bb945ae0ec5b30e1505c8e58eb7bdc7c18dd345fdc32de143ead",

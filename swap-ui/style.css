@@ -21,6 +21,15 @@ html[data-journey-mode="guided"] #guided-section[data-journey-guided-step="statu
 .journey-shell{padding:0;border:0;background:transparent;margin:24px 0 32px}
 .journey-toolbar{display:flex;align-items:center;gap:16px;min-height:40px;margin-bottom:16px}
 .journey-toolbar #journey-mode{margin-left:auto}
+.companion-indicator{display:inline-flex;align-items:center;gap:8px;background:transparent;border:1px solid #a95d65;color:#ffdada;border-radius:999px;padding:7px 10px;font-size:13px;white-space:nowrap}
+.companion-indicator[data-state="connected"]{border-color:#19b37e;color:#a9f2d5}
+.companion-indicator[data-state="checking"]{border-color:#97a8bd;color:#e1e6ee}
+.companion-indicator-dot{width:9px;height:9px;border-radius:50%;background:#ff6969;flex:none}
+.companion-indicator[data-state="connected"] .companion-indicator-dot{background:#19b37e}
+.companion-indicator[data-state="checking"] .companion-indicator-dot{background:#97a8bd}
+html[data-journey-mode="advanced"] .companion-indicator{display:none}
+#companion-details{width:min(90vw,480px);border:1px solid #52627a;border-radius:12px;padding:24px;background:#142744;color:#e1e6ee}
+#companion-details::backdrop{background:rgba(0,0,0,.65)}
 .journey-text-button{border:0;background:transparent;color:#b8cadc;padding:8px 0;font-size:14px;font-weight:600}
 .journey-text-button:hover{color:#1be7ff}
 .journey-progress{font-size:13px;color:#b8cadc;letter-spacing:.04em}
@@ -78,4 +87,4 @@ button.journey-secondary:hover{background:#193b55}
 .swap-flow figcaption{margin-top:8px;color:#bbc8d8;font-size:13px;line-height:1.5}
 @media(max-width:700px){.swap-flow-wide{display:none}.swap-flow-narrow{display:block}}
 button:disabled{opacity:.55;cursor:not-allowed}
-@media(max-width:650px){header{margin-bottom:20px}aside{font-size:14px;padding:12px 16px}.journey-choices{grid-template-columns:1fr}.journey-choice{min-height:84px!important;padding:16px!important}.journey-review{grid-template-columns:1fr;gap:4px}.journey-review dd{margin:0 0 12px}.journey-toolbar{gap:12px;margin-bottom:8px}.journey-shell{padding:0;border:0;margin-top:12px}.journey-intro{margin-bottom:20px}}
+@media(max-width:650px){header{margin-bottom:20px}aside{font-size:14px;padding:12px 16px}.journey-choices{grid-template-columns:1fr}.journey-choice{min-height:84px!important;padding:16px!important}.journey-review{grid-template-columns:1fr;gap:4px}.journey-review dd{margin:0 0 12px}.journey-toolbar{gap:8px;margin-bottom:8px;flex-wrap:wrap}.journey-shell{padding:0;border:0;margin-top:12px}.journey-intro{margin-bottom:20px}}
