@@ -48,7 +48,7 @@ function world(opts = {}) {
     verifyEscrow: async () => ({slot}), confirm: async summary => { events.push('confirm'); return opts.decline ? false : (assert.ok(summary.lines.length >= 2), true); },
     nowSeconds: () => now, ...extra,
   });
-  return {call, journal, events, submitted, wallet};
+  return {call, journal, events, submitted, wallet, read};
 }
 const refused = (promise, code) => assert.rejects(promise, error => { assert.ok(error instanceof WalletError, String(error)); assert.equal(error.code, code, error.message); return true; });
 
@@ -147,6 +147,44 @@ test('the claim cutoff and a stale chain head refuse before the wallet is asked'
   const closeToExpiry = world({owner: bob});
   await assert.rejects(closeToExpiry.call('claim', {terms: terms({outref: ESCROW, expiry_ms: String((now + 10) * 1000)})}), /too close/);
   assert.ok(!closeToExpiry.events.includes('sign'));
+});
+
+test('a delayed approval, changed escrow or rejected final swap check never submits a Cardano action', async () => {
+  let clock = now;
+  const delayed = world({owner: bob}), sign = delayed.wallet.signTx;
+  delayed.wallet.signTx = async (...args) => { const witness = await sign(...args); clock = now + 20; return witness; };
+  await refused(delayed.call('claim', {cutoffSeconds: now + 10, nowSeconds: () => clock}), 'claim-cutoff');
+  assert.equal(delayed.submitted.length, 0);
+  assert.equal(delayed.journal.records[0].state, 'uncertain');
+
+  const changed = world({owner: bob});
+  let checks = 0;
+  await refused(changed.call('claim', {verifyEscrow: async () => { if (++checks === 2) throw Error('Escrow changed.'); return {slot}; }}), 'swap-check');
+  assert.equal(changed.submitted.length, 0);
+  assert.equal(changed.journal.records[0].state, 'uncertain');
+
+  const funding = world();
+  await refused(funding.call('fund', {verifyBeforeSubmit: async () => { throw Error('The other leg is no longer safe.'); }}), 'swap-check');
+  assert.equal(funding.submitted.length, 0);
+  assert.equal(funding.journal.records[0].state, 'uncertain');
+
+  const advancing = world({owner: bob}), original = advancing.read.params;
+  let reads = 0;
+  advancing.read.params = async () => { const params = await original(); return {...params, slot: ++reads === 4 ? expiry - 1666656000 : slot}; };
+  await refused(advancing.call('claim'), 'claim-cutoff');
+  assert.equal(advancing.submitted.length, 0);
+  assert.equal(advancing.journal.records[0].state, 'uncertain');
+
+  const slowHead = world({owner: bob}), originalHead = slowHead.read.params;
+  let headReads = 0, headClock = now;
+  slowHead.read.params = async () => { const params = await originalHead(); if (++headReads === 4) headClock = now + 20; return params; };
+  await refused(slowHead.call('claim', {cutoffSeconds: now + 10, nowSeconds: () => headClock}), 'claim-cutoff');
+  assert.equal(slowHead.submitted.length, 0);
+  assert.equal(slowHead.journal.records[0].state, 'uncertain');
+
+  const invalid = world();
+  await refused(invalid.call('fund', {verifyBeforeSubmit: true}), 'swap-check');
+  assert.equal(invalid.events.length, 0);
 });
 
 test('escrow that fails verification, and a wallet with no fee UTxO, stop the claim', async () => {

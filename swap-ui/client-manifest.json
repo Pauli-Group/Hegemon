@@ -6,12 +6,12 @@
   "local": "index.html"
  },
  "import_map": {
-  "source": "sha256-5BXXhsZsKaaNHFdF1ACytaUC0fjenWVHVeboQESh/NM=",
+  "source": "sha256-THnhzL6KYLNzt2pdWAl986+Q4lc4d3M04Yj6dm7WzIY=",
   "modules": 41
  },
  "csp": {
-  "hosted": "default-src 'self'; script-src 'self' 'sha256-5BXXhsZsKaaNHFdF1ACytaUC0fjenWVHVeboQESh/NM='; style-src 'self'; connect-src 'self' http://127.0.0.1:8788; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
-  "local": "default-src 'self'; script-src 'self' 'sha256-5BXXhsZsKaaNHFdF1ACytaUC0fjenWVHVeboQESh/NM='; style-src 'self'; connect-src 'self' http://127.0.0.1:8788; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+  "hosted": "default-src 'self'; script-src 'self' 'sha256-THnhzL6KYLNzt2pdWAl986+Q4lc4d3M04Yj6dm7WzIY='; style-src 'self'; connect-src 'self' http://127.0.0.1:8788; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+  "local": "default-src 'self'; script-src 'self' 'sha256-THnhzL6KYLNzt2pdWAl986+Q4lc4d3M04Yj6dm7WzIY='; style-src 'self'; connect-src 'self' http://127.0.0.1:8788; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
  },
  "headers": {
   "x-content-type-options": "nosniff",
@@ -61,8 +61,8 @@
    "bytes": 5143
   },
   "cardano-wallet.mjs": {
-   "sha256": "ffc38e1e9d81b856604b0d2532e195f63701c9ada39365ed7099c826f31a0acf",
-   "bytes": 10359
+   "sha256": "2529d36ec8bb834fa3d9bc40f90a73112ea788be63f8464f87297c334e13898f",
+   "bytes": 12262
   },
   "cbor.mjs": {
    "sha256": "15b1fdae1c4ac728fc89b8467e4a69c802866dc05d5eee62ff08c4d3d5d938ea",
@@ -101,7 +101,7 @@
    "bytes": 16892
   },
   "hosted.html": {
-   "sha256": "89cce811693d671eeb52d5f61b4cf700e4ecb6f3f1d68348be780c5e652581cc",
+   "sha256": "e6e5e75ac30cff3a4d7a04eaf04cd781bf5a57e2dcf2cf088f7b861d8f4377e2",
    "bytes": 69901
   },
   "identity-flow.mjs": {
@@ -125,7 +125,7 @@
    "bytes": 3697
   },
   "index.html": {
-   "sha256": "a5a202c167848bddad0531b247ed61d91638920c019a5ab3b9027ab18131f154",
+   "sha256": "4f2bde65dd080a0720fd9e4c7a04507384e268897e3464c93b4993d950d5520c",
    "bytes": 70184
   },
   "journey-ui.mjs": {

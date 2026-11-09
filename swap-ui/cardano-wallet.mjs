@@ -76,9 +76,10 @@ export async function verifiedWalletState(api, read, {role} = {}) {
 }
 
 /** Run one Cardano action end to end. Returns {state, txid, fee}. */
-export async function cardanoWalletAction({op, terms, preimage, api, read, verifyEscrow, journal, confirm, budget, cutoffSeconds, nowSeconds = () => Math.floor(Date.now() / 1000), verify = ed25519.verify}) {
+export async function cardanoWalletAction({op, terms, preimage, api, read, verifyEscrow, verifyBeforeSubmit, journal, confirm, budget, cutoffSeconds, nowSeconds = () => Math.floor(Date.now() / 1000), verify = ed25519.verify}) {
   if (!['fund', 'claim', 'refund'].includes(op)) throw new WalletError('Unknown Cardano operation.');
   if (typeof confirm !== 'function' || !journal?.begin || !journal.finish || !journal.uncertain || !journal.remove) throw new WalletError('Confirmation and the action journal are required before a wallet request.');
+  if (verifyBeforeSubmit !== undefined && typeof verifyBeforeSubmit !== 'function') throw new WalletError('The swap safety check is unavailable.', 'swap-check');
   const t = parseTerms(terms), role = op === 'claim' ? t.claimant : op === 'refund' ? t.refundee : t.refundee;
   const params = parseParams(await read.params());
   let escrow;
@@ -111,7 +112,7 @@ export async function cardanoWalletAction({op, terms, preimage, api, read, verif
   // Re-read the chain head one last time: a stale page must not request a claim signature near the cutoff.
   try {
     const fresh = await read.params();
-    if (!Number.isSafeInteger(fresh.slot) || fresh.slot + 5 < nowSlot) throw new WalletError('Cardano chain view went backwards; try again.', 'stale-head');
+    if (!Number.isSafeInteger(fresh.slot) || fresh.slot < 0 || fresh.slot + 5 < nowSlot) throw new WalletError('Cardano chain view went backwards; try again.', 'stale-head');
     if (op === 'claim' && fresh.slot + params.claimMarginSlots >= expirySlot(t, params.systemStart)) throw new WalletError('Too close to the deadline to claim safely.', 'claim-cutoff');
     claimOk();
   } catch (error) {
@@ -134,6 +135,27 @@ export async function cardanoWalletAction({op, terms, preimage, api, read, verif
   } catch (error) {
     await journal.uncertain(id);  // the wallet produced a signature we cannot use; nothing was submitted
     throw error;
+  }
+  // A wallet approval can take longer than the remaining safe window. Recheck after it returns and before this
+  // page submits. A swap coordinator can also recheck the other leg for any operation through verifyBeforeSubmit.
+  // The wallet has already seen the transaction (including a claim's secret), so any failure remains uncertain.
+  if (op === 'claim' || verifyBeforeSubmit) {
+    try {
+      const fresh = await read.params();
+      if (!Number.isSafeInteger(fresh.slot) || fresh.slot < 0 || fresh.slot + 5 < nowSlot) throw new WalletError('Cardano chain view went backwards.', 'stale-head');
+      if (op === 'claim' && fresh.slot + params.claimMarginSlots >= expirySlot(t, params.systemStart)) throw new WalletError('Too close to the deadline to claim safely.', 'claim-cutoff');
+      claimOk();
+      if (op !== 'fund') await verifyEscrow(terms);
+      claimOk();
+      const latest = await read.params();
+      if (!Number.isSafeInteger(latest.slot) || latest.slot < 0 || latest.slot + 5 < fresh.slot) throw new WalletError('Cardano chain view went backwards.', 'stale-head');
+      if (op === 'claim' && latest.slot + params.claimMarginSlots >= expirySlot(t, params.systemStart)) throw new WalletError('Too close to the deadline to claim safely.', 'claim-cutoff');
+      if (verifyBeforeSubmit) await verifyBeforeSubmit({op, slot: latest.slot});
+      claimOk();
+    } catch (error) {
+      await journal.uncertain(id);
+      throw new WalletError((error instanceof Error ? error.message : 'The swap safety check failed.') + ' The wallet signed, but this page did not submit; check the action record before retrying.', error instanceof WalletError ? error.code : 'swap-check');
+    }
   }
   let returned;
   try {
