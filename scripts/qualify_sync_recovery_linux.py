@@ -98,6 +98,42 @@ def run(argv, output, label, *, cwd=ROOT, timeout=1800):
             'finished_unix': time.time(), 'log': path.name, 'log_sha256': sha(path),
             'owned_leader_reaped': True}, path.read_text(errors='replace')
 
+EXPECTED_FAILURE_ASSERTIONS = {
+    NEW_TESTS[0]: (495, 9, 'a first truncated prefix must advance to its next page instead of restarting at the common ancestor'),
+    NEW_TESTS[1]: (467, 13, 'a moving unverified tip must not replace the importing exact target'),
+    NEW_TESTS[3]: (845, 9, 'a foreign compact hint cannot steal a completion-pending exact target'),
+}
+
+def verify_expected_failure(exit_code, text, name):
+    """Recognize one actual intended libtest assertion despite nocapture interleaving."""
+    require(type(exit_code) is int and exit_code == 101 and name in EXPECTED_FAILURE_ASSERTIONS,
+            'expected failure requires the exact named test and Cargo exit101')
+    line, column, message = EXPECTED_FAILURE_ASSERTIONS[name]
+    summaries = re.findall(r'^test result: .*$', text, re.MULTILINE)
+    require(len(summaries) == 1 and re.fullmatch(
+        r'test result: FAILED\. 0 passed; 1 failed; 0 ignored; 0 measured; [0-9]+ filtered out; finished in [0-9]+(?:\.[0-9]+)?s', summaries[0]),
+        'expected failure must execute exactly one failed, nonignored test')
+    require(re.findall(r'^running .*$', text, re.MULTILINE) == ['running 1 test'],
+            'expected failure must run exactly one test')
+    statuses = re.findall(r'^test (.+) \.\.\.(?: FAILED)?[ \t]*$', text, re.MULTILINE)
+    require(re.findall(r'^test (\S+) \.\.\.[^\n]*$', text, re.MULTILINE) == [name]
+            and statuses == [name] and len(re.findall(r'^(?:FAILED|test ' + re.escape(name) + r' \.\.\. FAILED)$', text, re.MULTILINE)) == 1,
+            'expected failure test/status attribution differs')
+    panics = re.findall(r"^thread '([^']+)'(?: \([0-9]+\))? panicked at ([^\n]+)$", text, re.MULTILINE)
+    location = f'node/src/native/sync_liveness_tests.rs:{line}:{column}:'
+    require(panics == [(name, location)], 'expected failure panic thread or source location differs')
+    require(re.search(r"^thread '" + re.escape(name) + r"'(?: \([0-9]+\))? panicked at "
+                      + re.escape(location) + r"\n" + re.escape('assertion `left == right` failed: ' + message) + r'$', text, re.MULTILINE),
+            'expected failure assertion message differs')
+    failures = []
+    for block in re.findall(r'^failures:\n((?:[ \t]*\n|[ \t]+[^\n]+\n)*)', text, re.MULTILINE):
+        names = [value.strip() for value in block.splitlines() if value.strip()]
+        if names:
+            failures.append(names)
+    require(failures == [[name]], 'expected failure final named failures list differs')
+    require(not re.search(r'^error(?:\[E[0-9]+\]:|: could not compile)', text, re.MULTILINE),
+            'compile failure cannot count as an executed expected failure')
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--expected-source-sha', required=True)
@@ -145,9 +181,7 @@ def main():
             row, text = run(cargo('hegemon-node') + [name, '--', '--exact', '--nocapture'], output,
                             'core-ablation-negative-' + str(index), cwd=baseline)
             receipt['commands'].append(row)
-            require(row['exit_code'] == 101 and re.search(r'test result: FAILED\. 0 passed; 1 failed; 0 ignored;', text)
-                    and name + ' ... FAILED' in text and 'sync_liveness_tests.rs:' in text,
-                    'baseline must execute and fail the intended assertion, not compile/timeout/zero-test fail')
+            verify_expected_failure(row['exit_code'], text, name)
         receipt['core_ablation_expected_failure_verified'] = True
         # Restore the candidate core, then ablate ONLY the new owner-pending
         # conjunct. This retains the compiling wrapper and the actual queue
@@ -161,10 +195,7 @@ def main():
         row, text = run(cargo('hegemon-node') + [NEW_TESTS[3], '--', '--exact', '--nocapture'], output,
                         'completion-owner-ablation-negative', cwd=baseline)
         receipt['commands'].append(row)
-        require(row['exit_code'] == 101 and re.search(r'test result: FAILED\. 0 passed; 1 failed; 0 ignored;', text)
-                and NEW_TESTS[3] + ' ... FAILED' in text and 'sync_liveness_tests.rs:' in text
-                and 'a foreign compact hint cannot steal a completion-pending exact target' in text,
-                'owner-only ablation must execute and fail the exact queue-owner assertion')
+        verify_expected_failure(row['exit_code'], text, NEW_TESTS[3])
         receipt['completion_owner_ablation'] = {
             'scope': 'Exact candidate harness and core; only new target_owner_pending admission conjunct removed',
             'node_impl_sha256': sha(baseline / core_path), 'service_sha256': sha(baseline / service_path),

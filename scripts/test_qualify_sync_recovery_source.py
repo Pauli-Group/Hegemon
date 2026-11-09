@@ -306,5 +306,86 @@ class WorkflowBoundaryControls(unittest.TestCase):
                 CHECKOUT_PIN.encode(), b"main"))
 
 
+class ExpectedFailureParserControls(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location(
+            "sync_recovery_linux_parser_under_test",
+            Path(__file__).with_name("qualify_sync_recovery_linux.py"))
+        cls.runner = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.runner)
+
+    def fixture(self, name=None, contiguous=False, pid=True):
+        name = self.runner.NEW_TESTS[0] if name is None else name
+        line, column, message = self.runner.EXPECTED_FAILURE_ASSERTIONS[name]
+        status = ' FAILED' if contiguous else ' '
+        return (f"running 1 test\ntest {name} ...{status}\n"
+                f"thread '{name}'" + (' (123)' if pid else '')
+                + f" panicked at node/src/native/sync_liveness_tests.rs:{line}:{column}:\n"
+                + f"assertion `left == right` failed: {message}\n"
+                + "  left: synthetic actual value\n right: synthetic expected value\n"
+                + ('' if contiguous else 'FAILED\n')
+                + f"\nfailures:\n\nfailures:\n    {name}\n\n"
+                + 'test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 42 filtered out; finished in 0.01s\n')
+
+    def assert_rejected(self, text, code=101, name=None):
+        with self.assertRaises(RuntimeError):
+            self.runner.verify_expected_failure(code, text, self.runner.NEW_TESTS[0] if name is None else name)
+
+    def test_interleaved_and_contiguous_exact_failures_are_accepted(self):
+        for name in self.runner.EXPECTED_FAILURE_ASSERTIONS:
+            for contiguous in (False, True):
+                for pid in (False, True):
+                    with self.subTest(name=name, contiguous=contiguous, pid=pid):
+                        self.runner.verify_expected_failure(101, self.fixture(name, contiguous, pid), name)
+
+    def test_compile_timeout_success_and_signal_exits_reject(self):
+        for code in (0, 1, 124, -9, None, True):
+            with self.subTest(code=code):
+                self.assert_rejected(self.fixture(), code)
+        self.assert_rejected('error[E0308]: synthetic compile failure\n')
+        for error in ('error[E0308]: synthetic compile failure\n', 'error: could not compile synthetic\n'):
+            self.assert_rejected(error + self.fixture())
+
+    def test_zero_ignored_passed_or_multiple_test_results_reject(self):
+        text = self.fixture()
+        changes = [('running 1 test', 'running 0 tests'), ('0 passed; 1 failed', '1 passed; 1 failed'),
+                   ('0 ignored', '1 ignored'), ('1 failed', '0 failed'), ('0 measured', '1 measured')]
+        for old, new in changes:
+            with self.subTest(new=new):self.assert_rejected(text.replace(old, new))
+        self.assert_rejected(text + 'test result: ok. 1 passed; 0 failed; 0 ignored;\n')
+        self.assert_rejected(text + text)
+
+    def test_wrong_test_or_missing_status_rejects(self):
+        name = self.runner.NEW_TESTS[0]
+        self.assert_rejected(self.fixture().replace(name, 'synthetic::wrong_test'))
+        self.assert_rejected(self.fixture().replace('FAILED\n', '', 1))
+        self.assert_rejected(self.fixture(), name=self.runner.NEW_TESTS[1])
+        self.assert_rejected(self.fixture(), name=self.runner.NEW_TESTS[2])
+        self.assert_rejected(self.fixture() + 'test synthetic::other ... ok\n')
+        self.assert_rejected(self.fixture() + f'test {name} ... ok\n')
+
+    def test_wrong_or_extra_panic_thread_rejects(self):
+        text = self.fixture();name = self.runner.NEW_TESTS[0]
+        self.assert_rejected(text.replace("thread '" + name + "'", "thread 'synthetic::wrong_test'"))
+        self.assert_rejected(text + "thread 'synthetic::other' panicked at synthetic.rs:1:1:\n")
+
+    def test_wrong_location_or_assertion_message_rejects(self):
+        text = self.fixture();message = self.runner.EXPECTED_FAILURE_ASSERTIONS[self.runner.NEW_TESTS[0]][2]
+        for old, new in [('rs:495:9:', 'rs:496:9:'), ('rs:495:9:', 'rs:495:10:'),
+                         ('node/src/native/', 'other/src/native/'), (message, 'unrelated assertion'),
+                         ('assertion `left == right` failed', 'assertion failed')]:
+            with self.subTest(new=new):self.assert_rejected(text.replace(old, new))
+        self.assert_rejected(text.replace(message, 'unrelated assertion') + message + '\n')
+        self.assert_rejected(text.replace('assertion `left', '\nassertion `left'))
+
+    def test_missing_wrong_extra_or_duplicate_failure_names_reject(self):
+        text = self.fixture();name = self.runner.NEW_TESTS[0]
+        for replacement in ('', '    synthetic::wrong_test\n', f'    {name}\n    synthetic::other\n'):
+            with self.subTest(replacement=replacement):
+                self.assert_rejected(text.replace(f'    {name}\n', replacement))
+        self.assert_rejected(text + f'failures:\n    {name}\n')
+
+
 if __name__ == "__main__":
     unittest.main()
