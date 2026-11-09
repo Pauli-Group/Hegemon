@@ -4075,7 +4075,7 @@ fn spawn_native_chunk_range_import(
     });
 }
 
-fn pump_native_sync_import_queue(
+pub(super) fn pump_native_sync_import_queue(
     queue: &mut NativeSyncImportQueue,
     node: &Arc<NativeNode>,
     sync_tx: &ProtocolSender,
@@ -4164,7 +4164,7 @@ fn pump_native_sync_import_queue(
     }
 }
 
-async fn handle_native_sync_import_completion(
+pub(super) async fn handle_native_sync_import_completion(
     node: &Arc<NativeNode>,
     handle: &ProtocolHandle,
     sync_tx: &ProtocolSender,
@@ -5574,20 +5574,15 @@ pub(crate) async fn native_sync_loop(node: Arc<NativeNode>, mut handle: Protocol
                 continue;
             }
             NativeSyncMessage::AnnounceTip(tip) => {
-                if native_sync_peer_has_pending_body_or_import(
+                if let Err(rejection) = process_native_sync_tip_announcement_with_pending_work(
+                    node.as_ref(),
+                    &handle,
                     peer_id,
+                    tip,
                     &block_body_transport,
                     &sync_import_queue,
-                ) {
-                    debug!(
-                        peer = %hex32(&peer_id),
-                        height = tip.best_height,
-                        "deferring native sync tip scheduling while that peer's body is pending"
-                    );
-                    continue;
-                }
-                if let Err(rejection) =
-                    process_native_sync_tip_announcement(node.as_ref(), &handle, peer_id, tip).await
+                )
+                .await
                 {
                     debug!(
                         peer = %hex32(&peer_id),
@@ -6951,6 +6946,39 @@ pub(crate) async fn request_missing_blocks(
 /// Admit a compact tip only as unverified scheduling evidence. It carries no
 /// block-validity authority and can only trigger the ordinary bounded request
 /// path, whose response must still pass exact carrier and import verification.
+/// The queue retains import ownership until its completion is consumed, even
+/// after the worker has cleared the node's in-flight flag. Keep the anchored
+/// target's owner, rather than only the announcing peer, in this admission check.
+pub(super) async fn process_native_sync_tip_announcement_with_pending_work(
+    node: &NativeNode,
+    handle: &ProtocolHandle,
+    peer_id: PeerId,
+    tip: NativeSyncTipAnnouncement,
+    block_body_transport: &NativeBlockBodyTransport,
+    sync_import_queue: &NativeSyncImportQueue,
+) -> Result<(), NativeSyncTipAnnouncementAdmissionRejection> {
+    let target = node.sync_target_evidence_snapshot();
+    let target_owner_pending = target.hash.is_some()
+        && target.peer_id.is_some_and(|target_peer| {
+            native_sync_peer_has_pending_body_or_import(
+                target_peer,
+                block_body_transport,
+                sync_import_queue,
+            )
+        });
+    if native_sync_peer_has_pending_body_or_import(peer_id, block_body_transport, sync_import_queue)
+        || target_owner_pending
+    {
+        debug!(
+            peer = %hex32(&peer_id),
+            height = tip.best_height,
+            "deferring native sync tip scheduling while peer or exact target work is pending"
+        );
+        return Ok(());
+    }
+    process_native_sync_tip_announcement(node, handle, peer_id, tip).await
+}
+
 pub(crate) async fn process_native_sync_tip_announcement(
     node: &NativeNode,
     handle: &ProtocolHandle,

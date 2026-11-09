@@ -3016,13 +3016,16 @@ impl NativeNode {
             return false;
         }
         if unverified_peer_hint && peer_best_height > target_before {
-            if let (Some(current_peer), Some(observed_peer)) = (*target_peer, peer_id) {
-                if current_peer != observed_peer
-                    && target_hash.is_some()
-                    && self.native_sync_target_peer_has_fresh_request(current_peer)
+            if let Some(current_peer) = *target_peer {
+                if target_hash.is_some()
+                    && (self.native_sync_target_peer_has_fresh_request(current_peer)
+                        || self.sync_import_in_flight())
                 {
-                    // Do not let a second unauthenticated hint supersede an
-                    // exact target while its current peer is making progress.
+                    // Finish the admitted exact target before following a
+                    // moving unauthenticated tip, including from the same peer.
+                    // A newer hash does not prove ancestry of the current
+                    // recovery cursor. Import owns the gap after its request
+                    // is consumed and before the next page is scheduled.
                     return false;
                 }
             }

@@ -305,7 +305,12 @@ async fn stored_loser_classification_preserves_a_newer_unknown_target_and_backfi
     assert_eq!(node.best_meta(), winner);
 }
 
-async fn equal_height_large_body_recovery(defer_during_import: bool, peer_wins: bool) {
+async fn equal_height_large_body_recovery(
+    defer_during_import: bool,
+    peer_wins: bool,
+    growing_hints: bool,
+    growing_during_import: bool,
+) {
     let _ = tracing_subscriber::fmt()
         .with_max_level(tracing::Level::WARN)
         .with_test_writer()
@@ -423,9 +428,52 @@ async fn equal_height_large_body_recovery(defer_during_import: bool, peer_wins: 
         from_height: common.height,
         to_height: common.height,
     };
+    let higher_tip = growing_hints.then(|| mine_empty_native_block(&source));
+    if let Some(higher_tip) = higher_tip.as_ref().filter(|_| !growing_during_import) {
+        // Reproduce the production race before any forward cursor exists:
+        // a newer compact hint arrives while the first truncated request is
+        // still fresh, then its already authorized old-target prefix arrives.
+        process_native_sync_tip_announcement(
+            &destination,
+            &handle,
+            peer,
+            NativeSyncTipAnnouncement {
+                best_height: higher_tip.height,
+                best_hash: higher_tip.hash,
+            },
+        )
+        .await
+        .expect("moving tip before first truncated prefix completes");
+    }
     let completed = destination
         .complete_outbound_sync_response(peer, Some(first_response))
         .expect("authorize exact first prefix");
+    if let Some(higher_tip) = higher_tip.as_ref().filter(|_| growing_during_import) {
+        // The live queue consumes the request before its import worker ends.
+        // Exercise that ownership gap through production compact-tip admission.
+        assert!(destination.begin_sync_import());
+        for hint_peer in [peer, [0x3a; 32]] {
+            process_native_sync_tip_announcement(
+                &destination,
+                &handle,
+                hint_peer,
+                NativeSyncTipAnnouncement {
+                    best_height: higher_tip.height,
+                    best_hash: higher_tip.hash,
+                },
+            )
+            .await
+            .expect("moving tip during admitted import");
+            assert_eq!(
+                destination.sync_target_tip_snapshot(),
+                (peer_tip.height, Some(peer), Some(peer_tip.hash)),
+                "a moving unverified tip must not replace the importing exact target"
+            );
+            assert!(destination.outbound_sync_requests.lock().is_empty());
+            assert!(!destination.mining_sync_gate_allows_work());
+        }
+        destination.end_sync_import();
+    }
     process_authorized_native_sync_response(
         &destination,
         &handle,
@@ -443,6 +491,13 @@ async fn equal_height_large_body_recovery(defer_during_import: bool, peer_wins: 
         "a known prefix is traversal, not canonical progress"
     );
     assert!(!destination.mining_sync_gate_allows_work());
+    if growing_hints {
+        assert_eq!(
+            destination.outbound_sync_requests.lock().get(&Some(peer)).unwrap().range,
+            NativeSyncRange { from_height: peer_tip.height, to_height: peer_tip.height },
+            "a first truncated prefix must advance to its next page instead of restarting at the common ancestor"
+        );
+    }
     assert_eq!(
         destination.sync_target_tip_snapshot(),
         (peer_tip.height, Some(peer), Some(peer_tip.hash))
@@ -470,6 +525,54 @@ async fn equal_height_large_body_recovery(defer_during_import: bool, peer_wins: 
         assert_eq!(next.range, next_range);
         assert!(next.context.recovery_page);
         assert_eq!(next.context.expected_parent_hash, Some(common.hash));
+    }
+    if let Some(higher_tip) = &higher_tip {
+        let exact_request = *destination
+            .outbound_sync_requests
+            .lock()
+            .get(&Some(peer))
+            .unwrap();
+        // Repeat the observed growing-horizon pattern while the next forward
+        // page is fresh. Neither the same peer nor a different peer may rewind it.
+        for hint_peer in [peer, [0x3a; 32], peer] {
+            process_native_sync_tip_announcement(
+                &destination,
+                &handle,
+                hint_peer,
+                NativeSyncTipAnnouncement {
+                    best_height: higher_tip.height,
+                    best_hash: higher_tip.hash,
+                },
+            )
+            .await
+            .expect("moving tip during forward recovery");
+            assert_eq!(
+                destination.sync_target_tip_snapshot(),
+                (peer_tip.height, Some(peer), Some(peer_tip.hash))
+            );
+            assert_eq!(
+                destination.sync_recovery_cursor_for_target(
+                    Some(peer),
+                    peer_tip.height,
+                    Some(peer_tip.hash)
+                ),
+                Some(cursor),
+                "the exact verified prefix must retain its forward cursor"
+            );
+            assert_eq!(
+                destination.outbound_sync_requests.lock().get(&Some(peer)),
+                Some(&exact_request),
+                "a moving hint must not restart or refresh the admitted page"
+            );
+            assert!(
+                !destination
+                    .outbound_sync_requests
+                    .lock()
+                    .contains_key(&Some(hint_peer))
+                    || hint_peer == peer
+            );
+            assert!(!destination.mining_sync_gate_allows_work());
+        }
     }
     let (advertised_height, last_blocks, offer) = source
         .sync_response_block_range(next_range.from_height, next_range.to_height)
@@ -523,14 +626,282 @@ async fn equal_height_large_body_recovery(defer_during_import: bool, peer_wins: 
             .sync_target_evidence_snapshot()
             .unverified_peer_hint
     );
+    if let Some(higher_tip) = higher_tip {
+        // Once the old exact target has actually resolved, the newer hint can
+        // schedule and complete normally. No unverified hint opens the gate.
+        process_native_sync_tip_announcement(
+            &destination,
+            &handle,
+            peer,
+            NativeSyncTipAnnouncement {
+                best_height: higher_tip.height,
+                best_hash: higher_tip.hash,
+            },
+        )
+        .await
+        .expect("accept moving tip after exact recovery completes");
+        assert_eq!(
+            destination.sync_target_tip_snapshot(),
+            (higher_tip.height, Some(peer), Some(higher_tip.hash))
+        );
+        assert!(!destination.mining_sync_gate_allows_work());
+        let range = destination
+            .outbound_sync_requests
+            .lock()
+            .get(&Some(peer))
+            .unwrap()
+            .range;
+        let (advertised_height, blocks, offer) = source
+            .sync_response_block_range(range.from_height, range.to_height)
+            .unwrap();
+        assert!(offer.is_none());
+        let response_range = NativeSyncRange {
+            from_height: blocks.first().unwrap().height,
+            to_height: blocks.last().unwrap().height,
+        };
+        let completed = destination
+            .complete_outbound_sync_response(peer, Some(response_range))
+            .expect("authorize actual newer target body");
+        process_authorized_native_sync_response(
+            &destination,
+            &handle,
+            &sync_tx,
+            peer,
+            advertised_height,
+            blocks,
+            completed,
+        )
+        .await;
+        assert_eq!(
+            destination.best_height_and_hash(),
+            (higher_tip.height, higher_tip.hash)
+        );
+        assert!(destination.mining_sync_gate_allows_work());
+    }
 }
 
 #[tokio::test]
 async fn equal_height_known_prefix_before_large_body_advances_and_finishes() {
-    equal_height_large_body_recovery(false, true).await;
+    equal_height_large_body_recovery(false, true, false, false).await;
 }
 
 #[tokio::test]
 async fn deferred_equal_height_known_prefix_before_large_body_advances_and_finishes() {
-    equal_height_large_body_recovery(true, false).await;
+    equal_height_large_body_recovery(true, false, false, false).await;
+}
+
+#[tokio::test]
+async fn growing_tip_does_not_restart_active_exact_prefix_recovery() {
+    equal_height_large_body_recovery(false, true, true, false).await;
+}
+
+#[tokio::test]
+async fn growing_tip_does_not_restart_deferred_exact_prefix_recovery() {
+    equal_height_large_body_recovery(true, false, true, true).await;
+}
+
+#[tokio::test]
+async fn growing_tip_can_replace_an_expired_exact_request_without_opening_gate() {
+    let tmp = tempfile::tempdir().unwrap();
+    let node = liveness_node(tmp.path());
+    let (_network, handle) = liveness_network(tmp.path());
+    let peer = [0x3b; 32];
+    let old = NativeSyncTipAnnouncement {
+        best_height: 10,
+        best_hash: [0x41; 32],
+    };
+    let newer = NativeSyncTipAnnouncement {
+        best_height: 11,
+        best_hash: [0x42; 32],
+    };
+    process_native_sync_tip_announcement(&node, &handle, peer, old)
+        .await
+        .unwrap();
+    process_native_sync_tip_announcement(&node, &handle, peer, newer)
+        .await
+        .unwrap();
+    assert_eq!(
+        node.sync_target_tip_snapshot(),
+        (old.best_height, Some(peer), Some(old.best_hash))
+    );
+    {
+        let mut requests = node.outbound_sync_requests.lock();
+        let request = requests
+            .get_mut(&Some(peer))
+            .expect("fresh old target request");
+        request.requested_at =
+            Instant::now() - (NATIVE_SYNC_REQUEST_RETRY_AFTER + Duration::from_millis(1));
+    }
+    process_native_sync_tip_announcement(&node, &handle, peer, newer)
+        .await
+        .unwrap();
+    assert_eq!(
+        node.sync_target_tip_snapshot(),
+        (newer.best_height, Some(peer), Some(newer.best_hash))
+    );
+    assert!(node.sync_target_evidence_snapshot().unverified_peer_hint);
+    assert!(!node.mining_sync_gate_allows_work());
+    assert_eq!(node.best_height(), 0);
+}
+
+#[tokio::test]
+async fn growing_tip_waits_for_actual_import_completion_owner_before_retargeting() {
+    let source_tmp = tempfile::tempdir().unwrap();
+    let destination_tmp = tempfile::tempdir().unwrap();
+    let source = NativeNode::open(test_config(
+        source_tmp.path(),
+        LIVENESS_POW_BITS,
+        "unsafe",
+        false,
+    ))
+    .unwrap();
+    let first = mine_empty_native_block(&source);
+    let old_tip = mine_empty_native_block(&source);
+    let newer_tip = mine_empty_native_block(&source);
+    let destination = liveness_node(destination_tmp.path());
+    let (_network, handle) = liveness_network(destination_tmp.path());
+    let sync_tx = handle.sender();
+    let peer = [0x3c; 32];
+    let foreign_peer = [0x3d; 32];
+    let mut transport = NativeBlockBodyTransport::default();
+    let mut queue = NativeSyncImportQueue::default();
+    let (completion_tx, mut completion_rx) = tokio::sync::mpsc::channel(1);
+    process_native_sync_tip_announcement_with_pending_work(
+        &destination,
+        &handle,
+        peer,
+        NativeSyncTipAnnouncement {
+            best_height: old_tip.height,
+            best_hash: old_tip.hash,
+        },
+        &transport,
+        &queue,
+    )
+    .await
+    .unwrap();
+    // The real request permits a bounded prefix; its full remaining body arrives
+    // in the second real queue worker below. No synthetic import report is used.
+    for block in [first.clone(), old_tip.clone()] {
+        let range = NativeSyncRange {
+            from_height: block.height,
+            to_height: block.height,
+        };
+        let completed = destination
+            .complete_outbound_sync_response(peer, Some(range))
+            .expect("consume the actual authorized request before starting its worker");
+        queue
+            .enqueue(NativeSyncImportWork::Response {
+                peer_id: peer,
+                best_height: old_tip.height,
+                response_tip_height: block.height,
+                response_range: Some(range),
+                response_tip_hash: Some(block.hash),
+                response_contains_completed_target: block.hash == old_tip.hash,
+                completed_request: completed,
+                blocks: vec![block.clone()],
+            })
+            .unwrap();
+        pump_native_sync_import_queue(&mut queue, &destination, &sync_tx, &completion_tx);
+        let completion = tokio::time::timeout(Duration::from_secs(10), completion_rx.recv())
+            .await
+            .expect("actual import worker completed")
+            .expect("completion channel");
+        assert!(
+            !destination.sync_import_in_flight(),
+            "worker cleared its node flag"
+        );
+        assert!(
+            destination.outbound_sync_requests.lock().is_empty(),
+            "request was consumed"
+        );
+        assert_eq!(
+            queue.active_peer(),
+            Some(peer),
+            "queue still owns the unread completion"
+        );
+        assert!(
+            !native_sync_peer_has_pending_body_or_import(foreign_peer, &transport, &queue,),
+            "foreign peer has no body/import owner"
+        );
+        let target = destination.sync_target_evidence_snapshot();
+        let cursor = *destination.sync_recovery_cursor.lock();
+        let gate_before_hint = destination.mining_sync_gate_allows_work();
+        if block.hash == first.hash {
+            assert!(!gate_before_hint, "partial prefix cannot open mining");
+        }
+        process_native_sync_tip_announcement_with_pending_work(
+            &destination,
+            &handle,
+            foreign_peer,
+            NativeSyncTipAnnouncement {
+                best_height: newer_tip.height,
+                best_hash: newer_tip.hash,
+            },
+            &transport,
+            &queue,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            destination.sync_target_evidence_snapshot(),
+            target,
+            "a foreign compact hint cannot steal a completion-pending exact target"
+        );
+        assert_eq!(*destination.sync_recovery_cursor.lock(), cursor);
+        assert_eq!(
+            destination.mining_sync_gate_allows_work(),
+            gate_before_hint,
+            "the unverified hint supplies no mining authority"
+        );
+        finish_native_sync_import_owner(&mut queue, &completion);
+        handle_native_sync_import_completion(
+            &destination,
+            &handle,
+            &sync_tx,
+            &mut transport,
+            completion,
+        )
+        .await;
+        assert_eq!(queue.active_peer(), None);
+        if block.hash == first.hash {
+            let next = *destination
+                .outbound_sync_requests
+                .lock()
+                .get(&Some(peer))
+                .unwrap();
+            assert_eq!(
+                next.range,
+                NativeSyncRange {
+                    from_height: old_tip.height,
+                    to_height: old_tip.height,
+                },
+                "the completed first prefix must advance rather than restart"
+            );
+            assert_eq!(next.context.expected_parent_hash, Some(first.hash));
+            assert!(!destination.mining_sync_gate_allows_work());
+        }
+    }
+    assert_eq!(
+        destination.best_height_and_hash(),
+        (old_tip.height, old_tip.hash)
+    );
+    assert!(destination.mining_sync_gate_allows_work());
+    process_native_sync_tip_announcement_with_pending_work(
+        &destination,
+        &handle,
+        foreign_peer,
+        NativeSyncTipAnnouncement {
+            best_height: newer_tip.height,
+            best_hash: newer_tip.hash,
+        },
+        &transport,
+        &queue,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        destination.sync_target_tip_snapshot(),
+        (newer_tip.height, Some(foreign_peer), Some(newer_tip.hash))
+    );
+    assert!(!destination.mining_sync_gate_allows_work());
 }

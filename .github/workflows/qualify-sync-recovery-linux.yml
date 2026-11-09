@@ -1,0 +1,121 @@
+name: Qualify sync recovery Linux incident
+
+on:
+  push:
+    branches: [codex/sync-recovery-progress-20261109]
+  workflow_dispatch:
+    inputs:
+      expected_source_sha:
+        description: Exact independently reviewed candidate commit
+        required: true
+        type: string
+      expected_delta_sha256:
+        description: SHA256 of git diff --binary --full-index --no-ext-diff 3fbf18ffec5b104766f5fefc2e515c8059a24c80 HEAD
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-recovery-linux-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  qualify-linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 110
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_NET_RETRY: "10"
+      CARGO_HTTP_TIMEOUT: "600"
+      CARGO_BUILD_JOBS: "2"
+      CARGO_INCREMENTAL: "0"
+      RAYON_NUM_THREADS: "2"
+      RUSTUP_TOOLCHAIN: "1.91.1"
+      EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+      EXPECTED_DELTA_SHA256: ${{ inputs.expected_delta_sha256 }}
+      DISPATCH_SOURCE_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Resolve exact execution pins and external acceptance boundary
+        run: |
+          python3 -I -B - <<'PY'
+          import hashlib, os, re, subprocess
+          source = os.environ['DISPATCH_SOURCE_SHA']
+          if os.environ['GITHUB_EVENT_NAME'] == 'push':
+              delta = subprocess.check_output(['git', 'diff', '--binary', '--full-index', '--no-ext-diff', '3fbf18ffec5b104766f5fefc2e515c8059a24c80', source])
+              expected_delta = hashlib.sha256(delta).hexdigest()
+              provenance = 'root-external-check-required'
+          else:
+              assert os.environ['EXPECTED_SOURCE_SHA'] == source
+              expected_delta = os.environ['EXPECTED_DELTA_SHA256']
+              provenance = 'dispatch-inputs'
+          assert re.fullmatch('[0-9a-f]{40}', source)
+          assert re.fullmatch('[0-9a-f]{64}', expected_delta)
+          with open(os.environ['GITHUB_ENV'], 'a') as stream:
+              stream.write('EXPECTED_SOURCE_SHA=' + source + '\nEXPECTED_DELTA_SHA256=' + expected_delta + '\nPIN_PROVENANCE=' + provenance + '\n')
+          PY
+      - name: Check exact dispatch and read-only source controls
+        run: |
+          mkdir -p target
+          test "$EXPECTED_SOURCE_SHA" = "$DISPATCH_SOURCE_SHA"
+          if ! python3 -I -B scripts/test_qualify_sync_recovery_source.py > target/sync-recovery-source-controls.log 2>&1; then
+            cat target/sync-recovery-source-controls.log
+            exit 1
+          fi
+          cat target/sync-recovery-source-controls.log
+          if ! python3 -I -B scripts/qualify_sync_recovery_source.py --expected-source-sha "$EXPECTED_SOURCE_SHA" --expected-delta-sha256 "$EXPECTED_DELTA_SHA256" --pin-provenance "$PIN_PROVENANCE" --output "$GITHUB_WORKSPACE/target/sync-recovery-source-check.json" > target/sync-recovery-source-check.log 2>&1; then
+            cat target/sync-recovery-source-check.log
+            exit 1
+          fi
+      - name: Install existing Linux build dependencies
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev clang lld
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: "1.91.1"
+          components: rust-src
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+        with:
+          shared-key: core-rust
+      - name: Honor fresh-clone setup and native build
+        run: |
+          make setup
+          python3 -I -B - <<'PY'
+          import json, os, pathlib, subprocess
+          commands = [['rustc', '-vV'], ['cargo', '--version']]
+          inputs = {'schema': 'hegemon.sync-recovery.build-inputs.v1',
+                    'commands': [{'argv': command, 'stdout': subprocess.check_output(command, text=True)} for command in commands],
+                    'known_build_knobs': {name: os.environ[name] for name in ('RUSTUP_TOOLCHAIN', 'CARGO_BUILD_JOBS', 'CARGO_INCREMENTAL', 'RAYON_NUM_THREADS')},
+                    'build_commands': ['make setup', 'make node', 'bash scripts/build_release_artifacts.sh'],
+                    'hermetic_build_closure_claimed': False}
+          pathlib.Path('target/build-inputs.json').write_text(json.dumps(inputs, indent=2, sort_keys=True) + '\n')
+          PY
+          make node
+      - name: Build and qualify exact Linux candidate
+        run: python3 -I -B scripts/qualify_sync_recovery_linux.py --expected-source-sha "$EXPECTED_SOURCE_SHA" --expected-delta-sha256 "$EXPECTED_DELTA_SHA256" --pin-provenance "$PIN_PROVENANCE" --output "$GITHUB_WORKSPACE/target/sync-recovery-qualification"
+      - name: Retain exact qualification evidence and Linux artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: sync-recovery-linux-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            target/sync-recovery-source-*.json
+            target/sync-recovery-source-*.log
+            target/build-inputs.json
+            target/sync-recovery-qualification/*.json
+            target/sync-recovery-qualification/*.log
+            target/sync-recovery-qualification/current-binary-proofs/*.json
+            target/sync-recovery-qualification/current-binary-proofs/*.log
+            target/sync-recovery-qualification/public-chain-replay/*.json
+            target/sync-recovery-qualification/public-chain-replay/*.log
+            target/release/hegemon-node
+            target/release/wallet
+            target/release/walletd
+            target/release/private-spend
+            target/release/hegemon-release-artifacts.json
+          if-no-files-found: error
+          retention-days: 14
