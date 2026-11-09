@@ -67,6 +67,7 @@ export function initGuided(d) {
     const plan = last?.view.prefill;
     if (!plan) return;
     const section = $(plan.section), form = $(plan.form);
+    d.showSection?.(plan.section);
     section.hidden = false;
     const op = form.elements.operation;
     if (op && plan.operation) { op.value = plan.operation; op.dispatchEvent(new Event('change', {bubbles: true})); }

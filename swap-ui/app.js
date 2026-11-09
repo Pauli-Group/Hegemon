@@ -19,8 +19,11 @@ import {initCardanoWalletActions} from './cardano-ui.mjs';
 import {initBitcoinWalletActions} from './bitcoin-ui.mjs';
 import {initObserver} from './observer-ui.mjs';
 import {initGuided} from './guided-ui.mjs';
+import {initJourney} from './journey-ui.mjs';
+import {formatBaseUnits} from './offer-draft.mjs';
 const types=[['ethereum:eth','Ethereum · ETH'],['ethereum:erc20','Ethereum · ERC-20'],['ethereum:erc721','Ethereum · ERC-721'],['ethereum:erc1155','Ethereum · ERC-1155'],['cardano:ada','Cardano · ADA'],['cardano:native','Cardano · native token'],['bitcoin:btc','Bitcoin · BTC'],['hegemon:hgn','Hegemon · HGN']];
 const $=id=>document.getElementById(id);
+let journey;
 for(const name of ['give-type','receive-type']) for(const [value,label] of types) document.querySelector(`[name="${name}"]`).add(new Option(label,value));
 function refreshWallets(){const select=$('cardano-wallet'),selected=select.value;select.replaceChildren(new Option('No wallet selected',''));
  for(const [id,wallet] of Object.entries(window.cardano||{}))if(wallet && typeof wallet.enable==='function')select.add(new Option(String(wallet.name||id),id));
@@ -31,7 +34,7 @@ async function api(path,options={}){
  const response=await fetch(path,{...options,headers:{...(options.body?{'content-type':'application/json'}:{}),...options.headers}});
  const result=await response.json();if(!response.ok)throw Error(result.error||'Request failed');return result;
 }
-function describe(asset){return `${asset.amount} · ${asset.chain} ${asset.kind}${asset.id?' · '+asset.id:''}`;}
+function describe(asset){let amount;try{amount=formatBaseUnits(asset.chain+':'+asset.kind,asset.amount);}catch{amount=String(asset.amount)+' base units';}return `${amount} · ${asset.chain} ${asset.kind}${asset.id?' · '+asset.id:''}`;}
 function msg(element,value,error=false){element.textContent=value;element.className=error?'error':'';}
 const actionChannel=typeof BroadcastChannel==='function'?new BroadcastChannel('hegemon.local.action-journal.v1'):null;
 function refreshActionViews(){actionChannel?.postMessage('changed');renderActionJournal();}
@@ -102,7 +105,7 @@ initObserver({$,msg,loadTiming:()=>loadTiming(),legRequirements,vaultLabel,encry
   ethereum:(contract,from)=>readJson('/sepolia/escrow-events?'+new URLSearchParams({contract,from_block:String(from)}),'Sepolia service unavailable.'),
   cardano:outref=>readJson('/cardano-preview/spend?'+new URLSearchParams({outref}),'Cardano preview service unavailable.')}});
 const sepoliaReader={async request({method,params}){const response=await fetch('/sepolia/rpc',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({method,params})});const value=await response.json();if(!response.ok)throw Error(value.error||'Sepolia service unavailable.');return value.result;}};
-initGuided({$,msg,loadTiming:()=>loadTiming(),listVault,listActions,template:async()=>{const response=await fetch('/ether-escrow-template.json');if(!response.ok)throw Error('Escrow template unavailable.');return response.json();},
+initGuided({$,msg,showSection:id=>journey?.showSection(id),loadTiming:()=>loadTiming(),listVault,listActions,template:async()=>{const response=await fetch('/ether-escrow-template.json');if(!response.ok)throw Error('Escrow template unavailable.');return response.json();},
  readers:{bitcoin:{head:()=>readJson('/bitcoin-testnet4/head','Bitcoin testnet service unavailable.'),escrow:(txid,vout)=>readBitcoinTestnet(txid,vout),spend:(txid,vout)=>readJson('/bitcoin-testnet4/spend?'+new URLSearchParams({txid,vout:String(vout)}),'Bitcoin testnet service unavailable.')},
   cardano:{params:()=>cardanoRead.params(),escrow:outref=>readCardanoPreview(outref),spend:outref=>readJson('/cardano-preview/spend?'+new URLSearchParams({outref}),'Cardano preview service unavailable.')},
   ethereum:{provider:sepoliaReader,events:(contract,from)=>readJson('/sepolia/escrow-events?'+new URLSearchParams({contract,from_block:String(from)}),'Sepolia service unavailable.')}}});
@@ -345,10 +348,12 @@ async function loadSelected(){
  try{const offer=await api('/offers/'+id);if(version!==selectionVersion||currentOffer()!==id)return;checkOwnerInbox(id,offer);$('selected').hidden=false;$('details').replaceChildren();
   if(pairContext?.id!==id){pairContext={id,give:structuredClone(offer.give),receive:structuredClone(offer.receive)};pairLegs={give:null,receive:null};publicPairLegs={give:null,receive:null};$('public-pair-result').textContent='';msg($('public-pair-status'),'Capture both escrow terms from the checks above.');$('pair-result').textContent='';msg($('pair-status'),'Capture both escrow terms from the verification forms.');}
   $('public-pair').hidden=!document.documentElement.hasAttribute('data-hosted-testnet');
-  for(const line of ['Give: '+describe(offer.give),'Receive: '+describe(offer.receive),'Expires: '+new Date(offer.expires*1000).toLocaleString(),offer.closed?'Closed':'Open']){const p=document.createElement('p');p.textContent=line;$('details').append(p);}
+  for(const line of ['Maker gives: '+describe(offer.give),'Maker wants: '+describe(offer.receive),'Expires: '+new Date(offer.expires*1000).toLocaleString(),offer.closed?'Closed':'Open']){const p=document.createElement('p');p.textContent=line;$('details').append(p);}
   $('reserve').disabled=offer.closed||offer.expires*1000<=Date.now();$('close').hidden=!credential(id)||offer.closed;msg($('detail-status'),'');updateChat(id);
+  const owner=!!credential(id),reserved=!!localStorage.getItem('offer-reservation:'+id)&&!!offer.reservationId;
+  document.dispatchEvent(new CustomEvent('journey:offer-selected',{detail:{id,owner,reserved,participant:owner||reserved,available:true}}));
   if(!participantToken(id))identityUi.render(id,offer,[]).catch(e=>msg($('identity-status'),e.message,true));
- }catch(e){if(version!==selectionVersion||currentOffer()!==id)return;chatRenderVersion++;pairContext=null;pairLegs={give:null,receive:null};publicPairLegs={give:null,receive:null};$('public-pair').hidden=true;$('identity').hidden=true;$('pair-result').textContent='';$('selected').hidden=false;msg($('details'),e.message,true);$('reserve').disabled=true;$('close').hidden=true;$('chat').hidden=true;}
+ }catch(e){if(version!==selectionVersion||currentOffer()!==id)return;chatRenderVersion++;pairContext=null;pairLegs={give:null,receive:null};publicPairLegs={give:null,receive:null};$('public-pair').hidden=true;$('identity').hidden=true;$('pair-result').textContent='';$('selected').hidden=false;msg($('details'),e.message,true);$('reserve').disabled=true;$('close').hidden=true;$('chat').hidden=true;document.dispatchEvent(new CustomEvent('journey:offer-selected',{detail:{id,owner:false,reserved:false,participant:false,available:false}}));}
 }
 function capturedPairTerms(chain){
  const form={ethereum:$('verify-form'),bitcoin:$('bitcoin-form'),cardano:$('cardano-form'),hegemon:$('hegemon-form')}[chain];
@@ -456,11 +461,12 @@ $('public-pair-verify').addEventListener('click',async()=>{if(publicPairBusy)ret
 async function refresh(){try{const {offers}=await api('/offers');$('board').replaceChildren();if(!offers.length){$('board').textContent='No public offers right now.';return;}
  for(const offer of offers){const row=document.createElement('div');row.className='offer';const text=document.createElement('p');text.textContent=describe(offer.give)+' → '+describe(offer.receive);const button=document.createElement('button');button.type='button';button.textContent='View offer';button.addEventListener('click',()=>selectOffer(offer.id));row.append(text,button);$('board').append(row);}}
  catch(e){msg($('board'),e.message,true);}}
-$('offer-form').addEventListener('submit',async event=>{event.preventDefault();const data=new FormData(event.currentTarget);
+let offerSubmitting=false;
+$('offer-form').addEventListener('submit',async event=>{event.preventDefault();if(offerSubmitting)return;offerSubmitting=true;const form=event.currentTarget,button=form.querySelector('button[type="submit"]'),data=new FormData(form);button.disabled=true;
  const read=side=>{const [chain,kind]=String(data.get(side+'-type')).split(':');return {chain,kind,id:String(data.get(side+'-id')).trim(),amount:String(data.get(side+'-amount')).trim()};};
  try{const passphrase=String(data.get('backup-passphrase')||''),created=passphrase?await createInboxWithBackup(passphrase):{publicKey:await createInbox(),backup:null},ownerPublicKey=created.publicKey;$('inbox-backup').hidden=!created.backup;$('inbox-backup-text').value=created.backup?JSON.stringify(created.backup):'';const result=await api('/offers',{method:'POST',body:JSON.stringify({give:read('give'),receive:read('receive'),visibility:data.get('visibility'),expires:Math.floor(Date.now()/1000)+Number(data.get('lifetime')),ownerPublicKey})});
-  localStorage.setItem('offer-owner:'+result.id,result.ownerToken);localStorage.setItem('offer-inbox:'+result.id,ownerPublicKey);const key=newMessageKey();localStorage.setItem('offer-message-key:'+result.id,key);await refresh();await selectOffer(result.id);$('share-link').value=location.origin+'/#'+result.id+'.'+key;$('share').hidden=false;msg($('create-result'),'Offer created.');
- }catch(e){msg($('create-result'),e.message,true);}});
+  localStorage.setItem('offer-owner:'+result.id,result.ownerToken);localStorage.setItem('offer-inbox:'+result.id,ownerPublicKey);const key=newMessageKey();localStorage.setItem('offer-message-key:'+result.id,key);await refresh();await selectOffer(result.id);$('share-link').value=location.origin+'/#'+result.id+'.'+key;$('share').hidden=false;msg($('create-result'),'Offer created.');form.dispatchEvent(new CustomEvent('journey:created'));
+ }catch(e){msg($('create-result'),e.message,true);form.dispatchEvent(new CustomEvent('journey:failed',{detail:{message:e.message}}));}finally{offerSubmitting=false;button.disabled=false;}});
 $('copy-link').addEventListener('click',async()=>{try{await navigator.clipboard.writeText($('share-link').value);msg($('create-result'),'Link copied.');}catch{msg($('create-result'),'Select and copy the link above.');}});
 $('refresh').addEventListener('click',refresh);
 async function sendPendingHandshake(id){const raw=localStorage.getItem('offer-handshake:'+id);if(!raw)throw Error('No pending conversation setup.');const item=JSON.parse(raw),token=localStorage.getItem('offer-reservation:'+id),offer=await api('/offers/'+id);
@@ -469,7 +475,7 @@ async function sendPendingHandshake(id){const raw=localStorage.getItem('offer-ha
  if(!parsePublicSession(item.ciphertext))throw Error('Invalid pending conversation setup.');
  await api('/offers/'+id+'/messages',{method:'POST',headers:{authorization:'Bearer '+token},body:JSON.stringify({ciphertext:item.ciphertext,reservationId:item.reservation})});
  localStorage.setItem('offer-session:'+id,item.reservation);localStorage.removeItem('offer-handshake:'+id);await refreshChat();}
-$('reserve').addEventListener('click',async()=>{const id=currentOffer();try{const offer=await api('/offers/'+id),identityNote=await identityUi.checkOwnerBeforeReserve(id,offer),result=await api('/offers/'+id+'/reserve',{method:'POST'});localStorage.setItem('offer-reservation:'+id,result.reservationToken);msg($('detail-status'),'Reserved until '+new Date(result.expires*1000).toLocaleString()+'. No funds have been locked. '+identityNote);$('reserve').disabled=true;
+$('reserve').addEventListener('click',async()=>{const id=currentOffer();try{const offer=await api('/offers/'+id),identityNote=await identityUi.checkOwnerBeforeReserve(id,offer),result=await api('/offers/'+id+'/reserve',{method:'POST'});localStorage.setItem('offer-reservation:'+id,result.reservationToken);msg($('detail-status'),'Reserved until '+new Date(result.expires*1000).toLocaleString()+'. No funds have been locked. '+identityNote);$('reserve').disabled=true;document.dispatchEvent(new CustomEvent('journey:reserved',{detail:{id}}));
   if(offer.ownerPublicKey){const fragment=location.hash.slice(1).split('.')[1],key=/^[0-9a-f]{64}$/.test(fragment||'')?fragment:newMessageKey();localStorage.setItem('offer-message-key:'+id,key);localStorage.removeItem('offer-session:'+id);
    localStorage.setItem('offer-handshake:'+id,JSON.stringify({reservation:result.reservationId,ownerPublicKey:offer.ownerPublicKey,ciphertext:null}));updateChat(id);
    try{await sendPendingHandshake(id);}catch{await refreshChat();msg($('chat-status'),'Conversation setup was not confirmed. Use retry; the reservation remains active.',true);$('retry-handshake').hidden=false;}
@@ -563,6 +569,7 @@ document.addEventListener('visibilitychange',()=>{if(document.visibilityState===
 renderVault();
 window.addEventListener('storage',event=>{if(event.key===VAULT_KEY)renderVault();if(event.key===WATCH_KEY)refreshWatches();});
 window.addEventListener('hashchange',loadSelected);
+journey=initJourney({legacyForm:$('offer-form'),msg});
 refresh();loadSelected();
 
 $('inbox-backup-copy').addEventListener('click',async()=>{try{await navigator.clipboard.writeText($('inbox-backup-text').value);msg($('create-result'),'Backup copied.');}catch{msg($('create-result'),'Select and copy the backup above.');}});

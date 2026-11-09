@@ -34,6 +34,7 @@ SCRIPT_TEST_PATTERNS=(
 # Browser suites for the hosted page, wallets and the relay. They start Chromium (and Anvil or a fake chain where needed).
 BROWSER_TESTS=(
   swap-service/browser.test.mjs
+  swap-service/journey-browser.test.mjs
   swap-service/guided-browser.test.mjs
   swap-service/identity-browser.test.mjs
   swap-service/observer-browser.test.mjs

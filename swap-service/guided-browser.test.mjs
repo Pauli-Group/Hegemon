@@ -34,9 +34,9 @@ test('Guided swap in the page: policy verdict, engine-equal decision, wallet for
     const status = async extra => ({swap_id: await swapId(terms), role: 'initiator', state: 'long_funded', inflight: null, needs_human: null, terms_digest: await termsDigest(terms),
       escrows: {long: {txid: 'aa'.repeat(32), vout: 1}, short: {txid: 'cc'.repeat(32), vout: 0}}, txids: {}, ...extra});
     const script = await expectedBitcoinScript({txid: 'aa'.repeat(32), vout: 1, amount_sats: 60_000, hashlock, claimant_key: BTC.responder, refund_key: BTC.initiator, refund_height: terms.legs.long.expiry});
-    const state = {shortValue: '5000000', walletCalls: 0};
+    const state = {shortValue: '5000000'};
     const context = await browser.newContext();
-    await context.addInitScript(() => { window.ethereum = {request: () => { throw Error('wallet must not be contacted'); }}; });
+    await context.addInitScript(() => { window.walletCalls = 0; window.ethereum = {request: () => { window.walletCalls++; throw Error('wallet must not be contacted'); }}; });
     await context.route('**/bitcoin-testnet4/head', route => route.fulfill({json: {genesis: TESTNET4_GENESIS, tip}}));
     await context.route('**/bitcoin-testnet4/escrow?*', route => route.fulfill({json: {genesis: TESTNET4_GENESIS, txid: 'aa'.repeat(32), vout: 1, tip, confirmed: true, confirmations: 6, block_height: tip - 5, block_hash: 'b'.repeat(64), spent: false, amount_sats: 60_000, script}}));
     await context.route('**/cardano-preview/params', route => route.fulfill({json: {network: 'preview', magic: 2, system_start: 1666656000, slot: now - 1666656000 - 5}}));
@@ -110,7 +110,22 @@ test('Guided swap in the page: policy verdict, engine-equal decision, wallet for
     assert.match(await text('guided-status'), /different swap/);
     const hegemon = {...terms, legs: {...terms.legs, long: {chain: 'hegemon', amount: 5, refundee: 'shca1aaa', claimant: 'shca1bbb', expiry: 900_000}}};
     await check(hegemon, {...(await status({state: 'terms_saved', escrows: {long: null, short: null}})), swap_id: await swapId(hegemon), terms_digest: await termsDigest(hegemon)});
-    assert.match(await text('guided-notes'), /Hegemon has no public testnet leg/);
+    assert.match(await text('guided-notes'), /Hegemon requires a local companion/);
+
+    // The step-by-step view opens the suggested wallet form instead of leaving it hidden.
+    await page.locator('#journey-mode').click();
+    await page.getByRole('button', {name: /Continue a swap/}).click();
+    await page.locator('#guided-terms').fill(JSON.stringify(terms));
+    await page.locator('#journey-guided-next').click();
+    await page.locator('#guided-swap-status').fill(JSON.stringify(await status({state: 'short_verified'})));
+    await page.evaluate(() => { document.getElementById('guided-status').textContent = ''; });
+    await page.locator('#guided-check').click();
+    await page.waitForFunction(() => { const t = document.getElementById('guided-status').textContent; return t !== '' && t !== 'Reading the chains.'; });
+    assert.match(await text('guided-headline'), /claim the short leg on cardano/);
+    await page.locator('#guided-fill').click();
+    assert.equal(await page.locator('#cardano-wallet-section').isVisible(), true);
+    assert.equal(await page.locator('#guided-section').isVisible(), false);
+    assert.equal(await page.evaluate(() => window.walletCalls), 0, 'prefilling still never asks a wallet to sign');
   } finally {
     await browser?.close();
     server.kill();

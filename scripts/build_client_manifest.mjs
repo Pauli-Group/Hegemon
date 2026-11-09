@@ -46,7 +46,7 @@ export function servedFiles(ui){
 
 // ---------------------------------------------------------------- hosted page edits
 const HOSTED_TITLE='Hegemon Swap · Testnet offer preview',HOSTED_EYEBROW='Hegemon · testnet offer preview';
-const HOSTED_NOTE='Testnet preview. Manual Sepolia escrow actions are available; complete swaps and recovery are still being built.';
+const HOSTED_NOTE='Testnet preview. Creating or reserving an offer does not lock funds. Completing a swap still requires manual steps; Hegemon needs a local companion.';
 const HOSTED_VAULT='Create a random secret and its public hashlock locally. Export the encrypted backup and protect its separate passphrase. This backup stores the secret only, not wallet keys or the complete swap.';
 const REVEAL=['sepolia-section','sepolia-action-section','bitcoin-testnet-section','cardano-preview-section','cardano-wallet-section','bitcoin-wallet-section','observer-section','guided-section'];
 const CONCEAL_IDS=['pair-check'];

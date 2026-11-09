@@ -2,7 +2,8 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {chromium} from 'playwright-core';
 import {spawn} from 'node:child_process';
-import {mkdtemp,rm} from 'node:fs/promises';
+import {mkdtemp,readFile,rm} from 'node:fs/promises';
+import {createHash} from 'node:crypto';
 import {tmpdir,homedir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {createServer} from 'node:net';
@@ -148,7 +149,6 @@ test('two browser sessions create a private offer and exchange encrypted message
 });
 
 test('browser verifies real local Ethereum token escrow and rejects changed terms',{timeout:60000},async()=>{
- const {readFile}=await import('node:fs/promises');const {createHash}=await import('node:crypto');
  const dir=await mkdtemp(join(tmpdir(),'swap-verify-'));const serverPort=await port(),rpcPort=await port();
  const base=`http://127.0.0.1:${serverPort}`,rpcUrl=`http://127.0.0.1:${rpcPort}`;
  const server=spawn(process.execPath,[resolve('swap-service/server.ts')],{env:{...process.env,SWAP_DB:join(dir,'offers.db'),SWAP_PORT:String(serverPort)},stdio:'ignore'});
