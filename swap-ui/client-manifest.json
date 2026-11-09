@@ -101,8 +101,8 @@
    "bytes": 16892
   },
   "hosted.html": {
-   "sha256": "0039a71345d0bad49aa361a0ac9cfa78e7b5390c7edf5d2c906ed21d2fbff5a4",
-   "bytes": 63271
+   "sha256": "59affe9e6b5ece3ff3775f3d580344ba5dcb158fd12a0ab7a6a15d01f48b19d5",
+   "bytes": 63970
   },
   "identity-flow.mjs": {
    "sha256": "887417777f3780141cc89670e0252af511c10a323f5b523d4a5c60f368c5d7c6",
@@ -125,8 +125,8 @@
    "bytes": 3697
   },
   "index.html": {
-   "sha256": "531d3ab4200aa69e76023bcdff87a9692075b269b659c65a95b7261aa870a648",
-   "bytes": 63534
+   "sha256": "c46f6d420c54c17aef5a0c699b6f796ee995d58e4ba631a061dabc7310ed7cdd",
+   "bytes": 64233
   },
   "journey-ui.mjs": {
    "sha256": "87594031f7cf0639823712d84885de24a4d985a009fb8195e6889f9c85230e52",
