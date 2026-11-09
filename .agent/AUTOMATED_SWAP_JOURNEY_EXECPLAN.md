@@ -83,3 +83,54 @@ Revision note: recorded the SVG milestone and its deliberately honest preview st
 Revision note: recorded the durable relay transport milestone and its limits; packet authenticity and the actual swap are still unimplemented.
 
 Revision note: added and tested client-side authentication, encryption and recovery primitives, while preserving the explicit gap to real user-facing execution.
+
+## Resume note: wallet approval and workspace interruption
+
+The execution workspace stopped accepting command sessions after the client protocol work was pushed. The worktree may still contain uncommitted edits to `swap-ui/cardano-wallet.mjs`, its test, and a draft `swap-ui/session-coordinator.mjs`; inspect it before making changes and do not assume those edits are present in Git. The pushed branch through `afedeaad` contains the relay and protocol primitives, but not the draft coordinator or this Cardano fix. The Worker has the diagram update only; migration `0003_swap_sessions.sql` and the coordination primitives have not been deployed.
+
+Before the interruption a local Cardano wallet change passed all 12 focused tests. It rechecked the chain head, the claim cutoff, and the escrow after a wallet signature returned, before asking the wallet to submit. It marked the action uncertain if that final check failed, because the wallet had seen the transaction and secret. It also allowed the coordinator to supply a final two-leg safety check. The exact uncommitted files may not survive the interruption: review, reimplement or recover them and run the tests again. The following records the relevant approach; it is a handoff sketch, not a committed or independently reviewed fix:
+
+```js
+// Add optional verifyBeforeSubmit to cardanoWalletAction's arguments.
+// Run after the wallet witness has been checked and before api.submitTx.
+if (op === 'claim') {
+  try {
+    const fresh = await read.params();
+    if (!Number.isSafeInteger(fresh.slot) || fresh.slot + 5 < nowSlot) {
+      throw new WalletError('Cardano chain view went backwards.', 'stale-head');
+    }
+    if (fresh.slot + params.claimMarginSlots >= expirySlot(t, params.systemStart)) {
+      throw new WalletError('Too close to the deadline to claim safely.', 'claim-cutoff');
+    }
+    claimOk();
+    await verifyEscrow(terms);
+    if (verifyBeforeSubmit !== undefined) {
+      if (typeof verifyBeforeSubmit !== 'function') {
+        throw new WalletError('The swap safety check is unavailable.', 'swap-check');
+      }
+      await verifyBeforeSubmit();
+    }
+    claimOk();
+    const latest = await read.params();
+    if (!Number.isSafeInteger(latest.slot) || latest.slot + 5 < fresh.slot) {
+      throw new WalletError('Cardano chain view went backwards.', 'stale-head');
+    }
+    if (latest.slot + params.claimMarginSlots >= expirySlot(t, params.systemStart)) {
+      throw new WalletError('Too close to the deadline to claim safely.', 'claim-cutoff');
+    }
+  } catch (error) {
+    await journal.uncertain(id);
+    throw new WalletError(
+      (error instanceof Error ? error.message : 'The claim safety check failed.')
+        + ' The wallet signed, but this page did not submit; check the action record before retrying.',
+      error instanceof WalletError ? error.code : 'swap-check',
+    );
+  }
+}
+```
+
+Include focused tests for delayed wallet approval crossing the cutoff, a rejected two-leg check, and a chain head reaching the deadline while checking. Each must leave the journal uncertain and never call this page's submit method. Also evaluate the disclosure risk: the wallet sees the secret when it receives the unsigned claim, and the page cannot guarantee when or whether a wallet broadcasts after it receives a transaction. Review equivalent timing behavior for the other chains.
+
+The interrupted coordinator draft was incomplete and must not be treated as production-ready. In particular, strictly validate persisted states, in-flight actions, and outbox entries; bind the actual channel key to the signed channel digest; perform real Hegemon companion checks rather than accepting a Boolean assertion; and preserve single-action/write-ahead semantics across reload and concurrent tabs. Browser persistence, wallet integration, chain adapters, user-facing actions, and end-to-end/refund tests are still required.
+
+Before any deployment, back up D1 outside the repository, inspect its schema, apply `0003_swap_sessions.sql` if absent, and regenerate/check the client integrity artifacts. Do not deploy the new Worker against an unmigrated database. Keep Hegemon wallet RPC on loopback and leave the user's node, wallets, and mining untouched.
