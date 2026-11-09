@@ -66,7 +66,8 @@ class StoreTests(unittest.TestCase):
 
     def test_storage_must_be_private(self):
         loose = self.root / 'loose'
-        loose.mkdir(mode=0o755)
+        loose.mkdir(mode=0o700)
+        loose.chmod(0o755)  # Make the directory non-private regardless of the process umask.
         with self.assertRaisesRegex(ValueError, 'private'):
             Store(loose)
         real = self.root / 'real'
