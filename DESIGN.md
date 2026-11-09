@@ -1469,11 +1469,11 @@ The PoW fork mirrors conventional PoW mechanics so operators can reason about li
   body malleability. Exact legacy unsigned/signed V1 and unreleased identity-bearing V2 metadata grammars are decoded only far enough
   to return an actionable fresh-genesis rejection and are never upgraded into active metadata. Generic consensus/P2P identities remain
   separate from this native active-V2 rule.
-* Difficulty is selected by a source-owned chain/height schedule. The prepared
-  ASERT upgrade leaves the live pre-mainnet activation unset; historical and
+* Difficulty is selected by a source-owned chain/height schedule. Release v0.11.4
+  schedules the live pre-mainnet upgrade at H18,660; historical and
   unscheduled networks retain `RETARGET_WINDOW = 10`, the first-boundary launch
   exception and the ×¼…×4 legacy adjustment. Once an activation height H is
-  compiled for the existing pre-mainnet chain ID, native V2 headers use ASERT
+  reached for the existing pre-mainnet chain ID, native V2 headers use ASERT
   every block with a 60-second interval and one-hour half-life. The fixed
   reference target and height are those of H−1 on the relevant branch; its
   parent's timestamp (H−2) is the time origin. The candidate block timestamp
@@ -1969,15 +1969,19 @@ Its exact source preimage binds the one-hour ASERT profile, 24-bit mining mask,
 version commitment normalization, tagged native metadata framing, exact
 60-block treasury entitlements and actual issued-note accounting. All three
 consensus changes share a source-owned multiple-of-60 pre-mainnet height; that
-production height remains unset. Disposable funded Development rehearsal alone
+production height is H18,660 in v0.11.4. The first production treasury batch is
+H18,660..H18,719, with first payout H18,719 and first spend inclusion H18,839.
+Disposable funded Development rehearsal separately
 selects H120, first batch H120..H179 and first spend inclusion H299. A fresh
 mainnet profile still requires explicit genesis/ASERT initialization and new
 identity-bound qualification; it does not inherit this migration schedule.
 
 
-Ordinary release binaries retain activation `None`. Upgrade lifecycle evidence
+Ordinary v0.11.4 release binaries carry the H18,660 pre-mainnet schedule. Upgrade lifecycle evidence
 comes from explicitly identified rehearsal builds of the same frozen source,
-whose features and executable hashes are recorded separately. Each target still
+whose Development activation remains H120 and whose features and executable hashes
+are recorded separately. Exact production-chain H18,659/H18,660/H18,661 tests
+exercise the configured transition independently of that process rehearsal. Each target still
 executes final ordinary-binary proof verification and isolated H0 checks. A pinned
 external public rehearsal transcript can supply source behavior evidence across
 targets; it does not say its rehearsal executable ran on those targets.

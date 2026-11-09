@@ -6,7 +6,7 @@ import json
 from pathlib import Path, PureWindowsPath
 import tempfile
 import unittest
-from unittest.mock import call, patch
+from unittest.mock import Mock, call, patch
 
 spec = importlib.util.spec_from_file_location('producer', Path(__file__).with_name('qualify_combined_upgrade.py'))
 p = importlib.util.module_from_spec(spec)
@@ -205,6 +205,52 @@ class ProducerTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'actual child failed'):
                 p.local_suites('timestamp_admission', Path('/unused'))
         self.assertEqual(run.call_count, 1)
+
+    def test_production_boundary_suites_execute_exact_native_tests_once(self):
+        for suite, name, gates in (
+                ('asert', 'native::poseidon2_v8_coinbase_tests::premainnet_combined_native_target_and_mining_payload',
+                 {'activation_boundary', 'wrong_target_rules', 'branch_anchor'}),
+                ('treasury_cadence', 'native::poseidon2_v8_coinbase_tests::premainnet_combined_treasury_selection_admission_and_maturity',
+                 {'migration_boundary', 'invalid_payout_rejection', 'pending_issued_accounting', 'maturity'})):
+            with self.subTest(suite=suite), tempfile.TemporaryDirectory() as directory:
+                base = Path(directory)
+                with patch.object(p, 'ROOT', base), patch.object(p.subprocess, 'Popen') as popen:
+                    process = popen.return_value
+                    process.returncode = 0
+                    process.communicate.return_value = (b'test result: ok. 1 passed; 0 failed; 0 ignored; 99 filtered out\n', b'')
+                    completed, executions = p.local_suites(suite, base)
+                expected = ['cargo', 'test', '--locked', '--release', '-p', 'hegemon-node',
+                            '--no-default-features', '--features', p.FEATURES,
+                            '--lib', name, '--', '--exact', '--nocapture']
+                matching = [row for row in executions if name in row['argv']]
+                self.assertEqual(len(matching), 1)
+                self.assertEqual(matching[0]['argv'], expected)
+                self.assertIs(matching[0]['exactly_one_nonignored_test'], True)
+                self.assertEqual([entry.args[0] for entry in popen.call_args_list].count(expected), 1)
+                self.assertTrue(gates.issubset(completed))
+                self.assertNotIn('unchanged_relation_spend', completed)
+                if suite == 'asert':
+                    self.assertNotIn('live_author_catchup', completed)
+
+    def test_production_boundary_missing_or_ignored_execution_aborts_suite(self):
+        for suite, name in (
+                ('asert', 'native::poseidon2_v8_coinbase_tests::premainnet_combined_native_target_and_mining_payload'),
+                ('treasury_cadence', 'native::poseidon2_v8_coinbase_tests::premainnet_combined_treasury_selection_admission_and_maturity')):
+            for rejected in (b'', b'test result: ok. 0 passed; 0 failed; 0 ignored;\n',
+                             b'test result: ok. 0 passed; 0 failed; 1 ignored;\n',
+                             b'test result: ok. 1 passed; 0 failed; 1 ignored;\n'):
+                with self.subTest(suite=suite, rejected=rejected), tempfile.TemporaryDirectory() as directory:
+                    base = Path(directory)
+                    selected = []
+                    def child(argv, **options):
+                        selected.append(argv)
+                        raw = rejected if name in argv else b'test result: ok. 1 passed; 0 failed; 0 ignored;\n'
+                        return Mock(returncode=0, communicate=Mock(return_value=(raw, b'')))
+                    with patch.object(p, 'ROOT', base), patch.object(p.subprocess, 'Popen', side_effect=child):
+                        with self.assertRaisesRegex(RuntimeError, 'required exact test did not execute once with zero ignored'):
+                            p.local_suites(suite, base)
+                    self.assertIn(name, selected[-1])
+                    self.assertEqual(sum(name in argv for argv in selected), 1)
 
     def test_missing_runtime_does_not_receive_htlc_credit(self):
         with patch.object(p, 'rust_test', return_value={}):

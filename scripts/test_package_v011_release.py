@@ -84,6 +84,24 @@ class PackagingTests(unittest.TestCase):
             path.chmod(mode)
         return bundle, entries
 
+    def set_bundle_software(self, bundle, software_release, software_version, *, metadata_pair=None):
+        """Reseal only synthetic bundle metadata, without changing any binary."""
+        release_name = "config/testnet/0.11/release.json"
+        release_path = bundle / release_name
+        release = json.loads(release_path.read_bytes())
+        release_pair = metadata_pair or (software_release, software_version)
+        release.update(software_release=release_pair[0], software_version=release_pair[1])
+        release_raw = pack.encoded(release)
+        release_path.write_bytes(release_raw)
+        record = json.loads((bundle / "bundle.json").read_bytes())
+        record.update(software_release=software_release, software_version=software_version)
+        record["files"][release_name] = {"size": len(release_raw), "sha256": pack.sha(release_raw)}
+        record_raw = pack.encoded(record)
+        (bundle / "bundle.json").write_bytes(record_raw)
+        checksums = {name: details["sha256"] for name, details in record["files"].items()}
+        checksums["bundle.json"] = pack.sha(record_raw)
+        (bundle / "SHA256SUMS").write_text("".join(f"{digest}  {name}\n" for name, digest in sorted(checksums.items())), encoding="ascii")
+
     def test_four_platform_native_formats_and_architectures(self):
         self.assertEqual(set(pack.validate_assets(self.assets)), set(pack.PLATFORMS))
         for selected in pack.PLATFORMS:
@@ -158,6 +176,25 @@ class PackagingTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             join.verify_bundle(bundle, check_host=False)
 
+    def test_runtime_bundle_preserves_old_versions_and_accepts_exact_v0114(self):
+        bundle, _ = self.fixture_bundle()
+        for software_release, software_version in (("v0.11", "0.11.0"), ("v0.11.1", "0.11.1"),
+                ("v0.11.2", "0.11.2"), ("v0.11.3", "0.11.3"), ("v0.11.4", "0.11.4")):
+            with self.subTest(release=software_release):
+                self.set_bundle_software(bundle, software_release, software_version)
+                self.assertEqual(join.verify_bundle(bundle, check_host=False), bundle / "bin/hegemon-node")
+
+    def test_runtime_bundle_rejects_unknown_future_and_mismatched_versions_even_when_resealed(self):
+        bundle, _ = self.fixture_bundle()
+        for software_release, software_version, metadata_pair in (
+                ("v0.11.5", "0.11.5", None), ("v1.0", "1.0.0", None),
+                ("v0.11.4", "0.11.3", None), ("v0.11.3", "0.11.4", None),
+                ("v0.11.4", "0.11.4", ("v0.11.3", "0.11.3"))):
+            with self.subTest(release=software_release, version=software_version, metadata=metadata_pair):
+                self.set_bundle_software(bundle, software_release, software_version, metadata_pair=metadata_pair)
+                with self.assertRaisesRegex(ValueError, "software identities disagree"):
+                    join.verify_bundle(bundle, check_host=False)
+
     def test_pending_metadata_prevents_any_output(self):
         path = self.source / "config/testnet/0.11/release.json"
         value = json.loads(path.read_bytes())
@@ -199,22 +236,34 @@ class PackagingTests(unittest.TestCase):
         with mock.patch.object(join, "verify_bundle", return_value=binary):
             with self.assertRaisesRegex(ValueError, "exact v0.11.3"):
                 join.launch_command(bundle, join.arguments(["--public-submit-rpc"]), {})
-            record = json.loads((bundle / "bundle.json").read_text())
-            record.update(software_release="v0.11.3", software_version="0.11.3")
-            (bundle / "bundle.json").write_bytes(pack.encoded(record))
-            command, _ = join.launch_command(bundle, join.arguments(["--public-submit-rpc"]), {})
-            self.assertEqual(command[command.index("--rpc-methods") + 1], "public-submit")
-            self.assertNotIn("--rpc-external", command)
-            self.assertNotIn("--rpc-cors", command)
-            command, _ = join.launch_command(bundle, join.arguments(["--public-submit-rpc", "--rpc-external", "--rpc-cors", "chrome-extension://test-wallet"]), {})
-            self.assertIn("--rpc-external", command)
-            self.assertEqual(command[command.index("--rpc-cors") + 1], "chrome-extension://test-wallet")
+            for version in ("0.11.3", "0.11.4"):
+                with self.subTest(version=version):
+                    record = json.loads((bundle / "bundle.json").read_text())
+                    record.update(software_release="v" + version, software_version=version)
+                    (bundle / "bundle.json").write_bytes(pack.encoded(record))
+                    command, _ = join.launch_command(bundle, join.arguments(["--public-submit-rpc"]), {})
+                    self.assertEqual(command[command.index("--rpc-methods") + 1], "public-submit")
+                    self.assertNotIn("--rpc-external", command)
+                    self.assertNotIn("--rpc-cors", command)
+                    command, _ = join.launch_command(bundle, join.arguments(["--public-submit-rpc", "--rpc-external", "--rpc-cors", "chrome-extension://test-wallet"]), {})
+                    self.assertIn("--rpc-external", command)
+                    self.assertEqual(command[command.index("--rpc-cors") + 1], "chrome-extension://test-wallet")
+
+    def test_public_rpc_rejects_old_future_and_mismatched_software_pairs(self):
+        bundle, _ = self.fixture_bundle()
+        with mock.patch.object(join, "verify_bundle", return_value=bundle / "bin/hegemon-node"):
+            for software_release, software_version in (("v0.11", "0.11.0"), ("v0.11.1", "0.11.1"),
+                    ("v0.11.2", "0.11.2"), ("v0.11.5", "0.11.5"),
+                    ("v0.11.4", "0.11.3"), ("v0.11.3", "0.11.4")):
+                with self.subTest(release=software_release, version=software_version):
+                    record = json.loads((bundle / "bundle.json").read_bytes())
+                    record.update(software_release=software_release, software_version=software_version)
+                    (bundle / "bundle.json").write_bytes(pack.encoded(record))
+                    with self.assertRaisesRegex(ValueError, "exact v0.11.3 or v0.11.4"):
+                        join.launch_command(bundle, join.arguments(["--public-submit-rpc"]), {})
 
     def test_public_rpc_rejects_unsafe_combinations_and_wildcard_origins(self):
         bundle, _ = self.fixture_bundle()
-        record = json.loads((bundle / "bundle.json").read_text())
-        record.update(software_release="v0.11.3", software_version="0.11.3")
-        (bundle / "bundle.json").write_bytes(pack.encoded(record))
         rejected = (["--wallet-rpc", "--public-submit-rpc"], ["--rpc-external"],
                     ["--wallet-rpc", "--rpc-external"], ["--rpc-cors", "https://wallet.example"],
                     ["--public-submit-rpc", "--rpc-cors", "*"],
@@ -226,9 +275,13 @@ class PackagingTests(unittest.TestCase):
                     ["--public-submit-rpc", "--rpc-cors", "https://wallet.example:invalid"],
                     ["--public-submit-rpc", "--rpc-cors", "null"])
         with mock.patch.object(join, "verify_bundle", return_value=bundle / "bin/hegemon-node"):
-            for argv in rejected:
-                with self.subTest(argv=argv), self.assertRaises(ValueError):
-                    join.launch_command(bundle, join.arguments(argv), {})
+            for version in ("0.11.3", "0.11.4"):
+                record = json.loads((bundle / "bundle.json").read_bytes())
+                record.update(software_release="v" + version, software_version=version)
+                (bundle / "bundle.json").write_bytes(pack.encoded(record))
+                for argv in rejected:
+                    with self.subTest(version=version, argv=argv), self.assertRaises(ValueError):
+                        join.launch_command(bundle, join.arguments(argv), {})
 
     def test_explicit_mining_requires_public_address_and_fixed_seeds(self):
         bundle, _ = self.fixture_bundle()

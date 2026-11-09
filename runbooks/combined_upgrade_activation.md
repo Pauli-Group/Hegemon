@@ -2,9 +2,11 @@
 
 The candidate composes the timestamp-admission repair, one-hour ASERT,
 24-bit mining version rolling and exact 60-block treasury payouts on the existing
-pre-mainnet identity. Production activation is deliberately unset while the
-complete source and affected behavior are qualified. No announcement, release
-publication, deployment or live height is authorized by a test result.
+pre-mainnet identity. The user selected **H18,660** for release **v0.11.4** and
+authorized publication followed by deployment on hegemon-dev, then hegemon-ovh.
+Complete final exact-source and artifact checks before publication or rollout.
+The user will make the Discord announcement after rollout. Test receipts retain
+their technical evidence scope and do not stand in for operational receipts.
 
 The disposable Development rehearsal activates all three scheduled rules at
 H120, preserves legacy rules through H119, and pays its first complete batch at
@@ -37,13 +39,14 @@ Hardware claims require separately measured sustained accepted work on the exact
 model/firmware/profile. A fresh mainnet remains a separate genesis/bootstrap and
 identity-bound qualification, with adopted rules applied from its first block.
 
-## Height selection and announcement
+## Selected height and announcement
 
-Choose a common height H divisible by 60 after the candidate behavior is
-qualified. At 60-second blocks, two to three days is 2,880–4,320 blocks. The
-planning height is `60 * ceil((tip + 4320) / 60)`. Monday/Tuesday November 9–10,
-2026 for announcement and Thursday/Friday November 12–13 for activation are
-planning targets, subject to qualification and actual block production.
+The common height H is **18,660**, divisible by 60. Friday morning November 13,
+2026 in Calgary is an estimate; block height controls consensus and actual block
+production controls the time. At 60-second blocks, two to three days is
+2,880–4,320 blocks. Recheck actual tip and remaining lead before deployment.
+The first treasury batch covers H18,660..H18,719, pays at H18,719 and becomes
+spendable at H18,839. Miner rewards and fees remain per block.
 
 Changing the compiled production height changes the candidate source. Freeze it,
 rebuild all final artifacts, rerun the affected transition/source gates and

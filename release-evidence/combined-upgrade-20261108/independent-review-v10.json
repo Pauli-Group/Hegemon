@@ -1,0 +1,133 @@
+{
+  "activation_authorized": false,
+  "candidate_binding_sha256": "9a8744ebe450190a159c2e69e3ac94ac2801127bebbb1438a039d574f3c9c09f",
+  "command_review": {
+    "all_six_exact_argv_match_public_receipt_harness_and_rehearsal_executable_pins": true,
+    "final_target_binding": "Each producer binds the actual artifact manifest digest, artifact hashes and target triple, rechecks artifact/source/config bytes and rejects any missing required subgate. External rehearsal evidence supplies only represented runtime gates; source suites still execute on every target.",
+    "focused_only_flag_absent": true,
+    "literal_artifact_manifest_placeholder_preserved": true,
+    "ordered_suites": [
+      "timestamp_admission",
+      "asert",
+      "version_rolling",
+      "treasury_cadence",
+      "current_smzl_htlc",
+      "restart_reorg_fresh_sync"
+    ],
+    "per_command_timeout_seconds": 7200,
+    "source_owned_isolated_python_producer": "python3 -I -B scripts/qualify_combined_upgrade.py"
+  },
+  "decision": "ACCEPT_SOFTWARE_CANDIDATE_SCOPE",
+  "deployment_verified": false,
+  "findings": [],
+  "limitations": [
+    "This is a bounded correctness, integration and release-scope review of the frozen candidate, not a full repository security audit or general cryptographic security proof.",
+    "This reviewer performed no build, native execution, test suite, proof generation/cryptographic verification, network/RPC probe or process-control operation. Actual process exits, RPC closure and proof verification are retained receipt observations, not independently executed results here.",
+    "The actual funded process run is Development H120 with rehearsal features on one machine and clock. It is not a production H18660 run, an ordinary release binary run, or per-target runtime execution.",
+    "The production H18659/H18660/H18661 and H18719/H18839 tests were inspected in source and routed into mandatory per-target suites; this reviewer did not execute them. The target fixture uses an explicit trusted checkpoint and tests a bounded production-height suffix.",
+    "New exact-head four-platform final proof/H0, all six suites and full CI remain required, including actual Windows qualification of the inherited Git-for-Windows/ucrt64 shell resolution. Older platform passes or failures are not attributed to v0.11.4.",
+    "Formal renewal changes exactly35 review digests and6 receipt fields. Retained formal CLI/governance records and current policy/log pins match, but their conditional assumptions, research classifications and native-refinement limits remain unchanged; digest/model evidence does not prove universal Rust equivalence.",
+    "The private fixture, passphrase, wallet/key/seed material, database, witnesses and prover scratch were not accessed. Public content inspection is finite; the coordinator separately reports checking actual disposable-passphrase absence.",
+    "The same-owner HTLC and cloned encrypted-wallet recovery exercise local branch, race and recovery enforcement, not independent refund custody or hostile-process isolation.",
+    "Source inventories and declared rehearsal executable hashes do not establish hermetic build closure. No sustained throughput, physical ASIC model/firmware behavior, mainnet, activation, public cutover, production cryptographic authority or deployed-state claim follows."
+  ],
+  "mainnet_authorized": false,
+  "physical_asic_hardware_qualified": false,
+  "physical_asic_qualified": false,
+  "production_authorized": false,
+  "public_cutover_authorized": false,
+  "qualification_commands_sha256": "3085b7efaf3183c5ed326b77be3ef0d8002b54f5d945daf953823117f259feef",
+  "required_followup": [
+    "Complete the new exact committed head Monorepo CI and preparation workflows (coordinator tracks 22 and 9 jobs); no previous-head result may be relabeled.",
+    "All four ordinary platform artifacts must independently pass unchanged actual current-binary proof verification, isolated H0 identity, each of the six exact qualification commands, strict audit and packaging checks.",
+    "The final runtime receipt/review/config/source bindings and final artifact bytes must remain exact through downstream validation.",
+    "Publication and authorized dev-then-OVH operations require their separate final receipts and operator checks; this software review is not a deployment outcome."
+  ],
+  "review_kind": "independent_model_review",
+  "reviewed_at_utc": "2026-11-09T05:57:35.698510+00:00",
+  "reviewer": "Codex independent model agent /root/combined_final_scope_review; independently inspected source and retained public bytes, separate from the coordinating implementation and command-fill work.",
+  "reviewer_execution_scope": [
+    "Read-only source and public evidence inspection, Git read operations, pure byte/JSON/SCALE/framing and integer arithmetic checks.",
+    "No source/config edits, native Hegemon execution, build, test suite, proof generation/cryptographic verification, network request, process control or private input access."
+  ],
+  "runtime_review": {
+    "development_identity": {
+      "activation_height": 120,
+      "chain_id": "0xa6ddd1817d8c6987d584214ea5e393cbd0f96d138acc0aa216db4f7618be30f0",
+      "first_batch_height": 179,
+      "first_batch_maturity_inclusion_height": 299,
+      "genesis": "0x699b1ae50930ac9f0c37ba9ad3d88804f6300aef21ac16bca6c9196c52688e82",
+      "manifest_sha256": "fe959df819c6d2dfcb086eba4d509e5a973155bbc08a10ffee60fd3ec03c7b61"
+    },
+    "frozen_harness_sha256": {
+      "combined_io.py": "70af3b7b9dbb71cbcd27c8acc67b6d039b7f1e5ad2d491afa81e90144cabdd1f",
+      "exact80_solver.rs": "c1f68139319ec311a5b26a2098260ae4968040efe10f4dc63b7d95f4c404ea8f",
+      "run_combined.py": "d6d776dcc7becf42be69324cb1d8c26fee272b4addc174a0e32a816e04196ae5"
+    },
+    "independent_public_byte_checks": [
+      "Six complete current action/carrier/SMZL triples, exact routes/relation/chain/reference/fee framing and SHA256/SHA512 pins.",
+      "Five canonical included actions and unchanged restart/reorg reexports.",
+      "337 contiguous canonical rows for retained A/B/D audit, parent links, H120 rules transition and timestamp bounds.",
+      "217 ASERT targets independently recomputed with integer arithmetic from H119 target/height and H118 time; 336 cumulative-work increments independently recomputed; 108 nonzero rolled headers counted.",
+      "All 53 retained CLI log hashes and source inventory/harness pins; source-owned pure runtime_gates consumed only public files successfully."
+    ],
+    "public_bundle_bytes": 7758320,
+    "public_bundle_files": 82,
+    "public_bundle_review": {
+      "bytes": 6342,
+      "path": "release-evidence/combined-upgrade-20261108/public-bundle-review-v10.json",
+      "sha256": "3fb22d026e3b11e060bf74e25e8ff7a95449951938a32883405b3bb00350a615"
+    },
+    "public_runtime_path": "release-evidence/combined-upgrade-20261108/runtime-v10",
+    "receipt_sha256": "d3fcdb47e8e2c8b73debd23f97f76c24435db6f75f76dec4561bc5f5e86523c6",
+    "recorded_clean_exit_reap_and_rpc_closure": true,
+    "recorded_completed": true,
+    "recorded_owned_processes": 16,
+    "recorded_passed_gates": 16,
+    "recorded_rehearsal_executables": {
+      "exact80-software-solver": {
+        "path": "/private/tmp/hegemon-combined-upgrade-20261108/rehearsal-v0114-bin/exact80-solver",
+        "sha256": "d009e98cd0b413d92dede67f8ae45fcacbce3c5ab1ebacd4134af12d61227293"
+      },
+      "hegemon-node": {
+        "path": "/private/tmp/hegemon-combined-upgrade-20261108/rehearsal-v0114-bin/hegemon-node",
+        "sha256": "b0a9d42222f37ac58cc6342dfb8cdfdb60a46ed281f70bbdbf692fab831719c1"
+      },
+      "private-spend": {
+        "path": "/private/tmp/hegemon-combined-upgrade-20261108/rehearsal-v0114-bin/private-spend",
+        "sha256": "9c7ca4759b2866e82a26446cb1f16504de33eb473dbc974331292068bf65b462"
+      }
+    },
+    "recorded_status": "PASS_LOCAL_COMBINED_CANDIDATE",
+    "source_copy_byte_identical_to_reviewed_export": true,
+    "supplemental_recorded_independent_audit": {
+      "bytes": 2236,
+      "path": "/private/tmp/hegemon-combined-upgrade-20261108/reviews/v0114-runtime-audit/audit.json",
+      "sha256": "95cf97feba2c82b829970b64f036e961483876cacc8c242f7b20f79996f2d045"
+    }
+  },
+  "schema": "hegemon.combined-upgrade.independent-review.v1",
+  "scope": "Independent software-candidate source and command scope acceptance for v0.11.4 at the user-selected pre-mainnet H18660; this is before required exact-head CI and final ordinary per-target artifact qualification.",
+  "source_inventory_sha256": "7d4a19b8f3fed896e63f8657dad035ee1bad601036fb15f13e96829427f38e40",
+  "source_review": {
+    "active_consumer_routing": "Combined config selects the combined checker before historical helper routes; combined failure fails closed. Historical executor bytes retain exact authenticated pins. Final checks retain separate artifact/proof/H0 and fresh-suite requirements.",
+    "baseline_commit": "eec3bb141f59865d5efc4d97c86e201415a0b839",
+    "cargo_lock_sha256": "1c243bf3858f4ee22fa4441c7a2ee6d49b16d264147b0f3a2de845e760821719",
+    "comparison_head_for_v0114_delta": "a2a404496e150a1e4a05465e9671807aa893d601",
+    "formal_metadata_delta": {
+      "governance_receipt_fields": 6,
+      "other_scalar_changes": 0,
+      "statuses_assumptions_goals_and_authority_preserved": true,
+      "target_review_content_hashes": 35
+    },
+    "fresh_readonly_source_check": "PASS_FROZEN_SOURCE_PREPARATION",
+    "historical_authority_inputs_preserved": 16,
+    "inventory_records": 6515,
+    "production_boundary_tests": "Read exact H18659/H18660/H18661 target/rules/version fixture and production treasury selector, first payout H18719 and first maturity inclusion H18839. The native target test explicitly uses a trusted ancestor checkpoint; no 18,000-block import is claimed.",
+    "production_test_routing": "Both new exact native functions are mandatory calls in the actual ASERT/treasury local_suites paths; retained producer controls reject zero/ignored/missing executions. Source inspection only by this reviewer.",
+    "proof_identity_inputs_preserved": 41,
+    "relation_digest": "b9d22c2f0cb49df519b34620c138d7f2d74fa135a76c7b526cd73a60bb5cd6cec2f910dde83b1a848684e123d02ab0bbc8bdb384b1bcaff1b489fd8794c14685",
+    "relation_id": "Hegemon.PrivateSpend.BoundedPolicy.CompFF01.Packed.v4",
+    "reviewed_paths": 119
+  }
+}

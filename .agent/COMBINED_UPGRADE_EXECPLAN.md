@@ -1,5 +1,10 @@
 # Qualify the combined pre-mainnet upgrade
 
+The completed preparation observations below retain their original unset-height
+scope. The user subsequently selected H18,660 and authorized v0.11.4 publication
+and dev-then-OVH deployment; follow `.agent/V0114_RELEASE_EXECPLAN.md` for that
+fresh exact-source qualification and operational rollout.
+
 ## Purpose / Big Picture
 
 Prepare one reviewable release candidate that consistently admits fresh block timestamps, uses one-hour ASERT, permits the selected mining version bits, and pays accumulated treasury rewards every 60 blocks. Existing pre-mainnet history remains valid below a future common activation height. Operators can install the candidate in advance. No live activation height, announcement, release publication, deployment, or fresh mainnet identity is selected by this work.

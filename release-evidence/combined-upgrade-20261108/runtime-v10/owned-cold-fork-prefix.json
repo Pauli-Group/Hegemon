@@ -1,0 +1,229 @@
+{
+  "all_nodes_stopped_for_copy": true,
+  "destination": "F/native-chain.sled",
+  "files": [
+    {
+      "bytes": 134009,
+      "path": "blobs/11111605",
+      "sha256": "e69022238c95bd88063fc38496a3d37dafeb19427106332741ad20f61e247ac4"
+    },
+    {
+      "bytes": 168614,
+      "path": "blobs/12900927",
+      "sha256": "6a837d86f29e0df8a8a5f77f571e4f764a958da0d03c6778b064b08f6f9c7358"
+    },
+    {
+      "bytes": 168634,
+      "path": "blobs/15364474",
+      "sha256": "5bcc5bf89b868c6c1ed927aaf2b6269265f2e07bc8b6fa5fcbeb711db9ddeb28"
+    },
+    {
+      "bytes": 197595,
+      "path": "blobs/18934907",
+      "sha256": "1fac1fc44131109f131cf4a3251b1252adf54edea18134c87682293aea05d3a9"
+    },
+    {
+      "bytes": 369058,
+      "path": "blobs/19067122",
+      "sha256": "ed91ffba14c055690580d33ecd2bc97a5acd26f4e85cabcee7c24a5fb2b22551"
+    },
+    {
+      "bytes": 296645,
+      "path": "blobs/20896967",
+      "sha256": "551d232c97be1f949c3c9762e32cb2046843e33bca7a084937a8e34527238304"
+    },
+    {
+      "bytes": 300747,
+      "path": "blobs/25229875",
+      "sha256": "45021f3b11673ce75d15c76fedee28e520ecb441486e25fdf8e6ff80052e2b05"
+    },
+    {
+      "bytes": 198554,
+      "path": "blobs/25922747",
+      "sha256": "710c143f070bc98b40c015e93377a0799c35bfac2960cd65cc71496cc79a5109"
+    },
+    {
+      "bytes": 423441,
+      "path": "blobs/26777642",
+      "sha256": "af76d1061e350615eea7a2dedfa5c18325324ffe73f44a95b3e7c4db595b7302"
+    },
+    {
+      "bytes": 256810,
+      "path": "blobs/27031461",
+      "sha256": "8b8b7b21ddc8512e6e63bde1284fe656e88de89cceef2e26f019667be70ff02e"
+    },
+    {
+      "bytes": 199498,
+      "path": "blobs/28018298",
+      "sha256": "498b278f53547629794062a56e1abbd54a85479b874370f83b695e66ce8ab970"
+    },
+    {
+      "bytes": 228146,
+      "path": "blobs/28456567",
+      "sha256": "7acaf1c7e7c73af31f5955adc03c8e2f1cf2f60ed08fc185a4f4f087da7a52ec"
+    },
+    {
+      "bytes": 430362,
+      "path": "blobs/30602388",
+      "sha256": "5df74600b14bd5bed7c211498e9855e0974843ba4d4a53f73842cfc4dce96f13"
+    },
+    {
+      "bytes": 283763,
+      "path": "blobs/31094514",
+      "sha256": "4ee571b71bdeb14cacd09b19aba8f1a94360e89160ebdd75f2dca8bb4e479e47"
+    },
+    {
+      "bytes": 286125,
+      "path": "blobs/31201520",
+      "sha256": "fe4ad509b189583b6b1045c84035415e1b596fe04783f30489f8e11861503b0e"
+    },
+    {
+      "bytes": 208955,
+      "path": "blobs/31212103",
+      "sha256": "4e5ba5fa2c40796dfba01986879961662d4494860bc212e81f7abb8693eeaae8"
+    },
+    {
+      "bytes": 234787,
+      "path": "blobs/32376112",
+      "sha256": "16d872552bb3ae27093e9a52f06a07aa632e9c0d05470da895fa40768ae5adb3"
+    },
+    {
+      "bytes": 193079,
+      "path": "blobs/32564079",
+      "sha256": "24a8b6a5fffaa88ac22d43830f4a269acd4e0153be773d37b026872ead16019f"
+    },
+    {
+      "bytes": 234003,
+      "path": "blobs/32564095",
+      "sha256": "00a214d62be7f673e49b88c29b8d7ee7876177347988133af8958877a3f21413"
+    },
+    {
+      "bytes": 247578,
+      "path": "blobs/32703958",
+      "sha256": "b553d516c1f43db82410fb5f98b4037bb71f21ec3386cc8a07a401ee97f7efc3"
+    },
+    {
+      "bytes": 209151,
+      "path": "blobs/34405446",
+      "sha256": "e81a0c92a2e6626fb03e0798cb888459773b15b84d3b1fef682a6bcbb1a9e47a"
+    },
+    {
+      "bytes": 207786,
+      "path": "blobs/34405664",
+      "sha256": "a7e0df784193ac656e716a553484238a0aed3fb2cc60efb401e071f20b3d26cb"
+    },
+    {
+      "bytes": 235180,
+      "path": "blobs/34405681",
+      "sha256": "8622eaa0123efe604c682c300aba902faf788c29dc5b32f7e88ba50c1eda31ec"
+    },
+    {
+      "bytes": 332610,
+      "path": "blobs/34761517",
+      "sha256": "f7fc894337e6e775a8bd06580ba028f154db87e2be506f8879828f2e698e30ee"
+    },
+    {
+      "bytes": 339347,
+      "path": "blobs/34804357",
+      "sha256": "28393f4116c21b1fbcb823e331be300ff6d23823eab71af4831c11e7eef5ba85"
+    },
+    {
+      "bytes": 222231,
+      "path": "blobs/34804373",
+      "sha256": "215182d7629fa829a1f1a8ccf012a0167cb3fd451117ecb3d306f359425cd06b"
+    },
+    {
+      "bytes": 339515,
+      "path": "blobs/34988278",
+      "sha256": "3d0c2297cc52a18697c84a3c51003b877c061f96a2c2e503aeec312d59e8cf34"
+    },
+    {
+      "bytes": 287291,
+      "path": "blobs/35074037",
+      "sha256": "169970f96b0d5e8dc95b28c3ccf45ee22dadafde04b59f93c17c3c040412f6ac"
+    },
+    {
+      "bytes": 273690,
+      "path": "blobs/35266847",
+      "sha256": "44c8750791e086722ed4a40c558cb682e4a173e22ab19adf8ea47ddb2d35aacb"
+    },
+    {
+      "bytes": 260115,
+      "path": "blobs/35423983",
+      "sha256": "7d86d47a16a726a9a6b25a3d7c0e02c8fb66da83129f2e39cf09b849bb3499b2"
+    },
+    {
+      "bytes": 245303,
+      "path": "blobs/35476224",
+      "sha256": "3d9614a4b0f4a7bd6e463d0291b35b092325c340c426abee79edb3e34607caa7"
+    },
+    {
+      "bytes": 233899,
+      "path": "blobs/35557223",
+      "sha256": "d67c324cac6ef9a2ce441da95dd3e6cb1be7ea9f889b5af833d459d02ece8e03"
+    },
+    {
+      "bytes": 62,
+      "path": "conf",
+      "sha256": "916d2ae94a3f9440b0db932b60a323e5980da640ec4fb2d07d5cbd74df0497f2"
+    },
+    {
+      "bytes": 6538143,
+      "path": "db",
+      "sha256": "eab8a8d79ca6509d1f03a037280cd66fb4defa50ec3ed84b933043e7870604b6"
+    },
+    {
+      "bytes": 4454,
+      "path": "snap.0000000002024568",
+      "sha256": "1b923f9716c657982a2a7de8cf7f3a4209144568cd321f993d9ba00816956be8"
+    }
+  ],
+  "fresh_fork_peer_identity_path": "F-fresh-peer-identity.seed",
+  "logical_bytes": 14789180,
+  "reference": {
+    "header": {
+      "chainId": "0xa6ddd1817d8c6987d584214ea5e393cbd0f96d138acc0aa216db4f7618be30f0",
+      "cumulativeWork": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000050f19bbc",
+      "daBlobLen": 4,
+      "daChunkCount": 2,
+      "daChunkSize": 1024,
+      "daRoot": "0xc2ef72b7d99eeb184f7f2d57cce3f28ccee45c6c91ef2ea6d8c70a819809b3c3212c719ac735cb3b59914c05e4c3b4a7",
+      "daSampleCount": 4,
+      "digest": {
+        "logs": []
+      },
+      "extrinsicsRoot": "0x2ce313b11d59fa560d8bb3fc2c7a9f0197fde552207758b42f49336a701bc8f1",
+      "headerMmrLen": 315,
+      "headerMmrRoot": "0xaa744976170eda7d433a20c01bd9e6b30ffdff7c863e26a7aaea4972ee07e179",
+      "kernelRoot": "0xc635167beb366100d847781206f8c7640d30f0df6fd068c46b82ad9fab60bdaca3a66e2bef330f98f1c5b6a95491f0c7",
+      "messageCount": 0,
+      "messageRoot": "0x71c0958a44cea9e2a023fbfbb14e065d621fe6452c75d34ebb299a846172915b4ed441a41a527e154f48a803e6cfb96c",
+      "miningVersion": 536870912,
+      "nonce": "0x2a485c0400000000000000000000000000000000000000000000000000000000",
+      "nullifierRoot": "0x9f43711f94a1b90522bc65c323abf73d106c3dcf9413c606cb90cf3522ad3c8b6bc7335f5a7b08ec644688b6c20e27f9",
+      "number": "0x13b",
+      "parentHash": "0x00000097f36f1c1185cef1240b50a991b49a4d7e53e2568770281f78b14c0629",
+      "powBits": 503393008,
+      "rulesHash": "0xec304529f49e7ddc777e0ca78b189acec753d4fb18aafe15761e686ea3596b7f",
+      "stateRoot": "0x1d6f3c65c8bc2ed3737d11a0ecfb08d0453507f4675ad4cf6981493412653286"
+    },
+    "nodes": [
+      "A",
+      "B",
+      "C"
+    ],
+    "observed_clock_ms": [
+      1794202409839,
+      1794202409840,
+      1794202409841
+    ],
+    "status": {
+      "best_hash": "0x0000010dc87fc97180719861cd5d91a4646c44e85af70abbcdad91e8bedde08e",
+      "height": 315,
+      "nullifier_root": "0x9f43711f94a1b90522bc65c323abf73d106c3dcf9413c606cb90cf3522ad3c8b6bc7335f5a7b08ec644688b6c20e27f9",
+      "state_root": "0x2a8a72dffb6beeff14bdf83547cba1705c22dc905a78e34efdada47daebc71a643db3c869586c5512f4642735beac5c6",
+      "supply_digest": 155900002000
+    }
+  },
+  "source": "A/native-chain.sled"
+}

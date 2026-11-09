@@ -482,3 +482,322 @@ fn treasury_cadence_zero_batches_and_final_exhaustion_residual() {
         exact
     );
 }
+
+fn premainnet_combined_network() -> NativeNetworkIdentity {
+    let manifest = serde_json::from_str(include_str!(
+        "../../../config/testnet/0.11/network-manifest.json"
+    ))
+    .unwrap();
+    let network = NativeNetworkIdentity::from_manifest(manifest).unwrap();
+    assert_eq!(
+        network.chain_id(),
+        consensus_light_client::PREMAINNET_CHAIN_ID
+    );
+    assert_eq!(
+        consensus_light_client::native_combined_upgrade_activation_height(&network.chain_id()),
+        Some(18_660)
+    );
+    network
+}
+
+fn premainnet_combined_reseal(parent: &NativeBlockMeta, meta: &mut NativeBlockMeta) {
+    meta.cumulative_work = cumulative_work_after(&parent.cumulative_work, meta.pow_bits).unwrap();
+    for counter in 0..4_096u64 {
+        meta.nonce = nonce_from_counter(counter);
+        let hash = pow_header_from_meta(meta).pow_hash();
+        if native_seal_meets_target(&hash, meta.pow_bits) {
+            meta.hash = hash;
+            meta.work_hash = hash;
+            return;
+        }
+    }
+    panic!("bounded easy-target production-boundary fixture did not find a seal");
+}
+
+#[test]
+fn premainnet_combined_native_target_and_mining_payload() {
+    use consensus_light_client::{
+        native_rules_hash, AsertAnchor, BITCOIN80_VERSION,
+        HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_ASIC,
+        HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_COMBINED,
+    };
+
+    let network = premainnet_combined_network();
+    let genesis = genesis_meta_for_network(network.pow_bits(0x207f_ffff), &network).unwrap();
+    assert_eq!(
+        genesis.rules_hash,
+        HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_ASIC
+    );
+    // A trusted ancestor suffix tests production height selection without
+    // claiming an independently imported 18,000-block history. Only its first
+    // checkpoint is injected; every following row has a real bounded seal.
+    let mut checkpoint = genesis;
+    checkpoint.height = 18_650;
+    checkpoint.header_mmr_len = checkpoint.height;
+    checkpoint.timestamp_ms += checkpoint.height * 60_000;
+    checkpoint.pow_bits = 0x2070_ffff;
+    checkpoint.hash = [0x18; 32];
+    checkpoint.work_hash = checkpoint.hash;
+    let mut chain = vec![checkpoint];
+    for height in 18_651..=18_661 {
+        let parent = chain.last().unwrap();
+        let expected = native_expected_child_pow_bits_from_chain(&chain, 0x207f_ffff).unwrap();
+        let mut child = parent.clone();
+        child.height = height;
+        child.header_mmr_len = height;
+        child.parent_hash = parent.hash;
+        child.timestamp_ms += if height == 18_660 { 1_000 } else { 60_000 };
+        child.rules_hash = native_rules_hash(&network.chain_id(), height);
+        child.mining_version = native_mining_version_rolling_active(&network.chain_id(), height)
+            .then_some(BITCOIN80_VERSION | 0x20);
+        child.pow_bits = expected;
+        premainnet_combined_reseal(parent, &mut child);
+        verify_native_pow_meta(parent, &child, expected).unwrap();
+        chain.push(child);
+    }
+    let at = |height| chain.iter().find(|meta| meta.height == height).unwrap();
+    let before = at(18_659);
+    let activated = at(18_660);
+    let after = at(18_661);
+    assert_eq!(
+        before.rules_hash,
+        HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_ASIC
+    );
+    assert_eq!(before.mining_version, None);
+    for meta in [activated, after] {
+        assert_eq!(
+            meta.rules_hash,
+            HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_COMBINED
+        );
+        assert_eq!(meta.mining_version, Some(BITCOIN80_VERSION | 0x20));
+        validate_native_mining_payload(meta).unwrap();
+    }
+    let anchor = AsertAnchor {
+        height: 18_659,
+        parent_timestamp_ms: at(18_658).timestamp_ms,
+        pow_bits: before.pow_bits,
+    };
+    for (parent, child) in [(before, activated), (activated, after)] {
+        assert_eq!(
+            child.pow_bits,
+            consensus_light_client::asert_next_bits(
+                anchor,
+                parent.height,
+                parent.timestamp_ms,
+                60_000,
+                3_600_000
+            )
+            .unwrap()
+        );
+    }
+    assert_eq!(activated.pow_bits, before.pow_bits);
+    assert_ne!(after.pow_bits, activated.pow_bits);
+    let legacy_boundary_bits = native_asic_expected_pow_bits_from_schedule(
+        0x207f_ffff,
+        before.pow_bits,
+        before.height,
+        activated.height,
+        before.timestamp_ms,
+        Some(at(18_650).timestamp_ms),
+    )
+    .unwrap();
+    assert_ne!(activated.pow_bits, legacy_boundary_bits);
+    let mut stale_target = activated.clone();
+    stale_target.pow_bits = legacy_boundary_bits;
+    premainnet_combined_reseal(before, &mut stale_target);
+    let error = verify_native_pow_meta(before, &stale_target, activated.pow_bits).unwrap_err();
+    assert!(error.to_string().contains("PoW bits mismatch"), "{error:#}");
+
+    for (parent, original, wrong_rules) in [
+        (
+            at(18_658),
+            before,
+            HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_COMBINED,
+        ),
+        (
+            before,
+            activated,
+            HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_ASIC,
+        ),
+    ] {
+        let mut wrong = original.clone();
+        wrong.rules_hash = wrong_rules;
+        premainnet_combined_reseal(parent, &mut wrong);
+        let error = verify_native_pow_meta(parent, &wrong, original.pow_bits).unwrap_err();
+        assert!(error.to_string().contains("RulesHashMismatch"), "{error:#}");
+    }
+    let mut early_payload = before.clone();
+    early_payload.mining_version = Some(BITCOIN80_VERSION);
+    assert!(validate_native_mining_payload(&early_payload).is_err());
+    let mut missing_payload = activated.clone();
+    missing_payload.mining_version = None;
+    assert!(validate_native_mining_payload(&missing_payload).is_err());
+    for invalid_version in [BITCOIN80_VERSION | 1, BITCOIN80_VERSION ^ 0x2000_0000] {
+        let mut invalid = activated.clone();
+        invalid.mining_version = Some(invalid_version);
+        let error = validate_native_mining_payload(&invalid).unwrap_err();
+        assert!(
+            error.to_string().contains("mining version invalid"),
+            "{error:#}"
+        );
+    }
+    let mut rolled = activated.clone();
+    rolled.mining_version = Some(BITCOIN80_VERSION | 0x40);
+    premainnet_combined_reseal(before, &mut rolled);
+    verify_native_pow_meta(before, &rolled, activated.pow_bits).unwrap();
+    assert_eq!(
+        pow_header_from_meta(activated).pre_hash(),
+        pow_header_from_meta(&rolled).pre_hash()
+    );
+    assert_ne!(rolled.hash, activated.hash);
+
+    let prefix = &chain[..chain.iter().position(|meta| meta.height == 18_660).unwrap()];
+    let mut wrong_anchor = prefix.to_vec();
+    let anchor_index = wrong_anchor.len() - 1;
+    wrong_anchor[anchor_index].parent_hash[0] ^= 1;
+    assert!(native_expected_child_pow_bits_from_chain(&wrong_anchor, 0x207f_ffff).is_err());
+    assert!(
+        native_expected_child_pow_bits_from_chain(&prefix[prefix.len() - 1..], 0x207f_ffff)
+            .is_err()
+    );
+}
+
+fn premainnet_combined_reward_action(
+    miner_amount: u64,
+    funding_amount: u64,
+    funding: &ShieldedAddress,
+    treasury_only: bool,
+) -> PendingAction {
+    let miner = RootSecret::from_bytes([0xc4; 32])
+        .derive()
+        .poseidon2_v8_address(0)
+        .unwrap()
+        .shielded_address();
+    let args = wallet::poseidon2_v8_coinbase::build_poseidon2_v8_rewards_args(
+        if treasury_only { funding } else { &miner },
+        miner_amount,
+        funding,
+        funding_amount,
+        &mut StdRng::seed_from_u64(18_660 + miner_amount + funding_amount),
+    )
+    .unwrap();
+    treasury_action_from_args(args)
+}
+
+#[test]
+fn premainnet_combined_treasury_selection_admission_and_maturity() {
+    let network = premainnet_combined_network();
+    let funding = ShieldedAddress::decode(network.funding_address().unwrap()).unwrap();
+    // Use the exact production network selector, never the test policy seam.
+    let policy = treasury_reward_policy_for_network(&network);
+    assert_eq!(policy.activation_height(), Some(18_660));
+    assert!(policy.entitlement(18_659).is_none());
+    assert_eq!(
+        policy.entitlement(18_660).unwrap().pending_after,
+        100_000_000
+    );
+    assert_eq!(
+        policy.entitlement(18_661).unwrap().pending_after,
+        200_000_000
+    );
+    let check = |actions: &[PendingAction], height| {
+        validate_coinbase_funding_accounting_with_policy(actions, height, Some(&funding), policy)
+    };
+    let historical = premainnet_combined_reward_action(400_000_000, 100_000_000, &funding, false);
+    validate_coinbase_action_payload(&historical).unwrap();
+    check(std::slice::from_ref(&historical), 18_659).unwrap();
+    assert!(check(std::slice::from_ref(&historical), 18_660).is_err());
+    assert_eq!(
+        native_supply_composition_projection_with_policy(&[historical], 18_659, policy)
+            .unwrap()
+            .supply_delta,
+        500_000_000
+    );
+    let miner_only = premainnet_combined_reward_action(400_000_000, 0, &funding, false);
+    for height in [18_660, 18_661, 18_718] {
+        check(std::slice::from_ref(&miner_only), height).unwrap();
+        check(&[], height).unwrap();
+        assert_eq!(
+            native_supply_composition_projection_with_policy(
+                std::slice::from_ref(&miner_only),
+                height,
+                policy
+            )
+            .unwrap()
+            .supply_delta,
+            400_000_000
+        );
+    }
+    let expected_payout: u64 = (18_660..=18_719)
+        .map(|height| consensus::reward::block_subsidy(height) / 5)
+        .sum();
+    assert_eq!(expected_payout, 6_000_000_000);
+    assert_eq!(
+        policy.entitlement(18_718).unwrap().pending_after,
+        5_900_000_000
+    );
+    let due = policy.entitlement(18_719).unwrap();
+    assert_eq!(due.batch_start, 18_660);
+    assert_eq!(due.payout_height, Some(18_719));
+    assert_eq!(due.payout, expected_payout);
+    assert_eq!(due.pending_after, 0);
+    let payout = premainnet_combined_reward_action(400_000_000, expected_payout, &funding, false);
+    validate_coinbase_action_payload(&payout).unwrap();
+    check(std::slice::from_ref(&payout), 18_719).unwrap();
+    assert_eq!(
+        advance_native_supply_digest_with_policy(23, std::slice::from_ref(&payout), 18_719, policy)
+            .unwrap(),
+        6_400_000_023
+    );
+    assert!(check(std::slice::from_ref(&payout), 18_718).is_err());
+    assert!(check(&[], 18_719).is_err());
+    assert!(check(std::slice::from_ref(&miner_only), 18_719).is_err());
+    assert!(check(&[payout.clone(), payout.clone()], 18_719).is_err());
+    let wrong_amount =
+        premainnet_combined_reward_action(400_000_000, expected_payout - 1, &funding, false);
+    assert!(check(&[wrong_amount], 18_719).is_err());
+    let (wrong_recipient, _) = treasury_batch_fixture(400_000_000, expected_payout, false);
+    assert!(check(&[wrong_recipient], 18_719).is_err());
+    let treasury_only = premainnet_combined_reward_action(expected_payout, 0, &funding, true);
+    check(std::slice::from_ref(&treasury_only), 18_719).unwrap();
+    assert_eq!(
+        native_supply_composition_projection_with_policy(&[treasury_only], 18_719, policy)
+            .unwrap()
+            .supply_delta,
+        u128::from(expected_payout)
+    );
+
+    assert_eq!(
+        consensus::reward::coinbase_release_height(18_719),
+        Some(18_838)
+    );
+    assert_eq!(
+        consensus::reward::coinbase_maturity_height(18_719),
+        Some(18_839)
+    );
+    assert!(!consensus::reward::coinbase_mature_in_block(18_719, 18_838));
+    assert!(consensus::reward::coinbase_mature_in_block(18_719, 18_839));
+    let mut meta = genesis_meta_for_network(network.pow_bits(0x207f_ffff), &network).unwrap();
+    meta.height = 18_719;
+    for (parent_height, canonical, eligible) in [
+        (18_837, true, false),
+        (18_838, true, true),
+        (18_839, false, false),
+    ] {
+        let observation = reward_observation_with_policy(
+            &meta,
+            std::slice::from_ref(&payout),
+            canonical,
+            parent_height,
+            meta.hash,
+            policy,
+        )
+        .unwrap();
+        assert_eq!(observation["maturity_height"], 18_839);
+        assert_eq!(observation["height_eligible_for_next_block"], eligible);
+        assert_eq!(
+            observation["treasury_amount_atoms"],
+            expected_payout.to_string()
+        );
+    }
+}

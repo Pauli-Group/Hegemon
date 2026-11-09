@@ -1914,7 +1914,7 @@ not altered or presented as formal proofs of the new wrapper.
 
 The prepared ASERT successor uses the same Bitcoin80 envelope and compact codec.
 Its source-owned chain schedule is in `consensus-light-client/src/pow_rules.rs`;
-the pre-mainnet activation remains unset. At an eventual height H, the target is
+the v0.11.4 pre-mainnet activation is H18,660. At height H, the target is
 computed from the H−1 block's target and height and H−2's timestamp, using the
 current parent's height/time and the reference integer polynomial. Native
 validation resolves that anchor along parent hashes, including unpersisted

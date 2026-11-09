@@ -27,9 +27,9 @@
     }
   ],
   "independent_review": {
-    "bytes": 3331,
-    "path": "release-evidence/combined-upgrade-20261108/independent-review-v9.json",
-    "sha256": "697e9b4710bd1b30cb406cf936cf864ed249100e2691b5ac708ccea693abc7fd"
+    "bytes": 10371,
+    "path": "release-evidence/combined-upgrade-20261108/independent-review-v10.json",
+    "sha256": "b5de7ce14a20aa9ddad1c373528e30806ddbdf83aaca0c446c948002db9aa939"
   },
   "proof_identity": {
     "cargo_lock_sha256": "1c243bf3858f4ee22fa4441c7a2ee6d49b16d264147b0f3a2de845e760821719",
@@ -255,17 +255,17 @@
         "--artifact-manifest",
         "{artifact_manifest}",
         "--runtime-receipt",
-        "release-evidence/combined-upgrade-20261108/runtime-v9/receipt.json",
+        "release-evidence/combined-upgrade-20261108/runtime-v10/receipt.json",
         "--runtime-receipt-sha256",
-        "362ae11042606354433fe3126e157af7d3b20cfe27bc054ae02afe4e33f63036",
+        "d3fcdb47e8e2c8b73debd23f97f76c24435db6f75f76dec4561bc5f5e86523c6",
         "--runtime-runner-sha256",
         "d6d776dcc7becf42be69324cb1d8c26fee272b4addc174a0e32a816e04196ae5",
         "--runtime-io-sha256",
         "70af3b7b9dbb71cbcd27c8acc67b6d039b7f1e5ad2d491afa81e90144cabdd1f",
         "--runtime-node-sha256",
-        "9e395320d25449ff99ed2f7fb943b96f516f666b32d81c5140778490857c7fdd",
+        "b0a9d42222f37ac58cc6342dfb8cdfdb60a46ed281f70bbdbf692fab831719c1",
         "--runtime-private-spend-sha256",
-        "c46a2924a2ceed81487d4cb94e3ed2fc35557755464e7bf1b461316e34be574b"
+        "9c7ca4759b2866e82a26446cb1f16504de33eb473dbc974331292068bf65b462"
       ],
       "name": "timestamp_admission",
       "timeout_seconds": 7200
@@ -281,17 +281,17 @@
         "--artifact-manifest",
         "{artifact_manifest}",
         "--runtime-receipt",
-        "release-evidence/combined-upgrade-20261108/runtime-v9/receipt.json",
+        "release-evidence/combined-upgrade-20261108/runtime-v10/receipt.json",
         "--runtime-receipt-sha256",
-        "362ae11042606354433fe3126e157af7d3b20cfe27bc054ae02afe4e33f63036",
+        "d3fcdb47e8e2c8b73debd23f97f76c24435db6f75f76dec4561bc5f5e86523c6",
         "--runtime-runner-sha256",
         "d6d776dcc7becf42be69324cb1d8c26fee272b4addc174a0e32a816e04196ae5",
         "--runtime-io-sha256",
         "70af3b7b9dbb71cbcd27c8acc67b6d039b7f1e5ad2d491afa81e90144cabdd1f",
         "--runtime-node-sha256",
-        "9e395320d25449ff99ed2f7fb943b96f516f666b32d81c5140778490857c7fdd",
+        "b0a9d42222f37ac58cc6342dfb8cdfdb60a46ed281f70bbdbf692fab831719c1",
         "--runtime-private-spend-sha256",
-        "c46a2924a2ceed81487d4cb94e3ed2fc35557755464e7bf1b461316e34be574b"
+        "9c7ca4759b2866e82a26446cb1f16504de33eb473dbc974331292068bf65b462"
       ],
       "name": "asert",
       "timeout_seconds": 7200
@@ -307,17 +307,17 @@
         "--artifact-manifest",
         "{artifact_manifest}",
         "--runtime-receipt",
-        "release-evidence/combined-upgrade-20261108/runtime-v9/receipt.json",
+        "release-evidence/combined-upgrade-20261108/runtime-v10/receipt.json",
         "--runtime-receipt-sha256",
-        "362ae11042606354433fe3126e157af7d3b20cfe27bc054ae02afe4e33f63036",
+        "d3fcdb47e8e2c8b73debd23f97f76c24435db6f75f76dec4561bc5f5e86523c6",
         "--runtime-runner-sha256",
         "d6d776dcc7becf42be69324cb1d8c26fee272b4addc174a0e32a816e04196ae5",
         "--runtime-io-sha256",
         "70af3b7b9dbb71cbcd27c8acc67b6d039b7f1e5ad2d491afa81e90144cabdd1f",
         "--runtime-node-sha256",
-        "9e395320d25449ff99ed2f7fb943b96f516f666b32d81c5140778490857c7fdd",
+        "b0a9d42222f37ac58cc6342dfb8cdfdb60a46ed281f70bbdbf692fab831719c1",
         "--runtime-private-spend-sha256",
-        "c46a2924a2ceed81487d4cb94e3ed2fc35557755464e7bf1b461316e34be574b"
+        "9c7ca4759b2866e82a26446cb1f16504de33eb473dbc974331292068bf65b462"
       ],
       "name": "version_rolling",
       "timeout_seconds": 7200
@@ -333,17 +333,17 @@
         "--artifact-manifest",
         "{artifact_manifest}",
         "--runtime-receipt",
-        "release-evidence/combined-upgrade-20261108/runtime-v9/receipt.json",
+        "release-evidence/combined-upgrade-20261108/runtime-v10/receipt.json",
         "--runtime-receipt-sha256",
-        "362ae11042606354433fe3126e157af7d3b20cfe27bc054ae02afe4e33f63036",
+        "d3fcdb47e8e2c8b73debd23f97f76c24435db6f75f76dec4561bc5f5e86523c6",
         "--runtime-runner-sha256",
         "d6d776dcc7becf42be69324cb1d8c26fee272b4addc174a0e32a816e04196ae5",
         "--runtime-io-sha256",
         "70af3b7b9dbb71cbcd27c8acc67b6d039b7f1e5ad2d491afa81e90144cabdd1f",
         "--runtime-node-sha256",
-        "9e395320d25449ff99ed2f7fb943b96f516f666b32d81c5140778490857c7fdd",
+        "b0a9d42222f37ac58cc6342dfb8cdfdb60a46ed281f70bbdbf692fab831719c1",
         "--runtime-private-spend-sha256",
-        "c46a2924a2ceed81487d4cb94e3ed2fc35557755464e7bf1b461316e34be574b"
+        "9c7ca4759b2866e82a26446cb1f16504de33eb473dbc974331292068bf65b462"
       ],
       "name": "treasury_cadence",
       "timeout_seconds": 7200
@@ -359,17 +359,17 @@
         "--artifact-manifest",
         "{artifact_manifest}",
         "--runtime-receipt",
-        "release-evidence/combined-upgrade-20261108/runtime-v9/receipt.json",
+        "release-evidence/combined-upgrade-20261108/runtime-v10/receipt.json",
         "--runtime-receipt-sha256",
-        "362ae11042606354433fe3126e157af7d3b20cfe27bc054ae02afe4e33f63036",
+        "d3fcdb47e8e2c8b73debd23f97f76c24435db6f75f76dec4561bc5f5e86523c6",
         "--runtime-runner-sha256",
         "d6d776dcc7becf42be69324cb1d8c26fee272b4addc174a0e32a816e04196ae5",
         "--runtime-io-sha256",
         "70af3b7b9dbb71cbcd27c8acc67b6d039b7f1e5ad2d491afa81e90144cabdd1f",
         "--runtime-node-sha256",
-        "9e395320d25449ff99ed2f7fb943b96f516f666b32d81c5140778490857c7fdd",
+        "b0a9d42222f37ac58cc6342dfb8cdfdb60a46ed281f70bbdbf692fab831719c1",
         "--runtime-private-spend-sha256",
-        "c46a2924a2ceed81487d4cb94e3ed2fc35557755464e7bf1b461316e34be574b"
+        "9c7ca4759b2866e82a26446cb1f16504de33eb473dbc974331292068bf65b462"
       ],
       "name": "current_smzl_htlc",
       "timeout_seconds": 7200
@@ -385,17 +385,17 @@
         "--artifact-manifest",
         "{artifact_manifest}",
         "--runtime-receipt",
-        "release-evidence/combined-upgrade-20261108/runtime-v9/receipt.json",
+        "release-evidence/combined-upgrade-20261108/runtime-v10/receipt.json",
         "--runtime-receipt-sha256",
-        "362ae11042606354433fe3126e157af7d3b20cfe27bc054ae02afe4e33f63036",
+        "d3fcdb47e8e2c8b73debd23f97f76c24435db6f75f76dec4561bc5f5e86523c6",
         "--runtime-runner-sha256",
         "d6d776dcc7becf42be69324cb1d8c26fee272b4addc174a0e32a816e04196ae5",
         "--runtime-io-sha256",
         "70af3b7b9dbb71cbcd27c8acc67b6d039b7f1e5ad2d491afa81e90144cabdd1f",
         "--runtime-node-sha256",
-        "9e395320d25449ff99ed2f7fb943b96f516f666b32d81c5140778490857c7fdd",
+        "b0a9d42222f37ac58cc6342dfb8cdfdb60a46ed281f70bbdbf692fab831719c1",
         "--runtime-private-spend-sha256",
-        "c46a2924a2ceed81487d4cb94e3ed2fc35557755464e7bf1b461316e34be574b"
+        "9c7ca4759b2866e82a26446cb1f16504de33eb473dbc974331292068bf65b462"
       ],
       "name": "restart_reorg_fresh_sync",
       "timeout_seconds": 7200
@@ -412,10 +412,10 @@
     },
     {
       "after_mode": "100644",
-      "after_sha256": "2f9080c58bbdfe2f1f3757f79289020116d9403e725e7cf3b811d02f9fa74e51",
+      "after_sha256": "fa0186c720ea9e8b9d7f47518b9990fe360e689cf34e3f09b96b7f7053ab054a",
       "before_mode": null,
       "before_sha256": null,
-      "bytes": 17286,
+      "bytes": 17586,
       "path": ".agent/COMBINED_UPGRADE_EXECPLAN.md"
     },
     {
@@ -433,6 +433,14 @@
       "before_sha256": null,
       "bytes": 7069,
       "path": ".agent/TREASURY_60_BLOCK_EXECPLAN.md"
+    },
+    {
+      "after_mode": "100644",
+      "after_sha256": "735173222f7cefb8a98ea83c672b09a40abfd6fa181097738f2822b774844110",
+      "before_mode": null,
+      "before_sha256": null,
+      "bytes": 11898,
+      "path": ".agent/V0114_RELEASE_EXECPLAN.md"
     },
     {
       "after_mode": "100644",
@@ -476,23 +484,23 @@
     },
     {
       "after_mode": "100644",
-      "after_sha256": "c25ff8214bd478e86812332333ee5db1b259bf6719bdbd6849595171e308bd2c",
+      "after_sha256": "591c245bbd5c3feb57c8aedd7adc05b3d29294ed38a88ed9e9aec62c95abf9c7",
       "before_mode": "100644",
       "before_sha256": "48d02cd1ba70527bf3c291d555dafb82413d45e59d85bda8345e282472d0ca6c",
-      "bytes": 394568,
+      "bytes": 394889,
       "path": "DESIGN.md"
     },
     {
       "after_mode": "100644",
-      "after_sha256": "222a1054ea1319986e23ea1375f4a4f2cb0d1e59233e30d168154bccf8c2ad08",
+      "after_sha256": "4dee7cb216244cb826e90a4955ad5a9f634206317a3e63aa59b83a4256e0a205",
       "before_mode": "100644",
       "before_sha256": "1eeb3a490952e39108d24b3e788bcf3a8b9e56fc536bc65f2ed8a5591aab132d",
-      "bytes": 558361,
+      "bytes": 558354,
       "path": "METHODS.md"
     },
     {
       "after_mode": "100644",
-      "after_sha256": "cf6f0533048947d1a13b94c60e2235dd8798b20af74f0984888a63d2471f48d9",
+      "after_sha256": "9cee81ae37da5eab03959d44a9d44a4585c0a6f87be331a5a13fbec3d22f3f7f",
       "before_mode": "100644",
       "before_sha256": "22b3e873865ff8f162801b69ec2eeb1751c5743b0b8a0980cecb6cb0b67969fe",
       "bytes": 8994,
@@ -500,7 +508,7 @@
     },
     {
       "after_mode": "100644",
-      "after_sha256": "5f62dbb8a66c31961e455a6e642410cfcccebef1ec5e96c68beaac0392e24cce",
+      "after_sha256": "53805733154ccf6aff356c40a46602e9d38651cf0af1c9178423e2faafe78d88",
       "before_mode": "100644",
       "before_sha256": "9d3861fd3c7777a770612d82835ac6faddb6d3983f2f2fa3a2e0d943a9100c93",
       "bytes": 2088358,
@@ -508,11 +516,19 @@
     },
     {
       "after_mode": "100644",
-      "after_sha256": "f8a8d6c0bd9c30ed3083f6bee25d1efb9c4b68515503ffcaaa1f122cf639d617",
+      "after_sha256": "ccd7881e354369d9efd835e235a2c407a2d2cae56de18526c5de8b4c0eb619b5",
       "before_mode": "100644",
       "before_sha256": "782b95629414f2439064d1646d03dcdc0f2c006e964e0f7404a90031c3a6d94d",
       "bytes": 858157,
       "path": "config/formal-security-claims.json"
+    },
+    {
+      "after_mode": "100644",
+      "after_sha256": "7441c71bf873442568c5668ffd4ad719d66b4b670d66264967a072e4aa3566b8",
+      "before_mode": "100644",
+      "before_sha256": "b2eafd36cfbfd571f5789a4f7b009ae7470f8aee673c92343ff8356ba8f74129",
+      "bytes": 634,
+      "path": "config/testnet/0.11/release.json"
     },
     {
       "after_mode": "100644",
@@ -556,10 +572,10 @@
     },
     {
       "after_mode": "100644",
-      "after_sha256": "d1664bb0d89edf1ea556399da370466db1dc38e8dfffa529872979e78ce3fd5e",
+      "after_sha256": "36dbb414b78a9e5df56e5d154dea83be510369446f751da1b22a51b437598bf1",
       "before_mode": null,
       "before_sha256": null,
-      "bytes": 20132,
+      "bytes": 23092,
       "path": "consensus-light-client/src/pow_rules.rs"
     },
     {
@@ -708,10 +724,10 @@
     },
     {
       "after_mode": "100644",
-      "after_sha256": "b16140b83677f10fa57861821fc1bca102935e7453f09ae7dbe34c0c9212cc24",
+      "after_sha256": "59af97d620bde5cbc1f6e1c7bfddd149f67cd9a62b59533afa2f47da1fb2f59e",
       "before_mode": null,
       "before_sha256": null,
-      "bytes": 8677,
+      "bytes": 8989,
       "path": "docs/consensus/ASERT_UPGRADE.md"
     },
     {
@@ -740,11 +756,19 @@
     },
     {
       "after_mode": "100644",
-      "after_sha256": "0d7b5976d6213b84299300f128ac082dc8114e0e79f35660051ff4495329870e",
+      "after_sha256": "9f4b0270c53c8f989e449ec03b288387ddde0ffb5ded0936d96f328048b46bd3",
       "before_mode": null,
       "before_sha256": null,
-      "bytes": 6257,
+      "bytes": 6634,
       "path": "docs/releases/combined-upgrade-qualification-20261108.md"
+    },
+    {
+      "after_mode": "100644",
+      "after_sha256": "24d9874e01896bee2c6ca7fec10d21115bf9ad1881d296371cae04d3b358ef21",
+      "before_mode": null,
+      "before_sha256": null,
+      "bytes": 3121,
+      "path": "docs/releases/v0.11.4.md"
     },
     {
       "after_mode": "100644",
@@ -924,10 +948,10 @@
     },
     {
       "after_mode": "100644",
-      "after_sha256": "ed6e1ce71504ff9bb189e15cd09d43a0c630ecdef6f857de420251c05b067018",
+      "after_sha256": "2c4d8cfba1cb3bab7928944fe9b5a6485ca8c6f2f268bbeda07f1867296fe5f8",
       "before_mode": "100644",
       "before_sha256": "ce36fc8c665946ef0af9086b5d533dc7ff2ee764eae975a72e96e930695ed0e2",
-      "bytes": 18935,
+      "bytes": 31453,
       "path": "node/src/native/poseidon2_v8_coinbase_tests.rs"
     },
     {
@@ -1076,10 +1100,18 @@
     },
     {
       "after_mode": "100644",
-      "after_sha256": "695b30e657cc4d6d31b3880c4a59e89d4c1e0e055937b225269bebe739e01b5c",
+      "after_sha256": "4064b7732d3a2484d1a3fc9ae8e37bd22ebcf6c3133eb162ee15e045c2cc4c72",
+      "before_mode": "100644",
+      "before_sha256": "f9079908645eec23020edd73d5e78c58758dbfa503d3a8953aafc8c05276b07e",
+      "bytes": 42383,
+      "path": "protocol/versioning/src/lib.rs"
+    },
+    {
+      "after_mode": "100644",
+      "after_sha256": "e937b57ac50b6a913909e6704c481e8e86b863fe0dd1284e7d3b070628162958",
       "before_mode": null,
       "before_sha256": null,
-      "bytes": 4062,
+      "bytes": 4300,
       "path": "runbooks/combined_upgrade_activation.md"
     },
     {
@@ -1124,10 +1156,10 @@
     },
     {
       "after_mode": "100644",
-      "after_sha256": "e97e131eba6073aa831b3b4c39e598e8d4adcf38c9e012ce1c3335076c620ccf",
+      "after_sha256": "b8d186e7b004113e5c7d47444aa02eb5e67b27926ebccb19e1d426826bb4ec7d",
       "before_mode": null,
       "before_sha256": null,
-      "bytes": 28142,
+      "bytes": 29501,
       "path": "scripts/check_combined_upgrade_candidate.py"
     },
     {
@@ -1220,10 +1252,10 @@
     },
     {
       "after_mode": "100644",
-      "after_sha256": "3040494d6973b07d86218982d4de76d4179b64100fc90ff6fcc8fa217e7881b9",
+      "after_sha256": "fbdf033edab1ce47be2f98c4eb3cb7dc1cb25500fef180deaeac855114fe1bab",
       "before_mode": null,
       "before_sha256": null,
-      "bytes": 31454,
+      "bytes": 31858,
       "path": "scripts/qualify_combined_upgrade.py"
     },
     {
@@ -1260,10 +1292,10 @@
     },
     {
       "after_mode": "100644",
-      "after_sha256": "8779ce1223762bc7291b16f96e8197b6b629a5d5962d1643c5394e8ce35f6e54",
+      "after_sha256": "d74a3952aed5ec2b0401991a85341f466c4055db6883c0fbf5cadab3d5e6e331",
       "before_mode": null,
       "before_sha256": null,
-      "bytes": 22694,
+      "bytes": 30087,
       "path": "scripts/test_check_combined_upgrade_candidate.py"
     },
     {
@@ -1276,6 +1308,14 @@
     },
     {
       "after_mode": "100644",
+      "after_sha256": "b69b2d7d6d678263656d503d3d215fe8ea4a5fa6bf8e99c2ec1dfabc709ebb17",
+      "before_mode": "100644",
+      "before_sha256": "a14b1aece8dd51582b77d7be9d76a6ba7c3ba878259ca15975fc7b1f141f4dd6",
+      "bytes": 20400,
+      "path": "scripts/test_package_v011_release.py"
+    },
+    {
+      "after_mode": "100644",
       "after_sha256": "8b56f899ca106761182bb623188d56f794f020c185f57119e98e1bbd2a6902e6",
       "before_mode": "100644",
       "before_sha256": "085b7c4c4732a42e822fa8345f95a9c9851e05ed958efcacc954a00eedfecd83",
@@ -1284,10 +1324,10 @@
     },
     {
       "after_mode": "100644",
-      "after_sha256": "003987fd9ecffe334f658a69edd9725e9d3cf581d102148ddbfb396fafd98d76",
+      "after_sha256": "2c4f9d229dcc5340c896ff5cd645c47126ea73062bbb0c630fe2a3f13c215cb5",
       "before_mode": null,
       "before_sha256": null,
-      "bytes": 20703,
+      "bytes": 24205,
       "path": "scripts/test_qualify_combined_upgrade.py"
     },
     {
@@ -1297,6 +1337,14 @@
       "before_sha256": "490215c111438a163b3b93b7c78297fdfb29d39e73e69982d217996e316a17b5",
       "bytes": 17579,
       "path": "scripts/tests/v011_current_successor/test_security_audit_scope.py"
+    },
+    {
+      "after_mode": "100644",
+      "after_sha256": "ac48b71b7c1511c9c3ede090b6cd6ed231a1e44c86b194bdc4e5d9bbf7b9621f",
+      "before_mode": "100644",
+      "before_sha256": "e03d977490b6951129ac204612303c01db644d51252b313055ad1517512a39dd",
+      "bytes": 12993,
+      "path": "scripts/v011_join.py"
     },
     {
       "after_mode": "100644",
@@ -1389,10 +1437,10 @@
       "sha256": "82ff8b39301828a2af45557ac38b068933caf3b5bde5e74faee27babddd73710"
     },
     {
-      "bytes": 17286,
+      "bytes": 17586,
       "mode": "100644",
       "path": ".agent/COMBINED_UPGRADE_EXECPLAN.md",
-      "sha256": "2f9080c58bbdfe2f1f3757f79289020116d9403e725e7cf3b811d02f9fa74e51"
+      "sha256": "fa0186c720ea9e8b9d7f47518b9990fe360e689cf34e3f09b96b7f7053ab054a"
     },
     {
       "bytes": 8249,
@@ -2101,6 +2149,12 @@
       "mode": "100644",
       "path": ".agent/V0113_PUBLIC_SUBMIT_EXECPLAN.md",
       "sha256": "efbc8b67cdf2e2f20379f661ea22b92a422aa64d27a5d4471e90fdf49e99d798"
+    },
+    {
+      "bytes": 11898,
+      "mode": "100644",
+      "path": ".agent/V0114_RELEASE_EXECPLAN.md",
+      "sha256": "735173222f7cefb8a98ea83c672b09a40abfd6fa181097738f2822b774844110"
     },
     {
       "bytes": 8118,
@@ -13491,10 +13545,10 @@
       "sha256": "47b11397c202f13d63e4d61717a38cc35cf5a67cd5ac087a64f7bf4c44b45ba5"
     },
     {
-      "bytes": 394568,
+      "bytes": 394889,
       "mode": "100644",
       "path": "DESIGN.md",
-      "sha256": "c25ff8214bd478e86812332333ee5db1b259bf6719bdbd6849595171e308bd2c"
+      "sha256": "591c245bbd5c3feb57c8aedd7adc05b3d29294ed38a88ed9e9aec62c95abf9c7"
     },
     {
       "bytes": 1448,
@@ -13509,10 +13563,10 @@
       "sha256": "2986410eed176dc8c735b2973a347db5713da6883c6d7b860cc643e6be3ca7df"
     },
     {
-      "bytes": 558361,
+      "bytes": 558354,
       "mode": "100644",
       "path": "METHODS.md",
-      "sha256": "222a1054ea1319986e23ea1375f4a4f2cb0d1e59233e30d168154bccf8c2ad08"
+      "sha256": "4dee7cb216244cb826e90a4955ad5a9f634206317a3e63aa59b83a4256e0a205"
     },
     {
       "bytes": 748,
@@ -14952,7 +15006,7 @@
       "bytes": 8994,
       "mode": "100644",
       "path": "config/active-goal-progress.json",
-      "sha256": "cf6f0533048947d1a13b94c60e2235dd8798b20af74f0984888a63d2471f48d9"
+      "sha256": "9cee81ae37da5eab03959d44a9d44a4585c0a6f87be331a5a13fbec3d22f3f7f"
     },
     {
       "bytes": 71,
@@ -14970,13 +15024,13 @@
       "bytes": 2088358,
       "mode": "100644",
       "path": "config/formal-security-blueprint.json",
-      "sha256": "5f62dbb8a66c31961e455a6e642410cfcccebef1ec5e96c68beaac0392e24cce"
+      "sha256": "53805733154ccf6aff356c40a46602e9d38651cf0af1c9178423e2faafe78d88"
     },
     {
       "bytes": 858157,
       "mode": "100644",
       "path": "config/formal-security-claims.json",
-      "sha256": "f8a8d6c0bd9c30ed3083f6bee25d1efb9c4b68515503ffcaaa1f122cf639d617"
+      "sha256": "ccd7881e354369d9efd835e235a2c407a2d2cae56de18526c5de8b4c0eb619b5"
     },
     {
       "bytes": 339130,
@@ -15066,7 +15120,7 @@
       "bytes": 634,
       "mode": "100644",
       "path": "config/testnet/0.11/release.json",
-      "sha256": "b2eafd36cfbfd571f5789a4f7b009ae7470f8aee673c92343ff8356ba8f74129"
+      "sha256": "7441c71bf873442568c5668ffd4ad719d66b4b670d66264967a072e4aa3566b8"
     },
     {
       "bytes": 3261,
@@ -15153,10 +15207,10 @@
       "sha256": "f4b1b12a7b4a19efefd6f729a6a24bacc6b7ab110c97a1fc80a9f4984d73e7bd"
     },
     {
-      "bytes": 20132,
+      "bytes": 23092,
       "mode": "100644",
       "path": "consensus-light-client/src/pow_rules.rs",
-      "sha256": "d1664bb0d89edf1ea556399da370466db1dc38e8dfffa529872979e78ce3fd5e"
+      "sha256": "36dbb414b78a9e5df56e5d154dea83be510369446f751da1b22a51b437598bf1"
     },
     {
       "bytes": 51630,
@@ -15801,10 +15855,10 @@
       "sha256": "27442158b2ece29ba6216572669cc7ba04438cb68bd768313f25e15c6ff623e2"
     },
     {
-      "bytes": 8677,
+      "bytes": 8989,
       "mode": "100644",
       "path": "docs/consensus/ASERT_UPGRADE.md",
-      "sha256": "b16140b83677f10fa57861821fc1bca102935e7453f09ae7dbe34c0c9212cc24"
+      "sha256": "59af97d620bde5cbc1f6e1c7bfddd149f67cd9a62b59533afa2f47da1fb2f59e"
     },
     {
       "bytes": 4958,
@@ -16629,16 +16683,22 @@
       "sha256": "65d4f6761abad170fd7cd22e65aab90db12eb7deec4c3abac94f5f724d79c834"
     },
     {
-      "bytes": 6257,
+      "bytes": 6634,
       "mode": "100644",
       "path": "docs/releases/combined-upgrade-qualification-20261108.md",
-      "sha256": "0d7b5976d6213b84299300f128ac082dc8114e0e79f35660051ff4495329870e"
+      "sha256": "9f4b0270c53c8f989e449ec03b288387ddde0ffb5ded0936d96f328048b46bd3"
     },
     {
       "bytes": 9136,
       "mode": "100644",
       "path": "docs/releases/v0.11.3.md",
       "sha256": "b56527154b8891fd2912e8077c0172ed0a2584178004b62f3d8804712861f270"
+    },
+    {
+      "bytes": 3121,
+      "mode": "100644",
+      "path": "docs/releases/v0.11.4.md",
+      "sha256": "24d9874e01896bee2c6ca7fec10d21115bf9ad1881d296371cae04d3b358ef21"
     },
     {
       "bytes": 6998,
@@ -34767,10 +34827,10 @@
       "sha256": "20365eb217ab7d1f4dd9bbfa968d6bb33a5a724f7d76c30e03e3e1c6b641a151"
     },
     {
-      "bytes": 18935,
+      "bytes": 31453,
       "mode": "100644",
       "path": "node/src/native/poseidon2_v8_coinbase_tests.rs",
-      "sha256": "ed6e1ce71504ff9bb189e15cd09d43a0c630ecdef6f857de420251c05b067018"
+      "sha256": "2c4d8cfba1cb3bab7928944fe9b5a6485ca8c6f2f268bbeda07f1867296fe5f8"
     },
     {
       "bytes": 48055,
@@ -36396,7 +36456,7 @@
       "bytes": 42383,
       "mode": "100644",
       "path": "protocol/versioning/src/lib.rs",
-      "sha256": "f9079908645eec23020edd73d5e78c58758dbfa503d3a8953aafc8c05276b07e"
+      "sha256": "4064b7732d3a2484d1a3fc9ae8e37bd22ebcf6c3133eb162ee15e045c2cc4c72"
     },
     {
       "bytes": 8574,
@@ -37905,10 +37965,10 @@
       "sha256": "746895aec44234299c30c1151f0bd3b48cc581638ad172612a05929ea1d234a2"
     },
     {
-      "bytes": 4062,
+      "bytes": 4300,
       "mode": "100644",
       "path": "runbooks/combined_upgrade_activation.md",
-      "sha256": "695b30e657cc4d6d31b3880c4a59e89d4c1e0e055937b225269bebe739e01b5c"
+      "sha256": "e937b57ac50b6a913909e6704c481e8e86b863fe0dd1284e7d3b070628162958"
     },
     {
       "bytes": 5505,
@@ -38037,10 +38097,10 @@
       "sha256": "6a8cc5a829c6ebcea4e24b9469bc49d975f59686b240aad4d146392d2e5f36b9"
     },
     {
-      "bytes": 28142,
+      "bytes": 29501,
       "mode": "100644",
       "path": "scripts/check_combined_upgrade_candidate.py",
-      "sha256": "e97e131eba6073aa831b3b4c39e598e8d4adcf38c9e012ce1c3335076c620ccf"
+      "sha256": "b8d186e7b004113e5c7d47444aa02eb5e67b27926ebccb19e1d426826bb4ec7d"
     },
     {
       "bytes": 27101,
@@ -38559,10 +38619,10 @@
       "sha256": "c37455302ad34f631df1938b0ee7980af8bb8a57930ba38c05a6fe86941c145f"
     },
     {
-      "bytes": 31454,
+      "bytes": 31858,
       "mode": "100644",
       "path": "scripts/qualify_combined_upgrade.py",
-      "sha256": "3040494d6973b07d86218982d4de76d4179b64100fc90ff6fcc8fa217e7881b9"
+      "sha256": "fbdf033edab1ce47be2f98c4eb3cb7dc1cb25500fef180deaeac855114fe1bab"
     },
     {
       "bytes": 26639,
@@ -38751,10 +38811,10 @@
       "sha256": "ef4968d63b3408e861c02623bae44f02ebb9693bd84942a62d670a5904f7c7f3"
     },
     {
-      "bytes": 22694,
+      "bytes": 30087,
       "mode": "100644",
       "path": "scripts/test_check_combined_upgrade_candidate.py",
-      "sha256": "8779ce1223762bc7291b16f96e8197b6b629a5d5962d1643c5394e8ce35f6e54"
+      "sha256": "d74a3952aed5ec2b0401991a85341f466c4055db6883c0fbf5cadab3d5e6e331"
     },
     {
       "bytes": 8337,
@@ -38961,10 +39021,10 @@
       "sha256": "605d840cacd061a75226062d4ddc46e5a017382152aa3e05cbd4a4cdbc06519d"
     },
     {
-      "bytes": 16528,
+      "bytes": 20400,
       "mode": "100644",
       "path": "scripts/test_package_v011_release.py",
-      "sha256": "a14b1aece8dd51582b77d7be9d76a6ba7c3ba878259ca15975fc7b1f141f4dd6"
+      "sha256": "b69b2d7d6d678263656d503d3d215fe8ea4a5fa6bf8e99c2ec1dfabc709ebb17"
     },
     {
       "bytes": 7379,
@@ -38985,10 +39045,10 @@
       "sha256": "8b56f899ca106761182bb623188d56f794f020c185f57119e98e1bbd2a6902e6"
     },
     {
-      "bytes": 20703,
+      "bytes": 24205,
       "mode": "100644",
       "path": "scripts/test_qualify_combined_upgrade.py",
-      "sha256": "003987fd9ecffe334f658a69edd9725e9d3cf581d102148ddbfb396fafd98d76"
+      "sha256": "2c4f9d229dcc5340c896ff5cd645c47126ea73062bbb0c630fe2a3f13c215cb5"
     },
     {
       "bytes": 11781,
@@ -39117,10 +39177,10 @@
       "sha256": "4def3f49778b0f946df4ada18c3e7824ce2a42266823d4c1dde00009350c1bd2"
     },
     {
-      "bytes": 12912,
+      "bytes": 12993,
       "mode": "100644",
       "path": "scripts/v011_join.py",
-      "sha256": "e03d977490b6951129ac204612303c01db644d51252b313055ad1517512a39dd"
+      "sha256": "ac48b71b7c1511c9c3ede090b6cd6ed231a1e44c86b194bdc4e5d9bbf7b9621f"
     },
     {
       "bytes": 13001,
@@ -40389,6 +40449,6 @@
       "sha256": "2979ff748a39a72e0181c8f82aff4f2da29f69ced72d6dd5e49ddf0c9cd27b64"
     }
   ],
-  "source_inventory_sha256": "69f427908538e810b20942d636cd85f10e8e6db942c54e25b43658c6c5281b36",
+  "source_inventory_sha256": "7d4a19b8f3fed896e63f8657dad035ee1bad601036fb15f13e96829427f38e40",
   "status": "frozen"
 }

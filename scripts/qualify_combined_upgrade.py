@@ -168,6 +168,8 @@ def local_suites(name, logdir):
         completed.add('lean_vectors')
         for test, gates in ASERT_TESTS.items():
             native(ASERT + test, gates)
+        native(TREASURY + 'premainnet_combined_native_target_and_mining_payload',
+               ('activation_boundary', 'wrong_target_rules', 'branch_anchor'))
         # Manual ASIC solving and finite target vectors do not establish live
         # CPU-author catchup. An actual author transcript is still required.
     elif name == 'version_rolling':
@@ -177,6 +179,9 @@ def local_suites(name, logdir):
     elif name == 'treasury_cadence':
         for test, gates in TREASURY_TESTS.items():
             native(TREASURY + test, gates)
+        native(TREASURY + 'premainnet_combined_treasury_selection_admission_and_maturity',
+               ('migration_boundary', 'invalid_payout_rejection', 'omitted_reward_semantics',
+                'pending_issued_accounting', 'maturity'))
         native(NATIVE + 'treasury_formal_tests::lean_generated_treasury_batch_supply_vectors_match_production', ('pending_issued_accounting',))
         for test, gates in (
             ('activation_and_fresh_genesis_boundaries_do_not_reaccrue_history', ('fresh_cadence',)),

@@ -1,7 +1,10 @@
 # Combined candidate qualification procedure
 
-This procedure prepares software evidence only. Production/mainnet activation,
-deployment, publication and physical ASIC qualification remain false. The root
+This procedure prepares software evidence only. Its technical receipt fields for
+production/mainnet authority, activation, deployment and physical ASIC qualification
+remain false. The user separately authorized the v0.11.4 pre-mainnet release at
+H18,660, publication and dev-then-OVH rollout; actual operational outcomes require
+separate receipts. The root
 coordinator supplies actual receipts and independent review; none are generated
 by this document or the pending candidate configuration.
 
@@ -27,8 +30,10 @@ These are argv elements, not shell commands or unfilled authorized configuration
 Use a bounded `timeout_seconds` no greater than 7200. Every target actually runs
 the focused source suites; source-bound public external rehearsal evidence is
 explicitly labeled and never replaces that target's actual final proof/H0 checks.
-The ordinary final binaries retain activation `None`; the runtime transcript
-records distinct feature-bearing rehearsal executables and hashes.
+The ordinary v0.11.4 binaries carry pre-mainnet activation H18,660; the runtime
+transcript records distinct feature-bearing Development rehearsal executables
+with activation H120 and separate hashes. Configured production-chain transition
+tests cover H18,659/H18,660/H18,661, treasury payout H18,719 and maturity H18,839.
 
 The producer executes exact Rust tests with a one-pass/zero-ignored predicate,
 the adapter socket tests, no_std compilation and ASERT Lean/vector regeneration.

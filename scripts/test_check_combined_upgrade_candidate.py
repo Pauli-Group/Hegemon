@@ -10,8 +10,9 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 ROOT=Path(__file__).resolve().parents[1]
 def module(name,path):
@@ -45,6 +46,129 @@ def profile_routing_fixture(configs, receipt):
         run=stack.enter_context(patch.object(profile.subprocess,'run',return_value=
             subprocess.CompletedProcess([],0,json.dumps(receipt),'')))
         yield root,manifest_path,helpers,run,events
+
+class V0114AdapterTests(unittest.TestCase):
+    """Synthetic release-tuple controls; no native or historical execution."""
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.metadata = {'schema': 'hegemon.pre-mainnet.release.v1', 'release': 'v0.11',
+                         'network': 'pre-mainnet', 'software_release': 'v0.11.4',
+                         'software_version': '0.11.4'}
+        self.write('config/testnet/0.11/release.json', json.dumps(self.metadata))
+        self.write('protocol/versioning/src/lib.rs', 'pub const RELEASE_VERSION: &str = "0.11.4";\n')
+        self.write('consensus-light-client/src/pow_rules.rs',
+                   'pub const PREMAINNET_COMBINED_UPGRADE_ACTIVATION_HEIGHT: Option<u64> = Some(18_660);\n')
+
+    def write(self, relative, text):
+        path = self.root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        return path
+
+    def test_exact_release_tuple_and_current_source_are_accepted(self):
+        gate.release_tuple(self.root)
+        gate.release_tuple(ROOT)
+
+    def test_release_metadata_missing_stale_and_nonstring_fields_reject(self):
+        for field in self.metadata:
+            for changed in ('missing', 'v0.11.3', None, False, 114, [], {}):
+                metadata = dict(self.metadata)
+                if changed == 'missing':
+                    del metadata[field]
+                else:
+                    metadata[field] = changed
+                self.write('config/testnet/0.11/release.json', json.dumps(metadata))
+                with self.subTest(field=field, changed=changed), self.assertRaises(gate.CandidateError):
+                    gate.release_tuple(self.root)
+
+    def test_duplicate_release_metadata_rejects(self):
+        self.write('config/testnet/0.11/release.json',
+                   json.dumps(self.metadata)[:-1] + ',"software_version":"0.11.4"}')
+        with self.assertRaisesRegex(gate.CandidateError, 'duplicate JSON key'):
+            gate.release_tuple(self.root)
+
+    def test_stale_missing_and_duplicate_product_declarations_reject(self):
+        canonical = (self.root / 'protocol/versioning/src/lib.rs').read_text()
+        for changed in (canonical.replace('0.11.4', '0.11.3'),
+                        canonical.replace('0.11.4', '0.11.4-rc1'), '', canonical * 2):
+            self.write('protocol/versioning/src/lib.rs', changed)
+            with self.subTest(changed=changed), self.assertRaisesRegex(gate.CandidateError, 'product version'):
+                gate.release_tuple(self.root)
+
+    def test_inactive_wrong_missing_and_duplicate_schedule_declarations_reject(self):
+        canonical = (self.root / 'consensus-light-client/src/pow_rules.rs').read_text()
+        for changed in (canonical.replace('Some(18_660)', 'None'),
+                        canonical.replace('18_660', '18_720'),
+                        canonical.replace('18_660', '120'), '', canonical * 2):
+            self.write('consensus-light-client/src/pow_rules.rs', changed)
+            with self.subTest(changed=changed), self.assertRaisesRegex(gate.CandidateError, 'activation declaration'):
+                gate.release_tuple(self.root)
+
+    def test_linked_release_tuple_inputs_reject(self):
+        for relative in ('config/testnet/0.11/release.json', 'protocol/versioning/src/lib.rs',
+                         'consensus-light-client/src/pow_rules.rs'):
+            path = self.root / relative
+            raw = path.read_bytes()
+            replacement = self.root / 'linked-copy'
+            replacement.write_bytes(raw)
+            path.unlink()
+            path.symlink_to(replacement)
+            with self.subTest(relative=relative), self.assertRaisesRegex(gate.CandidateError, 'symlink'):
+                gate.release_tuple(self.root)
+            path.unlink()
+            path.write_bytes(raw)
+
+    def test_source_preparation_checks_tuple_before_historical_authentication(self):
+        config = {'status': 'pending', 'proof_identity': {}}
+        self.write('protocol/versioning/src/lib.rs', 'pub const RELEASE_VERSION: &str = "0.11.3";\n')
+        with patch.object(gate, 'authenticate') as authenticate, \
+                patch.object(gate, 'proof_identity') as proof, patch.object(gate, 'inventory') as inventory:
+            with self.assertRaisesRegex(gate.CandidateError, 'product version'):
+                gate.source_check(self.root, config)
+            authenticate.assert_not_called()
+            proof.assert_not_called()
+            inventory.assert_not_called()
+        self.write('protocol/versioning/src/lib.rs', 'pub const RELEASE_VERSION: &str = "0.11.4";\n')
+        with patch.object(gate, 'authenticate', return_value={}) as authenticate, \
+                patch.object(gate, 'proof_identity', return_value={}) as proof:
+            result = gate.source_check(self.root, config)
+        authenticate.assert_called_once_with(self.root)
+        proof.assert_called_once_with(self.root)
+        self.assertEqual(result['status'], 'PASS_PENDING_SOURCE_PREPARATION')
+        self.assertFalse(result['source_frozen'])
+        for name in gate.BOUNDARIES:
+            self.assertIs(result[name], False)
+
+    def test_active_executor_receives_v0114_override_and_keeps_authority_false(self):
+        self.write('scripts/check_v011_release_successor.py', '# authenticated executor fixture\n')
+        self.write('node/src/bin/native_node.rs', '// source fixture\n')
+        self.write('config/v0113-release-successor.json', json.dumps({'current_identity': {'fixture': True}}))
+        self.write('config/testnet/0.11/network-manifest.json', '{}')
+        helper = SimpleNamespace(CURRENT_RUNTIME_DELTAS={})
+        observed = []
+        def artifact_gate(root, predecessor, manifest, receipt, network, reserve):
+            observed.append((helper.CURRENT_NEW_VERSION, helper.CURRENT_SOURCE_KIND, helper.CURRENT_SCOPE))
+            return receipt
+        helper.artifact_gate = Mock(side_effect=artifact_gate)
+        helper.final_replay = Mock(side_effect=lambda root, manifest, receipt, reserve: receipt)
+        spec = SimpleNamespace(loader=SimpleNamespace(exec_module=Mock()))
+        config = {'source_inventory_sha256': '1' * 64, 'independent_review': None}
+        manifest = self.root / 'artifact-manifest.json'
+        with patch.object(gate.importlib.util, 'spec_from_file_location', return_value=spec), \
+                patch.object(gate.importlib.util, 'module_from_spec', return_value=helper), \
+                patch.object(gate, 'fresh_checks', return_value=[]), \
+                patch.object(gate, 'recheck_artifacts'), patch.object(gate, 'load_config', return_value=config), \
+                patch.object(gate, 'source_check'), patch.object(gate, 'review_check'):
+            result = gate.final_artifacts(self.root, config, manifest, 4)
+        self.assertEqual(observed, [('0.11.4', gate.KIND, gate.SCOPE)])
+        helper.artifact_gate.assert_called_once()
+        helper.final_replay.assert_called_once()
+        spec.loader.exec_module.assert_called_once_with(helper)
+        self.assertEqual(result['status'], 'PASS_SOFTWARE_CANDIDATE_ARTIFACTS_AND_AFFECTED_LIFECYCLE')
+        for name in gate.BOUNDARIES:
+            self.assertIs(result[name], False)
 
 class CandidateTests(unittest.TestCase):
     def test_profile_combined_route_skips_present_historical_helpers(self):

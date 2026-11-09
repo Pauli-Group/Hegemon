@@ -1,7 +1,7 @@
-# ASERT upgrade preparation
+# ASERT upgrade at pre-mainnet H18,660
 
 This branch prepares a height-activated difficulty upgrade for the existing
-pre-mainnet. **Live activation is unset.** It does not change genesis, chain ID,
+pre-mainnet. **v0.11.4 activates the combined rules at H18,660.** It does not change genesis, chain ID,
 wallets, proof bytes, reward allocation, reward maturity or the 60-second target.
 There is no emergency difficulty reset, timestamp-dependent candidate target or
 merged mining in this change.
@@ -10,10 +10,11 @@ merged mining in this change.
 
 `consensus-light-client/src/pow_rules.rs` owns the schedule. Only the pinned
 pre-mainnet chain ID `7b7b0899d5444ffd92c38b38188e9ce4f891913ca7cca854fdcae0aa22ca1b49`
-can receive the future live activation. Its height is `None` during preparation.
+receives the live activation at `Some(18_660)`.
 Unknown chains retain their historical rule. The optional `asert-rehearsal`
 build feature activates at height 20 only for the legacy development chain ID;
-it never activates pre-mainnet and is not a production-release feature.
+its H20 seam applies only to that legacy development chain. The combined
+Development rehearsal separately uses H120; ordinary releases use neither feature.
 
 At activation H (at least 2), take reference height and target from block H−1,
 and reference timestamp from H−2 on the candidate parent's own branch. Keep this
@@ -42,9 +43,13 @@ BCH's reference anchor convention; using H−1's timestamp with the `dh+1` formu
 would be an off-by-one error. The candidate's timestamp is absent from target
 selection. A long gap changes the following target only after a block completes.
 
-The old header rules digest remains the genesis/manifest identifier. New headers
-use `992a6a04c320f65fb55dd0576f01d174981e56b959fa50294bad7fffc333c205`
-from activation onward. Both profiles use the same Bitcoin80 hash construction.
+The old header rules digest remains the genesis/manifest identifier. The combined
+v0.11.4 headers use
+`ec304529f49e7ddc777e0ca78b189acec753d4fb18aafe15761e686ea3596b7f`
+from H18,660 onward, binding ASERT, version rolling and treasury batching together.
+The standalone legacy-development ASERT fixture retains its separate
+`992a6a04c320f65fb55dd0576f01d174981e56b959fa50294bad7fffc333c205`
+profile. All these profiles use the same Bitcoin80 hash construction.
 Changing the global genesis rules alias or the frozen manifest is not an upgrade
 mechanism. Both parent and child rules are checked against their exact heights.
 

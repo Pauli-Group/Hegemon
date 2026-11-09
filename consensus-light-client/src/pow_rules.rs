@@ -10,9 +10,9 @@ use crate::{Hash32, LightClientError, HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_AS
 
 pub const ASERT_TARGET_SPACING_MS: u64 = 60_000;
 pub const ASERT_HALF_LIFE_MS: u64 = 3_600_000;
-/// Release preparation leaves the live pre-mainnet activation unset. Setting it
-/// is a coordinated consensus release, not a runtime configuration option.
-pub const PREMAINNET_COMBINED_UPGRADE_ACTIVATION_HEIGHT: Option<u64> = None;
+/// The v0.11.4 coordinated pre-mainnet activation is source-owned, never a
+/// runtime configuration option.
+pub const PREMAINNET_COMBINED_UPGRADE_ACTIVATION_HEIGHT: Option<u64> = Some(18_660);
 /// ASERT, mining version rolling and treasury cadence share one migration height.
 pub const PREMAINNET_ASERT_ACTIVATION_HEIGHT: Option<u64> =
     PREMAINNET_COMBINED_UPGRADE_ACTIVATION_HEIGHT;
@@ -205,7 +205,13 @@ mod tests {
             da_root: [0; 48],
             action_root: [0; 32],
             tx_statements_commitment: [0; 48],
-            version_commitment: [0; 48],
+            version_commitment: if schedule.rules_hash(height)
+                == HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_COMBINED
+            {
+                crate::bitcoin80_mining_version_payload(crate::BITCOIN80_VERSION)
+            } else {
+                [0; 48]
+            },
             fee_commitment: [0; 48],
             supply_digest: 0,
             tx_count: 0,
@@ -256,16 +262,28 @@ mod tests {
         }
         assert_eq!(
             native_combined_upgrade_activation_height(&PREMAINNET_CHAIN_ID),
-            None
+            Some(18_660)
         );
         assert_eq!(native_combined_upgrade_activation_height(&[0x55; 32]), None);
         #[cfg(feature = "combined-upgrade-rehearsal")]
-        assert_eq!(native_pow_rules(&COMBINED_REHEARSAL_CHAIN_ID), schedule);
+        {
+            assert_eq!(native_pow_rules(&COMBINED_REHEARSAL_CHAIN_ID), schedule);
+            assert_eq!(
+                native_combined_upgrade_activation_height(&COMBINED_REHEARSAL_CHAIN_ID),
+                Some(120)
+            );
+        }
         #[cfg(not(feature = "combined-upgrade-rehearsal"))]
-        assert_eq!(
-            native_pow_rules(&COMBINED_REHEARSAL_CHAIN_ID),
-            PowRulesSchedule::LEGACY
-        );
+        {
+            assert_eq!(
+                native_pow_rules(&COMBINED_REHEARSAL_CHAIN_ID),
+                PowRulesSchedule::LEGACY
+            );
+            assert_eq!(
+                native_combined_upgrade_activation_height(&COMBINED_REHEARSAL_CHAIN_ID),
+                None
+            );
+        }
     }
 
     #[test]
@@ -312,11 +330,11 @@ mod tests {
     }
 
     #[test]
-    fn asert_rehearsal_never_schedules_pre_mainnet_or_unknown_chains() {
-        assert_eq!(PREMAINNET_ASERT_ACTIVATION_HEIGHT, None);
+    fn asert_rehearsal_preserves_production_and_unknown_schedules() {
+        assert_eq!(PREMAINNET_ASERT_ACTIVATION_HEIGHT, Some(18_660));
         assert_eq!(
             native_pow_rules(&PREMAINNET_CHAIN_ID),
-            PowRulesSchedule::LEGACY
+            PowRulesSchedule::combined_at(18_660).unwrap()
         );
         assert_eq!(native_pow_rules(&[0x55; 32]), PowRulesSchedule::LEGACY);
         #[cfg(feature = "asert-rehearsal")]
@@ -329,6 +347,58 @@ mod tests {
             native_pow_rules(&HEGEMON_CHAIN_ID_V1),
             PowRulesSchedule::LEGACY
         );
+    }
+
+    #[test]
+    fn production_combined_activation_requires_exact_boundary_rules() {
+        assert_eq!(PREMAINNET_COMBINED_UPGRADE_ACTIVATION_HEIGHT, Some(18_660));
+        let schedule = native_pow_rules(&PREMAINNET_CHAIN_ID);
+        for (height, expected) in [
+            (18_659, HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_ASIC),
+            (18_660, HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_COMBINED),
+            (18_661, HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_COMBINED),
+        ] {
+            assert_eq!(native_rules_hash(&PREMAINNET_CHAIN_ID, height), expected);
+            let mut parent = parent(height - 1, schedule);
+            parent.chain_id = PREMAINNET_CHAIN_ID;
+            let header = child(&parent, schedule);
+            assert_eq!(header.rules_hash, expected);
+            assert_eq!(
+                verify_pow_header_v2_with_expected_bits(&parent, &header, header.pow_bits),
+                Ok(header.pow_hash())
+            );
+
+            let other_rules = |rules| {
+                if rules == HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_ASIC {
+                    HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_COMBINED
+                } else {
+                    HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_ASIC
+                }
+            };
+            let mut bad_parent = parent.clone();
+            bad_parent.rules_hash = other_rules(parent.rules_hash);
+            assert_eq!(
+                verify_pow_header_v2_with_expected_bits(&bad_parent, &header, header.pow_bits),
+                Err(LightClientError::RulesHashMismatch)
+            );
+            let mut bad_header = header.clone();
+            bad_header.rules_hash = other_rules(header.rules_hash);
+            bad_header.version_commitment = if is_asert_rules(&bad_header.rules_hash) {
+                crate::bitcoin80_mining_version_payload(crate::BITCOIN80_VERSION)
+            } else {
+                [0; 48]
+            };
+            assert_eq!(
+                verify_pow_header_v2_with_expected_bits(&parent, &bad_header, header.pow_bits),
+                Err(LightClientError::RulesHashMismatch)
+            );
+            if height >= 18_660 {
+                assert_eq!(
+                    verify_pow_header_v2(&parent, &header),
+                    Err(LightClientError::UnsupportedDifficultySchedule)
+                );
+            }
+        }
     }
 
     #[test]

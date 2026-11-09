@@ -22,6 +22,8 @@ BASE = 'eec3bb141f59865d5efc4d97c86e201415a0b839'
 SCHEMA = 'hegemon.combined-upgrade.candidate.v1'
 KIND = 'reviewed_combined_upgrade_software_candidate'
 SCOPE = 'combined_upgrade_source_proofs_h0_and_fresh_affected_lifecycle'
+SOFTWARE_VERSION = '0.11.4'
+COMBINED_ACTIVATION_HEIGHT = 18_660
 RELATION_ID = 'Hegemon.PrivateSpend.BoundedPolicy.CompFF01.Packed.v4'
 RELATION = 'b9d22c2f0cb49df519b34620c138d7f2d74fa135a76c7b526cd73a60bb5cd6cec2f910dde83b1a848684e123d02ab0bbc8bdb384b1bcaff1b489fd8794c14685'
 LOCK = '1c243bf3858f4ee22fa4441c7a2ee6d49b16d264147b0f3a2de845e760821719'
@@ -197,6 +199,23 @@ def proof_identity(root):
     return {'relation_id': RELATION_ID, 'relation_digest': RELATION,
             'cargo_lock_sha256': LOCK, 'source_inputs': rows}
 
+def release_tuple(root):
+    """Bind the active software label and schedule without changing history."""
+    release = strict_json(safe_file(root, 'config/testnet/0.11/release.json').read_bytes())
+    expected = {'schema': 'hegemon.pre-mainnet.release.v1', 'release': 'v0.11',
+                'network': 'pre-mainnet', 'software_release': 'v' + SOFTWARE_VERSION,
+                'software_version': SOFTWARE_VERSION}
+    require(all(type(release.get(k)) is type(v) and release[k] == v for k, v in expected.items()),
+            'combined release metadata tuple differs')
+    product = safe_file(root, 'protocol/versioning/src/lib.rs').read_text()
+    versions = re.findall(r'(?m)^pub const RELEASE_VERSION: &str = "([^"\n]*)";$', product)
+    require(versions == [SOFTWARE_VERSION], 'combined product version declaration differs')
+    rules = safe_file(root, 'consensus-light-client/src/pow_rules.rs').read_text()
+    heights = re.findall(r'(?m)^pub const PREMAINNET_COMBINED_UPGRADE_ACTIVATION_HEIGHT: Option<u64> = (None|Some\(([0-9]+(?:_[0-9]+)*)\));$', rules)
+    require(len(heights) == 1 and heights[0][1]
+            and int(heights[0][1].replace('_', '')) == COMBINED_ACTIVATION_HEIGHT,
+            'combined pre-mainnet activation declaration differs')
+
 def authenticate(root):
     tree = base_tree(root)
     for path, digest in IMMUTABLE.items():
@@ -233,6 +252,7 @@ def load_config(root):
     return validate_config(strict_json(safe_file(root, CONFIG).read_bytes()))
 
 def source_check(root, config):
+    release_tuple(root)
     tree = authenticate(root)
     require(config['proof_identity'] == proof_identity(root), 'source-bound relation inventory differs')
     if config['status'] == 'pending':
@@ -326,7 +346,7 @@ def final_artifacts(root, config, manifest_path, min_free_gib):
     path = safe_file(root, 'scripts/check_v011_release_successor.py')
     spec = importlib.util.spec_from_file_location('_combined_historical_executor', path)
     helper = importlib.util.module_from_spec(spec); spec.loader.exec_module(helper)
-    helper.CURRENT_SOURCE_KIND = KIND; helper.CURRENT_SCOPE = SCOPE; helper.CURRENT_NEW_VERSION = '0.11.3'
+    helper.CURRENT_SOURCE_KIND = KIND; helper.CURRENT_SCOPE = SCOPE; helper.CURRENT_NEW_VERSION = SOFTWARE_VERSION
     helper.CURRENT_RUNTIME_DELTAS['node/src/bin/native_node.rs'] = (None, sha(safe_file(root, 'node/src/bin/native_node.rs').read_bytes()))
     identity = strict_json(safe_file(root, 'config/v0113-release-successor.json').read_bytes())['current_identity']
     network = strict_json(safe_file(root, 'config/testnet/0.11/network-manifest.json').read_bytes())
