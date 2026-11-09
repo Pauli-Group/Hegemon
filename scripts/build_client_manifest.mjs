@@ -50,7 +50,7 @@ const HOSTED_NOTE='Testnet preview. Creating or reserving an offer does not lock
 const HOSTED_VAULT='Create a random secret and its public hashlock locally. Export the encrypted backup and protect its separate passphrase. This backup stores the secret only, not wallet keys or the complete swap.';
 const REVEAL=['sepolia-section','sepolia-action-section','bitcoin-testnet-section','cardano-preview-section','cardano-wallet-section','bitcoin-wallet-section','observer-section','guided-section'];
 const CONCEAL_IDS=['pair-check'];
-const CONCEAL_LABELS=['verify-title','companion-title','ethereum-actions-title','bitcoin-title','bitcoin-actions-title','cardano-title','cardano-actions-title','hegemon-title','hegemon-actions-title','watch-title'];
+const CONCEAL_LABELS=['verify-title','ethereum-actions-title','bitcoin-title','bitcoin-actions-title','cardano-title','cardano-actions-title','hegemon-title','hegemon-actions-title','watch-title'];
 function once(html,pattern,replace,what){
  const matches=html.match(new RegExp(pattern.source,'g'))||[];
  if(matches.length!==1)throw Error('hosted edit "'+what+'" matched '+matches.length+' times, expected exactly 1');
@@ -65,6 +65,8 @@ export function renderHosted(html){
  out=once(out,/(<header><p class="eyebrow">)[^<]*(<\/p>)/,'$1'+escapeText(HOSTED_EYEBROW)+'$2','header eyebrow');
  out=once(out,/(<aside role="note">)[\s\S]*?(<\/aside>)/,'$1'+escapeText(HOSTED_NOTE)+'$2','note');
  out=once(out,/(<p id="vault-description">)[^<]*(<\/p>)/,'$1'+escapeText(HOSTED_VAULT)+'$2','vault description');
+ out=once(out,/(<p id="companion-copy">)[^<]*(<\/p>)/,'$1'+escapeText('Start the local companion on this computer, then enter its pairing code. If your browser asks to access this computer, allow it. This checks node status only; the hosted swap flow is not complete yet. The code stays in this page’s memory.')+'$2','companion description');
+ out=once(out,/<div id="hosted-node-instructions" hidden>/,'<div id="hosted-node-instructions">','hosted node instructions');
  const reveal=id=>{out=once(out,new RegExp('<section id="'+id+'"([^>]*?) hidden>'),'<section id="'+id+'"$1>','reveal '+id);};
  const conceal=(pattern,what)=>{out=once(out,pattern,m=>/\shidden[\s>]/.test(m)?m:m.slice(0,-1)+' hidden>',what);};
  for(const id of REVEAL)reveal(id);
@@ -88,7 +90,7 @@ function withIntegrity(html,map,css,entry){
  return out;
 }
 export function cspFor(profile,importMapSource){
- const connect=profile==='local'?"'self' "+COMPANION:"'self'";
+ const connect="'self' "+COMPANION;
  return ["default-src 'self'","script-src 'self' '"+importMapSource+"'","style-src 'self'","connect-src "+connect,"object-src 'none'","frame-ancestors 'none'","base-uri 'none'","form-action 'self'"].join('; ');
 }
 /** Build every generated artifact from the sources under `ui`. Returns `{[repoRelativePath]: text}` and the manifest object. */

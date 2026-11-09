@@ -3019,3 +3019,17 @@ What this does not establish: the fast tier would not have found a change in a p
 ### Step-by-step hosted navigation
 
 `node --test swap-ui/offer-draft.test.mjs` checks exact native-coin conversion without floating point, invalid precision and bounds, token identifiers and same-origin shared-link parsing. `node --test swap-service/journey-browser.test.mjs` starts a disposable local relay and loads the generated hosted page with its hosted content-security policy in Chromium. It checks the guided default, mobile width, validation, back navigation, exact HGN and BTC amounts at review, no offer request before confirmation, duplicate-submit protection, one-time encrypted inbox-backup acknowledgement, and a second browser opening and reserving the offer without sending its private URL fragment to the relay. It also checks access to signed identity, encrypted messages, advanced tools, and the separate terms and status screens for an in-progress swap. The browser uses synthetic test data and does not sign or broadcast a transaction. The scenario is included in `make swap-integration`'s browser list. Rebuild and check the hosted integrity artifacts with `node scripts/build_client_manifest.mjs` and `node scripts/build_client_manifest.mjs --check`. These checks do not establish that the hosted interface executes an entire swap or that a Hegemon node is reachable from it.
+
+### Hosted Hegemon node status
+
+From a checkout containing `scripts/local_swap_companion.py`, with the Hegemon node already running on the same computer and its RPC bound to loopback, create a private directory and start only the status companion:
+
+    umask 077
+    mkdir -p "$HOME/.local/share/hegemon-swap"
+    python3 scripts/local_swap_companion.py --hosted-node-status \
+      --hegemon-rpc http://127.0.0.1:9944 \
+      --token-file "$HOME/.local/share/hegemon-swap/companion-token"
+
+Leave it running. The user can read the pairing code from that private file on the same computer and enter it into the hosted page; never send it to the relay or paste it in support messages. The page may require browser permission to access local network services. `--hosted-node-status` rejects wallet or action options and serves only status to the exact hosted origin; it does not open RPC externally, unlock a wallet, prove the canonical tip, or coordinate a swap. The displayed height and sync state are the local node's report.
+
+Check the server boundary with `PYTHONPATH=scripts python3 -m unittest scripts.test_local_swap_companion`. `CHROMIUM_PATH=/usr/bin/chromium node --test swap-service/hosted-node-browser.test.mjs` uses a synthetic local node and the real companion with the generated hosted CSP; it grants browser local-network access as the user would, checks that nothing contacts the companion before a click, and exercises a wrong and correct pairing code. It does not access a real node or wallet.

@@ -19,6 +19,7 @@ const CONTEXT = {
   chat: ['MESSAGES', 'Agree on the details.', 'Use the encrypted conversation to coordinate. Never send wallet keys or swap secrets in a message.'],
   guided: ['CONTINUE A SWAP', 'Review an existing native-asset swap.', 'You will need its agreed terms and the status from the local swap engine. This review does not yet support token or NFT swaps, and it does not advance the engine.'],
   wallets: ['WALLETS', 'Connect a wallet.', 'Choose the wallet you need. Connecting does not approve or sign a transaction.'],
+  node: ['HEGEMON NODE', 'Connect your node.', 'Check the Hegemon node running on this computer.'],
   checks: ['VERIFY AN ESCROW', 'Which chain would you like to check?', 'A single-chain check does not establish that the other side is funded or that the swap is safe.'],
   tool: ['WALLET ACTION', 'Review the next action.', 'Check every field and the other swap leg before asking a wallet to sign.'],
 };
@@ -75,6 +76,7 @@ export function initJourney({legacyForm, msg}) {
     if (routeName === 'chat') return $('chat');
     if (routeName === 'guided') return $('guided-section');
     if (routeName === 'wallets') return byTitle('wallet-title');
+    if (routeName === 'node') return byTitle('companion-title');
     if (routeName.startsWith('tool:')) return $(routeName.slice(5));
     return null;
   }
@@ -137,7 +139,7 @@ export function initJourney({legacyForm, msg}) {
       }
       const note = document.createElement('p');
       note.className = 'journey-hint';
-      note.textContent = 'For Hegemon public-testnet checks, use the local companion with a local copy of the interface. This hosted page cannot connect to your node.';
+      note.textContent = 'This preview can check a local Hegemon node connection, but cannot yet verify a Hegemon swap here.';
       $('journey-context-actions').append(note);
     }
     if (route.startsWith('tool:')) contextButton('Return to swap review', () => navigate('guided'), true);

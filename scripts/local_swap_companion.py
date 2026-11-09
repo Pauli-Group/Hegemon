@@ -36,6 +36,8 @@ from cardano_local_actions import run_cardano_action,local_node_identity,private
 from local_private_spend_swap import PASS, wallet
 from release_private_spend_lifecycle_io import rpc, json_line, public_v8_address_keys, height
 
+HOSTED_ORIGIN = 'https://hegemon-swap-testnet.willdoyle422.workers.dev'
+
 
 def private_token(path):
     parent=path.parent.stat()
@@ -114,14 +116,26 @@ def main():
     p.add_argument('--private-spend',type=Path,default=ROOT/'target/release/private-spend')
     p.add_argument('--enable-hegemon-actions',action='store_true',help='enable locally approved Development-only wallet actions')
     p.add_argument('--hegemon-public',action='store_true',help='use the pinned v0.11 public pre-mainnet (mutually exclusive with --enable-hegemon-actions)')
+    p.add_argument('--hosted-node-status',action='store_true',help='allow the hosted testnet page to read Hegemon node status only; no wallet or transaction operations')
     p.add_argument('--hegemon-handoff-dir',type=Path,help='private directory for encrypted refund handoffs')
     p.add_argument('--hegemon-preimage-backup',type=Path,help='optional private exported browser backup for local claims')
     p.add_argument('--token-file',type=Path,required=True,help='0600 file inside a user-owned 0700 directory')
-    p.add_argument('--origin',default='http://127.0.0.1:8787')
+    p.add_argument('--origin',default=None)
     p.add_argument('--port',type=int,default=8788)
     args=p.parse_args();os.umask(0o077)
-    origin=urlsplit(args.origin)
-    if origin.scheme!='http' or origin.hostname not in ('127.0.0.1','localhost') or not origin.port or origin.path or origin.query or origin.fragment or origin.username:raise ValueError('origin must be an explicit loopback HTTP origin')
+    if args.hosted_node_status:
+        if args.origin not in (None, HOSTED_ORIGIN):p.error('hosted node status accepts only the pinned hosted origin')
+        args.origin=HOSTED_ORIGIN
+        other=[args.bitcoin_rpc,args.bitcoin_cookie,args.enable_bitcoin_actions,args.bitcoin_wallet,args.bitcoin_genesis,args.bitcoin_preimage_backup,
+               args.cardano_socket,args.cardano_network_dir,args.enable_cardano_actions,args.cardano_node_pid,args.cardano_genesis,args.cardano_signing_key,args.cardano_journal_dir,args.cardano_preimage_backup,
+               args.ethereum_rpc,args.hegemon_wallet,args.hegemon_manifest,args.hegemon_genesis,args.enable_hegemon_actions,args.hegemon_public,args.hegemon_handoff_dir,args.hegemon_preimage_backup]
+        if not args.hegemon_rpc or any(other):p.error('hosted node status requires only a loopback Hegemon RPC and no wallet or other chain options')
+        from probe_hegemon_testnet import endpoint
+        endpoint(args.hegemon_rpc)
+    else:
+        args.origin=args.origin or 'http://127.0.0.1:8787'
+        origin=urlsplit(args.origin)
+        if origin.scheme!='http' or origin.hostname not in ('127.0.0.1','localhost') or not origin.port or origin.path or origin.query or origin.fragment or origin.username:raise ValueError('origin must be an explicit loopback HTTP origin')
     if not 1<=args.port<=65535:raise ValueError('invalid port')
     if bool(args.bitcoin_rpc)!=bool(args.bitcoin_cookie):p.error('Bitcoin RPC and cookie must be supplied together')
     if args.enable_bitcoin_actions:
@@ -137,8 +151,8 @@ def main():
     hegemon_options=[args.hegemon_wallet,args.hegemon_manifest,args.hegemon_genesis,args.hegemon_rpc]
     if args.hegemon_public and args.enable_hegemon_actions:
         p.error('--hegemon-public is mutually exclusive with --enable-hegemon-actions')
-    if any(hegemon_options) and not all(hegemon_options):p.error('all Hegemon wallet, manifest, genesis and RPC options are required')
-    if not args.bitcoin_rpc and not args.cardano_socket and not args.ethereum_rpc and not all(hegemon_options):p.error('configure at least one local node')
+    if not args.hosted_node_status and any(hegemon_options) and not all(hegemon_options):p.error('all Hegemon wallet, manifest, genesis and RPC options are required')
+    if not args.hosted_node_status and not args.bitcoin_rpc and not args.cardano_socket and not args.ethereum_rpc and not all(hegemon_options):p.error('configure at least one local node')
     if args.ethereum_rpc:ethereum_local_head(args.ethereum_rpc)
     if all(hegemon_options):
         if not os.isatty(0):p.error('Hegemon verification requires an interactive local terminal')
@@ -196,8 +210,9 @@ def main():
         def do_OPTIONS(self):
             if not self.permitted():return self.reply(403,{'error':'forbidden'})
             self.send_response(204);self.send_header('Access-Control-Allow-Origin',args.origin)
-            self.send_header('Access-Control-Allow-Methods','GET, POST, OPTIONS')
+            self.send_header('Access-Control-Allow-Methods','GET, OPTIONS' if args.hosted_node_status else 'GET, POST, OPTIONS')
             self.send_header('Access-Control-Allow-Headers','authorization, content-type')
+            if self.headers.get('Access-Control-Request-Private-Network')=='true':self.send_header('Access-Control-Allow-Private-Network','true')
             self.send_header('Vary','Origin');self.end_headers()
         def authorized(self):
             value=self.headers.get('Authorization','')
@@ -206,8 +221,15 @@ def main():
             if not self.authorized():return self.reply(403,{'error':'forbidden'})
             try:
                 if self.path=='/health':
+                    if args.hosted_node_status:return self.reply(200,{'status':'ok','capabilities':['hegemon-public-status']})
                     capabilities=(['bitcoin-regtest-verify'] if btc else [])+(['bitcoin-regtest-actions'] if args.enable_bitcoin_actions else [])+(['cardano-local-verify'] if cardano else [])+(['cardano-local-actions'] if args.enable_cardano_actions else [])+(['ethereum-local-anchor'] if args.ethereum_rpc else [])+(['hegemon-public-verify'] if args.hegemon_public else ['hegemon-local-verify'] if all(hegemon_options) else [])+(['hegemon-public-actions'] if args.hegemon_public and args.hegemon_handoff_dir else ['hegemon-local-actions'] if args.enable_hegemon_actions else [])
                     return self.reply(200,{'status':'ok','capabilities':capabilities})
+                if self.path=='/hegemon/status' and args.hosted_node_status:
+                    from probe_hegemon_testnet import probe
+                    node=probe(args.hegemon_rpc)
+                    return self.reply(200,{'network':node['network'],'height':str(node['height']),'syncing':node['syncing'],
+                                           'peers':node['peers'],'wallet_rpc_ready':node['basic_wallet_checks_passed']})
+                if args.hosted_node_status:return self.reply(404,{'error':'not found'})
                 if self.path=='/bitcoin/head' and btc:
                     info=btc.call('getblockchaininfo')
                     if info['chain']!='regtest' or btc.call('getconnectioncount')!=0:raise ValueError('Bitcoin node is not isolated regtest')
@@ -235,6 +257,7 @@ def main():
                 return self.reply(502,{'error':'local node status unavailable'})
         def do_POST(self):
             if not self.authorized():return self.reply(403,{'error':'forbidden'})
+            if args.hosted_node_status:return self.reply(403,{'error':'hosted node status is read-only'})
             if self.path not in ('/bitcoin/verify','/bitcoin/action','/cardano/verify','/cardano/action','/hegemon/verify','/hegemon/action'):return self.reply(404,{'error':'not found'})
             if self.headers.get_content_type()!='application/json':return self.reply(400,{'error':'JSON required'})
             try:
@@ -316,7 +339,7 @@ def main():
     server=HTTPServer(('127.0.0.1',args.port),Handler)
     def terminate(_signum,_frame):raise KeyboardInterrupt
     signal.signal(signal.SIGTERM,terminate)
-    print(f'Local companion listening on 127.0.0.1:{args.port}; token file: {args.token_file}; Hegemon actions: {args.enable_hegemon_actions}; Hegemon public: {args.hegemon_public}',flush=True)
+    print(f'Local companion listening on 127.0.0.1:{args.port}; token file: {args.token_file}; hosted node status: {args.hosted_node_status}; Hegemon actions: {args.enable_hegemon_actions}; Hegemon public: {args.hegemon_public}',flush=True)
     try:server.serve_forever()
     except KeyboardInterrupt:pass
     finally:server.server_close();scratch.cleanup()
