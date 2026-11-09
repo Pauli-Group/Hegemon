@@ -12,7 +12,8 @@ The hosted testnet site currently presents many wallet, escrow, identity, recove
 - [x] (2026-11-09 17:10Z) Implemented guided navigation, exact native-coin conversion, staged creation, shared-link handling, one-time inbox-backup acknowledgement, and separate terms/status screens. Existing transaction and wallet handlers remain in use.
 - [x] (2026-11-09 17:22Z) Added focused unit and browser checks and regenerated the client integrity artifacts. `make swap-test` passed with optional external chain tools disabled: 167 UI tests, 19 relay/Worker tests, and the Python fast-tier suites passed; optional chain-tool cases were skipped. The separate browser suite passed all 13 scenarios, including disposable local-chain scenarios, and the final guided-flow scenario passed again after the copy change.
 - [x] (2026-11-09 17:22Z) Updated `DESIGN.md` and `METHODS.md` and checked the redesigned interface at desktop and mobile widths. The client-manifest check, whitespace check, and secret scan passed.
-- [ ] Commit and push the changes, then update and verify the hosted testnet site.
+- [x] (2026-11-09 17:25Z) Committed and pushed the implementation as `6ab1dc2b`, backed up the D1 database outside the repository, verified the existing identity columns, and deployed Worker version `b01ce6e0-da4c-4c86-87b5-aef32eaf1923`. No schema migration was needed.
+- [x] (2026-11-09 17:26Z) The hosted integrity verification passed 110 checks for 47 files. Read-only browser checks confirmed the guided start and first offer step at 1,440px and 390px, with no horizontal overflow, page errors, or write requests.
 
 ## Surprises & Discoveries
 
@@ -31,7 +32,7 @@ An unchanged baseline checkout also triggered a Node 24 native assertion while t
 
 ## Outcomes & Retrospective
 
-The guided offer and navigation work is implemented and validated. The site still uses the existing manual transaction tools: the native-asset swap review requires existing local engine terms and status, does not support token or NFT swaps, and Hegemon requires a local companion. Publication and hosted verification are the remaining steps.
+The guided offer and navigation work is implemented, pushed, deployed, and verified on the hosted testnet site. The site still uses the existing manual transaction tools: the native-asset swap review requires existing local engine terms and status, does not support token or NFT swaps, and Hegemon requires a local companion. No public-testnet swap was made as part of this interface change.
 
 ## Context and Orientation
 
