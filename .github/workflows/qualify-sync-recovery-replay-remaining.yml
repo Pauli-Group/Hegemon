@@ -1,0 +1,45 @@
+name: Qualify remaining sync recovery replay
+on:
+  push:
+    branches: [codex/sync-recovery-replay-remaining-20261109]
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: sync-recovery-replay-remaining-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  replay-existing-artifact:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+          path: executor
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: de7a4f31b280eb52ed0c09e055840cec60d1f652
+          fetch-depth: 0
+          persist-credentials: false
+          path: frozen-source
+      - name: Download exact retained prior artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ulimit -f 32768
+          timeout 120s gh api repos/Pauli-Group/Hegemon/actions/artifacts/13723231865/zip > prior-artifact.zip
+      - name: Validate prior passed gates and execute only remaining replay
+        run: python3 -I -B executor/scripts/qualify_sync_recovery_replay_remaining.py --run --source "$GITHUB_WORKSPACE/frozen-source" --artifact-zip "$GITHUB_WORKSPACE/prior-artifact.zip" --output "$GITHUB_WORKSPACE/remaining-replay" --executor-commit "${{ github.sha }}"
+      - name: Preserve only replay qualification receipts and logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: sync-recovery-replay-remaining-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            remaining-replay/SUPPLEMENT_RECEIPT.json
+            remaining-replay/replay-command.log
+            remaining-replay/replay/*.json
+            remaining-replay/replay/*.log
+          if-no-files-found: error
+          retention-days: 14
