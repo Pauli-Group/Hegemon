@@ -1,0 +1,95 @@
+name: Qualify bounded requested-range transport components
+on:
+  push:
+    branches: [codex/sync-range-inline-20261110]
+  workflow_dispatch:
+    inputs:
+      expected_source_sha:
+        required: true
+        type: string
+      expected_delta_sha256:
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: sync-range-transport-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  components:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 110
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_BUILD_JOBS: "2"
+      CARGO_INCREMENTAL: "0"
+      CARGO_NET_RETRY: "10"
+      CARGO_HTTP_TIMEOUT: "600"
+      RAYON_NUM_THREADS: "2"
+      RUSTUP_TOOLCHAIN: "1.91.1"
+      DISPATCH_SOURCE_SHA: ${{ github.sha }}
+      INPUT_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+      INPUT_DELTA_SHA256: ${{ inputs.expected_delta_sha256 }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Resolve pinned source and acceptance boundary
+        run: |
+          python3 -I -B - <<'PY'
+          import hashlib,os,re,subprocess
+          head=os.environ['DISPATCH_SOURCE_SHA']
+          if os.environ['GITHUB_EVENT_NAME']=='push':
+              delta=hashlib.sha256(subprocess.check_output(['git','diff','--binary','--full-index','--no-ext-diff','de7a4f31b280eb52ed0c09e055840cec60d1f652',head])).hexdigest()
+              provenance='root-external-check-required'
+          else:
+              assert os.environ['INPUT_SOURCE_SHA']==head
+              delta=os.environ['INPUT_DELTA_SHA256'];provenance='dispatch-inputs'
+          assert re.fullmatch('[0-9a-f]{40}',head) and re.fullmatch('[0-9a-f]{64}',delta)
+          with open(os.environ['GITHUB_ENV'],'a')as f:f.write('EXPECTED_SOURCE_SHA='+head+'\nEXPECTED_DELTA_SHA256='+delta+'\nPIN_PROVENANCE='+provenance+'\n')
+          PY
+      - name: Verify source-only controls and exact delta
+        run: |
+          mkdir -p target
+          python3 -I -B scripts/test_qualify_sync_range_transport_source.py
+          python3 -I -B scripts/qualify_sync_range_transport_source.py --expected-source-sha "$EXPECTED_SOURCE_SHA" --expected-delta-sha256 "$EXPECTED_DELTA_SHA256" --pin-provenance "$PIN_PROVENANCE" --output target/sync-range-source-before.json
+      - name: Install existing Linux build dependencies
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev clang lld
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: "1.91.1"
+          components: rust-src
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+        with:
+          shared-key: core-rust
+      - name: Fresh-clone setup and native build
+        run: |
+          make setup
+          python3 -I -B - <<'PY'
+          import json,os,pathlib,subprocess
+          value={'schema':'hegemon.sync-range-transport.build-inputs.v1','commands':[{'argv':a,'stdout':subprocess.check_output(a,text=True)}for a in [['rustc','-vV'],['cargo','--version']]],'known_build_knobs':{k:os.environ[k]for k in ['RUSTUP_TOOLCHAIN','CARGO_BUILD_JOBS','CARGO_INCREMENTAL','RAYON_NUM_THREADS']},'build_commands':['make setup','make node','bash scripts/build_release_artifacts.sh'],'hermetic_build_closure_claimed':False}
+          pathlib.Path('target/build-inputs.json').write_text(json.dumps(value,indent=2,sort_keys=True)+'\n')
+          PY
+          make node
+      - name: Execute exact artifact component gates
+        run: python3 -I -B scripts/qualify_sync_range_transport_linux.py --expected-source-sha "$EXPECTED_SOURCE_SHA" --expected-delta-sha256 "$EXPECTED_DELTA_SHA256" --pin-provenance "$PIN_PROVENANCE" --output target/sync-range-components
+      - name: Preserve component evidence and exact artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: sync-range-transport-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            target/sync-range-source-before.json
+            target/build-inputs.json
+            target/sync-range-components/*.json
+            target/sync-range-components/*.log
+            target/sync-range-components/current-binary-proofs/*.json
+            target/sync-range-components/current-binary-proofs/*.log
+            target/release/hegemon-node
+            target/release/wallet
+            target/release/walletd
+            target/release/private-spend
+            target/release/hegemon-release-artifacts.json
+          if-no-files-found: error
+          retention-days: 14

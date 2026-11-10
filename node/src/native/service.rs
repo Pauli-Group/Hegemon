@@ -1807,7 +1807,9 @@ fn native_sync_response_message_from_encoded(
     let mut inline_body_bytes = 0usize;
     let mut inline_count = 0usize;
     for (block, (body_len, _)) in blocks.iter().zip(encoded.iter()) {
-        if *body_len > MAX_NATIVE_INLINE_BLOCK_ANNOUNCE_BYTES {
+        // Requested ranges use the existing response budget. Unsolicited
+        // announcements retain their separate 256 KiB body threshold.
+        if *body_len > MAX_NATIVE_SYNC_RESPONSE_TARGET_BYTES {
             break;
         }
         let next_body_bytes = inline_body_bytes
@@ -7549,11 +7551,11 @@ mod native_sync_inline_prefix_tests {
     }
 
     #[test]
-    fn mixed_range_preserves_small_prefix_before_large_body() {
+    fn mixed_range_preserves_small_prefix_before_body_above_range_budget() {
         let blocks = vec![
             block_with_body_bytes(65, 4096),
             block_with_body_bytes(66, 8192),
-            block_with_body_bytes(67, MAX_NATIVE_INLINE_BLOCK_ANNOUNCE_BYTES + 1),
+            block_with_body_bytes(67, MAX_NATIVE_SYNC_RESPONSE_TARGET_BYTES + 1),
             block_with_body_bytes(68, 4096),
         ];
         let (best_height, prefix) =
@@ -7585,7 +7587,7 @@ mod native_sync_inline_prefix_tests {
     #[test]
     fn oversized_first_body_keeps_exact_single_locator() {
         let blocks = vec![
-            block_with_body_bytes(67, MAX_NATIVE_INLINE_BLOCK_ANNOUNCE_BYTES + 1),
+            block_with_body_bytes(67, MAX_NATIVE_SYNC_RESPONSE_TARGET_BYTES + 1),
             block_with_body_bytes(68, 4096),
         ];
         let (_, first_locator) = native_block_body_bytes_and_locator(&blocks[0]).unwrap();
@@ -7602,13 +7604,13 @@ mod native_sync_inline_prefix_tests {
     }
 
     #[test]
-    fn exact_inline_body_limit_is_accepted_before_one_byte_over() {
+    fn requested_range_batches_across_unsolicited_announce_threshold() {
         let blocks = vec![
             block_with_body_bytes(1, MAX_NATIVE_INLINE_BLOCK_ANNOUNCE_BYTES),
             block_with_body_bytes(2, MAX_NATIVE_INLINE_BLOCK_ANNOUNCE_BYTES + 1),
         ];
         let (_, prefix) = inline_blocks(native_sync_response_message(2, blocks.clone()).unwrap());
-        assert_eq!(prefix, blocks[..1]);
+        assert_eq!(prefix, blocks);
     }
 
     #[test]
@@ -7647,6 +7649,63 @@ mod native_sync_inline_prefix_tests {
             },
             &prefix,
         ));
+    }
+
+    #[test]
+    fn medium_proof_sized_bodies_batch_and_roundtrip_within_existing_budget() {
+        let blocks = vec![
+            block_with_body_bytes(1, 4096),
+            block_with_body_bytes(2, 2 * 1024 * 1024),
+            block_with_body_bytes(3, 2 * 1024 * 1024),
+            block_with_body_bytes(4, 4096),
+        ];
+        let (best_height, prefix) =
+            inline_blocks(native_sync_response_message(100, blocks.clone()).unwrap());
+        assert_eq!(best_height, 100);
+        assert_eq!(prefix, blocks);
+        assert!(native_sync_response_is_contiguous_request_prefix(
+            NativeSyncRange { from_height: 1, to_height: 64 }, &prefix,
+        ));
+        let payload = encode_sync_message(&NativeSyncMessage::Response {
+            best_height, blocks: prefix.clone(),
+        }).unwrap();
+        assert!(native_sync_protocol_frame_bytes(&payload).unwrap()
+            <= MAX_NATIVE_SYNC_RESPONSE_TARGET_BYTES);
+        assert_eq!(inline_blocks(decode_sync_message(&payload).unwrap()).1, prefix);
+    }
+
+    #[test]
+    fn medium_range_body_does_not_relax_unsolicited_announce_budget() {
+        let block = block_with_body_bytes(1, MAX_NATIVE_INLINE_BLOCK_ANNOUNCE_BYTES + 1);
+        assert!(matches!(native_block_announce_message(&block).unwrap(),
+            NativeSyncMessage::AnnounceLocator { .. }));
+        assert_eq!(inline_blocks(native_sync_response_message(1, vec![block.clone()])
+            .unwrap()).1, vec![block]);
+    }
+
+    #[test]
+    fn requested_range_does_not_skip_body_that_exceeds_remaining_budget() {
+        let first = block_with_body_bytes(1, 5 * 1024 * 1024);
+        let second = block_with_body_bytes(2, 4 * 1024 * 1024);
+        let third = block_with_body_bytes(3, 4096);
+        let (_, prefix) = inline_blocks(native_sync_response_message(3,
+            vec![first.clone(), second, third]).unwrap());
+        assert_eq!(prefix, vec![first]);
+    }
+
+    #[test]
+    fn body_egress_worst_case_reservation_keeps_one_positive_body_per_window() {
+        // A source-level throughput control, not permission to change the cap.
+        let limiter = Arc::new(NativeBlockBodySendLimiter::default());
+        let now = Instant::now();
+        let peer = [0x71; 32];
+        let mut first = limiter.try_acquire_and_reserve(peer, now).unwrap();
+        assert!(first.commit_actual(1));
+        drop(first);
+        assert!(limiter.try_acquire_and_reserve(peer,
+            now + NATIVE_BLOCK_BODY_REQUEST_RATE_WINDOW - Duration::from_millis(1)).is_none());
+        assert!(limiter.try_acquire_and_reserve(peer,
+            now + NATIVE_BLOCK_BODY_REQUEST_RATE_WINDOW).is_some());
     }
 
     #[test]

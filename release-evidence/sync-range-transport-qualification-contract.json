@@ -1,0 +1,31 @@
+{
+  "base_source_commit": "de7a4f31b280eb52ed0c09e055840cec60d1f652",
+  "deployment_verified": false,
+  "fixed_target": {
+    "hash": "0x000000000000072a257e397fd410e30428cc7c020802f428e028129f395bf319",
+    "height": 14460
+  },
+  "historical_fixture_qualification_claimed": false,
+  "medium_body_canonical_pin_required_before_runtime": true,
+  "medium_body_control_additional_to_27_public_fixture": true,
+  "medium_body_minimum_bytes": 262145,
+  "network_manifest_sha256": "386f21b8d9b474fce096c0691ec7d625f292e9aadf0cd5f06fb4088442ec6754",
+  "old_binary_evidence_qualifies_new_artifact": false,
+  "production_authorized": false,
+  "public_fixture_sha256": "9331504f7175100a043b8e679bc9e6fbc6e0fe5a0dbea04a485dd60d40574a54",
+  "required_gates": [
+    "exact_new_source_inventory_delta_build_and_binary_manifest",
+    "nine_transport_tests_and_restored_selector_negative",
+    "twelve_exact_recovery_tests_six_modules_H0_five_backend_cases",
+    "complete_current_network_disposable_donor_full_scratch_on_new_binary",
+    "fresh_H0_importer_no_database_copy",
+    "genuine_medium_proof_body_above_256KiB_normal_inline_response_full_native_import",
+    "canonical_fixed_target_and_27_public_bodies_seven_ordinary_carriers",
+    "seedless_restart_retained_canonical_prefix_full_scratch_proof_replay",
+    "all_donor_and_importer_owned_groups_clean_exit_and_genuinely_reaped",
+    "postrun_source_binary_manifest_and_fixture_pins_unchanged",
+    "independent_ROOT_artifact_runtime_review"
+  ],
+  "schema": "hegemon.sync-range-transport.acceptance-contract.v1",
+  "status": "RUNTIME_QUALIFICATION_REQUIRED"
+}
