@@ -28,10 +28,28 @@ test('hosted guided flow creates one reviewed offer and opens it in a second bro
       await context.route(base + '/', route => route.fulfill({status: 200, body: html, headers: {'content-type': 'text/html; charset=utf-8', 'content-security-policy': HOSTED_CSP}}));
       await context.addInitScript(() => { window.walletCalls = 0; window.ethereum = {request: async () => { window.walletCalls++; throw Error('No wallet is needed to make an offer'); }}; });
     }
+    const token = 'ab'.repeat(32);
+    await owner.route('http://127.0.0.1:8788/**', route => {
+      const url = new URL(route.request().url());
+      if (route.request().headers().authorization !== 'Bearer ' + token) return route.fulfill({status: 403, contentType: 'application/json', body: '{"error":"forbidden"}'});
+      const snapshot = {available_atoms: '5000000', reserved_atoms: '0', htlc_atoms: '0', immature_atoms: '0', synced_height: '14255', observed_height: '14255', observed_at: String(Date.now()), watch_only: false};
+      const body = url.pathname === '/health' ? {status: 'ok', capabilities: ['hegemon-public-status', 'hegemon-public-balance']}
+        : url.pathname === '/hegemon/status' ? {network: 'v0.11 pre-mainnet', height: '14255', syncing: false, peers: 8, wallet_rpc_ready: true}
+        : url.pathname === '/hegemon/unlock' ? {unlocked: true, balance: snapshot}
+        : url.pathname === '/hegemon/balance' ? snapshot : null;
+      if (!body) return route.fulfill({status: 404, contentType: 'application/json', body: '{"error":"not found"}'});
+      return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify(body)});
+    });
     const first = await owner.newPage(), second = await taker.newPage();
     let posts = 0;
     first.on('request', request => { if (request.method() === 'POST' && request.url() === base + '/offers') posts++; });
+    await owner.grantPermissions(['local-network-access'], {origin: base});
     await first.goto(base);
+    await first.locator('#companion-indicator').click();
+    await first.locator('#companion-token').fill(token);
+    await first.locator('#connect-companion').click();
+    await first.locator('#companion-status').getByText(/HGN offers can use the unlocked wallet/).waitFor();
+    await first.locator('#journey-back').click();
     assert.equal(await first.evaluate(() => document.documentElement.dataset.journeyMode), 'guided');
     assert.equal(await first.getByRole('heading', {name: 'What would you like to do?'}).isVisible(), true);
     assert.equal(await first.locator('#sepolia-form').isVisible(), false);
@@ -45,6 +63,9 @@ test('hosted guided flow creates one reviewed offer and opens it in a second bro
     await first.locator('#journey-next').click();
     await first.locator('#journey-give-amount').fill('0.001');
     assert.match(await first.locator('#journey-give-base').innerText(), /100000 atoms/);
+    await first.locator('#journey-hgn-unlock').click();
+    await first.locator('#journey-create-status').getByText(/does not lock funds/).waitFor();
+    assert.equal(await first.locator('#journey-next').isDisabled(), false);
     await first.locator('#journey-back').click();
     assert.equal(await first.locator('#journey-give-type').inputValue(), 'hegemon:hgn');
     await first.locator('#journey-next').click();

@@ -36,6 +36,7 @@ BROWSER_TESTS=(
   swap-service/browser.test.mjs
   swap-service/journey-browser.test.mjs
   swap-service/hosted-node-browser.test.mjs
+  swap-service/hosted-hgn-gate-browser.test.mjs
   swap-service/guided-browser.test.mjs
   swap-service/identity-browser.test.mjs
   swap-service/observer-browser.test.mjs

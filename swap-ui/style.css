@@ -65,6 +65,8 @@ label.journey-option{display:flex;align-items:flex-start;gap:12px;border:1px sol
 .journey-option strong,.journey-option small{display:block}
 .journey-option small{color:#bbc8d8;font-size:14px;font-weight:400;margin-top:5px;line-height:1.4}
 .journey-conversion{color:#1be7ff;font-size:14px;overflow-wrap:anywhere}
+.journey-shortfall{color:#ff4e4e;font-size:14px;overflow-wrap:anywhere}
+#journey-hgn-unlock{background:#1be7ff;color:#0e1c36}
 .journey-form-actions{margin-top:24px}
 .journey-shell button:not(.journey-choice):not(.journey-text-button){margin-top:8px}
 button.journey-secondary{background:transparent;color:#1be7ff}

@@ -69,6 +69,48 @@ export function formatBaseUnits(value, raw) {
   return `${whole}${fraction ? '.' + fraction : ''} ${asset.unit} (${units} ${base})`;
 }
 
+/** Public Hegemon spends pay this fee. It is not part of the offered amount. */
+export const HEGEMON_PUBLIC_FEE_ATOMS = 1000n;
+
+function decimalAtoms(value, label) {
+  if (typeof value === 'bigint') {
+    if (value < 0n || value >= UINT256) throw Error(label);
+    return value;
+  }
+  const text = String(value ?? '').trim();
+  if (!/^(0|[1-9][0-9]{0,77})$/.test(text) || BigInt(text) >= UINT256) throw Error(label);
+  return BigInt(text);
+}
+
+/** True when ordinary available atoms cover the give amount plus the public fee. */
+export function hegemonGiveCovered(amountAtoms, availableAtoms, feeAtoms = HEGEMON_PUBLIC_FEE_ATOMS) {
+  const amount = decimalAtoms(amountAtoms, 'Enter a Hegemon amount.');
+  const available = decimalAtoms(availableAtoms, 'Hegemon wallet balance is invalid.');
+  const fee = decimalAtoms(feeAtoms, 'Hegemon fee is invalid.');
+  if (amount <= 0n) throw Error('Enter a Hegemon amount.');
+  const required = amount + fee;
+  const covered = available >= required;
+  return {covered, requiredAtoms: required.toString(), shortfallAtoms: covered ? '0' : (required - available).toString()};
+}
+
+/** Refuse a hosted HGN give unless this totals-only snapshot is fresh, spendable and sufficient. */
+export function assertHegemonGiveSnapshot(amountAtoms, snapshot, now = Date.now()) {
+  if (!snapshot || typeof snapshot !== 'object') throw Error('Hegemon wallet balance is unavailable.');
+  for (const key of ['available_atoms', 'reserved_atoms', 'htlc_atoms', 'immature_atoms', 'synced_height', 'observed_height', 'observed_at']) {
+    if (!/^(0|[1-9][0-9]{0,38})$/.test(String(snapshot[key] ?? ''))) throw Error('Hegemon wallet balance is invalid.');
+  }
+  if (snapshot.watch_only !== false) throw Error('A watch-only Hegemon wallet cannot fund an offer.');
+  const clock = BigInt(now), observedAt = BigInt(snapshot.observed_at);
+  if (clock + 5000n < observedAt || clock - observedAt > 60000n) throw Error('The Hegemon balance snapshot is stale. Read it again before creating the offer.');
+  const behind = BigInt(snapshot.observed_height) - BigInt(snapshot.synced_height);
+  if (behind < 0n || behind > 2n) throw Error('The Hegemon balance snapshot is stale. Read it again before creating the offer.');
+  const result = hegemonGiveCovered(amountAtoms, snapshot.available_atoms);
+  if (!result.covered) {
+    throw Error(`This wallet is short ${formatBaseUnits('hegemon:hgn', result.shortfallAtoms)}, including the 1,000 atom public fee. The offer was not created. Listing an offer does not lock funds.`);
+  }
+  return result;
+}
+
 /** A shared-link fragment is deliberately never sent in an HTTP request. */
 export function parseOfferLink(raw, origin) {
   const text = String(raw ?? '').trim();

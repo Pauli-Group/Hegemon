@@ -53,7 +53,7 @@ Run Python from the repository root with `PYTHONPATH=scripts` (plus the packages
 
 | Path | Role |
 |---|---|
-| `local_swap_companion.py` | Loopback escrow companion for the hosted page: terminal-approved actions only. `--hegemon-public` is mutually exclusive with `--enable-hegemon-actions` and talks to the v0.11 node; local mode still requires zero peers. |
+| `local_swap_companion.py` | Loopback escrow companion for the hosted page: terminal-approved actions only. `--hegemon-public` is mutually exclusive with `--enable-hegemon-actions` and talks to the v0.11 node; local mode still requires zero peers. `--hosted-node-status` is node status only. `--hosted-wallet-status` is the separate one-wallet totals read used to hard-block an underfunded HGN give; it does not spend. |
 | `bitcoin_companion_actions_check.py`, `cardano_companion_actions_check.py`, `hegemon_companion_actions_check.py`, `hegemon_companion_check.py` | Drive the companion through a disposable terminal. |
 | `bitcoin_preimage_observer.py`, `cardano_preimage_observer.py`, `hegemon_preimage_observer.py`, `bitcoin_observer_cli_check.py`, `cardano_observer_cli_check.py`, `hegemon_observer_cli_check.py` | Recover a claimed preimage on a local chain, and check each observer CLI. |
 | `watch_bitcoin_preimage.py`, `watch_cardano_preimage.py`, `watch_hegemon_preimage.py`, `watch_public_hegemon_preimage.py` | Save an observed preimage as an encrypted backup. |

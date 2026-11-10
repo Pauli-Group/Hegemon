@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {assetInfo, formatBaseUnits, parseOfferLink, toBaseUnits, validateAssetId} from './offer-draft.mjs';
+import {assertHegemonGiveSnapshot, assetInfo, formatBaseUnits, hegemonGiveCovered, parseOfferLink, toBaseUnits, validateAssetId} from './offer-draft.mjs';
 
 test('native coin amounts are converted exactly to base units', () => {
   assert.equal(toBaseUnits('bitcoin:btc', '0.00000001'), '1');
@@ -30,6 +30,24 @@ test('invalid, imprecise and out-of-range amounts are refused', () => {
   assert.throws(() => toBaseUnits('ethereum:erc20', '1.5'), /whole number/);
   assert.equal(toBaseUnits('ethereum:erc721', '1'), '1');
   assert.throws(() => toBaseUnits('ethereum:erc721', '2'), /exactly one/);
+});
+
+function hgnSnapshot(available, extra = {}) {
+  return {available_atoms: available, reserved_atoms: '0', htlc_atoms: '0', immature_atoms: '0', synced_height: '10', observed_height: '12', observed_at: '1000000', watch_only: false, ...extra};
+}
+
+test('an HGN give is covered only when available atoms include the public fee', () => {
+  assert.equal(hegemonGiveCovered('100000', '101000').covered, true);
+  assert.equal(hegemonGiveCovered(100000n, 100999n).covered, false);
+  assert.equal(hegemonGiveCovered('100000', '100999').shortfallAtoms, '1');
+  assert.equal(hegemonGiveCovered('100000', '5000000', 1n).requiredAtoms, '100001');
+  assert.throws(() => hegemonGiveCovered('0', '1000'), /Hegemon amount/);
+  const now = 1_000_000;
+  assert.equal(assertHegemonGiveSnapshot('100000', hgnSnapshot('101000'), now).covered, true);
+  assert.throws(() => assertHegemonGiveSnapshot('100000', hgnSnapshot('100999'), now), /short/);
+  assert.throws(() => assertHegemonGiveSnapshot('100000', hgnSnapshot('5000000', {watch_only: true}), now), /watch-only/);
+  assert.throws(() => assertHegemonGiveSnapshot('100000', hgnSnapshot('5000000', {observed_at: '1'}), now), /stale/);
+  assert.throws(() => assertHegemonGiveSnapshot('100000', hgnSnapshot('5000000', {observed_height: '13'}), now), /stale/);
 });
 
 test('asset identifiers match the supported relay formats', () => {
