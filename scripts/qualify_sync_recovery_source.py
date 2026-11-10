@@ -22,9 +22,9 @@ EXPECTED_BASELINE_FILES = {
 EXPECTED_SOURCE_FILES = {
     'node/src/native/node_impl.rs': 'f02261f5fb5cd621134f62496da660b4112d9af59dbfa6fd5f7c704b2c99f9a2',
     'node/src/native/sync_liveness_tests.rs': '8d45daeb558f8181898f4f9e864bd13fef41d24ab42c70bf206a69164141f684',
-    'node/src/native/service.rs': 'f9e0edc2f8adb5bc8ff8b5eb3f7da6e43faff0a70cc08084a874930024e3db2c',
-    'DESIGN.md': '3925a84bdf0c99c936e460f08784b11e40122ee6b964b47770f022c8b2257a12',
-    'METHODS.md': '372822f26bc01581ad61482678c8679756fad3964327f3df26d8388f5958eb44',
+    'node/src/native/service.rs': '54dabf7f40c09e6476de2ce1f0a599feefacc2d187cff5fbf9c738aa05b798e8',
+    'DESIGN.md': '08595f7a062ce8cd58b64ad6fbe22b8932f2e8645d2a3b373f0ad2d90f4517dc',
+    'METHODS.md': 'f2ac1269a081534513a25d4868246f0006f2d2fb3d052f83270be505cc417191',
 }
 ALLOWED_CHANGED_PATHS = set(EXPECTED_SOURCE_FILES) | {
     WORKFLOW_PATH, 'scripts/qualify_sync_recovery_source.py',

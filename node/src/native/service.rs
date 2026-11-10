@@ -6947,8 +6947,9 @@ pub(crate) async fn request_missing_blocks(
 /// block-validity authority and can only trigger the ordinary bounded request
 /// path, whose response must still pass exact carrier and import verification.
 /// The queue retains import ownership until its completion is consumed, even
-/// after the worker has cleared the node's in-flight flag. Keep the anchored
-/// target's owner, rather than only the announcing peer, in this admission check.
+/// after the worker has cleared the node's in-flight flag or resolved its
+/// target. Keep any active import owner and the anchored target's pending
+/// body/import owner, rather than only the announcing peer, in this check.
 pub(super) async fn process_native_sync_tip_announcement_with_pending_work(
     node: &NativeNode,
     handle: &ProtocolHandle,
@@ -6958,14 +6959,15 @@ pub(super) async fn process_native_sync_tip_announcement_with_pending_work(
     sync_import_queue: &NativeSyncImportQueue,
 ) -> Result<(), NativeSyncTipAnnouncementAdmissionRejection> {
     let target = node.sync_target_evidence_snapshot();
-    let target_owner_pending = target.hash.is_some()
-        && target.peer_id.is_some_and(|target_peer| {
-            native_sync_peer_has_pending_body_or_import(
-                target_peer,
-                block_body_transport,
-                sync_import_queue,
-            )
-        });
+    let target_owner_pending = sync_import_queue.active.is_some()
+        || (target.hash.is_some()
+            && target.peer_id.is_some_and(|target_peer| {
+                native_sync_peer_has_pending_body_or_import(
+                    target_peer,
+                    block_body_transport,
+                    sync_import_queue,
+                )
+            }));
     if native_sync_peer_has_pending_body_or_import(peer_id, block_body_transport, sync_import_queue)
         || target_owner_pending
     {
