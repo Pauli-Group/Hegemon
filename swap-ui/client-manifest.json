@@ -101,7 +101,7 @@
    "bytes": 16892
   },
   "hosted.html": {
-   "sha256": "f3ee40d811b2b3570988e1f1a39c959fd62a7453d537991fa5e51629f639bce3",
+   "sha256": "1ec4a91c3cc29358ed6e6d89f6db02c73c6221ca1a9081614eaa2197eb7d03d8",
    "bytes": 71790
   },
   "identity-flow.mjs": {
@@ -125,7 +125,7 @@
    "bytes": 3697
   },
   "index.html": {
-   "sha256": "7529d6e070dc5b0697afb43cf7625f9575591eb177bd5a086a7d5ecfda93ec11",
+   "sha256": "591710b79179ae910e58c215339bf65e75cb3daaf20ded54cc9e29dab48113ee",
    "bytes": 71996
   },
   "journey-ui.mjs": {
@@ -185,8 +185,8 @@
    "bytes": 10051
   },
   "style.css": {
-   "sha256": "a171167d9557a47a3f7d1193a76072662cadd8842ac39aaed984bbb491600464",
-   "bytes": 11337
+   "sha256": "49e520e8a0c92ae0dc5ac5b3d044c8631cebdbb326a46003c1b12fde10e50a27",
+   "bytes": 11394
   },
   "swap-flow.mjs": {
    "sha256": "1ae2394b9235bb945ae0ec5b30e1505c8e58eb7bdc7c18dd345fdc32de143ead",

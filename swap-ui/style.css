@@ -78,6 +78,7 @@ button.journey-secondary:hover{background:#193b55}
 .journey-context-actions{display:flex;gap:12px;flex-wrap:wrap}
 .journey-context-actions button{margin-top:0!important}
 #hosted-node-instructions pre{max-width:100%;overflow-x:auto;padding:12px;border-radius:4px;background:#0e1c36;color:#e1e6ee;font-size:13px}
+#hosted-node-instructions p code{overflow-wrap:anywhere}
 .swap-flow{margin:40px 0 0;padding:32px 0 0;border-top:1px solid #354d6a}
 .swap-flow h3{margin:0 0 8px;font-size:24px;letter-spacing:-.02em}
 .swap-flow-diagram{display:block;width:100%;height:auto;margin-top:24px;overflow:visible;font-family:Inter,"Space Grotesk",system-ui,sans-serif}

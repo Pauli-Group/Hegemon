@@ -38,7 +38,7 @@ test('two browser sessions create a private offer and exchange encrypted message
     const payload=request.url().endsWith('/health')?{status:'ok',capabilities:['bitcoin-regtest-verify','bitcoin-regtest-actions','cardano-local-verify','cardano-local-actions','hegemon-local-verify','hegemon-local-actions']}:(request.url().endsWith('/bitcoin/head')?{genesis:'b'.repeat(64),height:'150'}:request.url().endsWith('/bitcoin/action')?{completed:true,result:{operation:'lock',txid:'a'.repeat(64),submitted:true,confirmed:false}}:request.url().endsWith('/cardano/action')?{completed:true,result:{operation:'lock',txid:'b'.repeat(64),submitted:true,confirmed:false}}:request.url().endsWith('/cardano/verify')?{verified:true,snapshot:{confirmations:null,tip_block:8}}:request.url().endsWith('/hegemon/verify')?{verified:true,snapshot:{verified:true,confirmations:'2',reference_height:'101'}}:request.url().endsWith('/hegemon/action')?{completed:true,result:{operation:'claim',attempt:'a'.repeat(64),submitted:false}}:{verified:true,snapshot:{confirmations:2,block_height:101}});
     return route.fulfill({status:200,headers,body:JSON.stringify(payload)});
   });
-  await first.locator('#companion-token').fill('a'.repeat(64));await first.getByRole('button',{name:'Connect local companion'}).click();await first.getByText('Local companion connected with experimental Hegemon actions enabled.').waitFor();
+  await first.locator('#companion-token').fill('a'.repeat(64));await first.getByRole('button',{name:'Connect local companion'}).click();await first.locator('#companion-status').getByText('Local companion connected with experimental Hegemon actions enabled.').waitFor();
   const bitcoinTerms={txid:'a'.repeat(64),vout:'0',amount_sats:'100000',genesis_hash:'b'.repeat(64),hashlock:'c'.repeat(64),claimant_key:'02'+'d'.repeat(64),refund_key:'03'+'e'.repeat(64),refund_height:'200'};
   for(const [name,value] of Object.entries(bitcoinTerms))await first.locator(`#bitcoin-form [name="${name}"]`).fill(value);
   await first.getByRole('button',{name:'Verify Bitcoin escrow'}).click();await first.getByText('Verified unspent with 2 confirmations',{exact:false}).waitFor();
@@ -82,7 +82,7 @@ test('two browser sessions create a private offer and exchange encrypted message
   const publicBodies=[];for(const page of [first,second])page.on('request',request=>{if(request.postData())publicBodies.push(request.postData());});
   await first.locator('#offer-form [name="visibility"]').selectOption('public');await first.getByRole('button',{name:'Create offer'}).click();
   await first.waitForFunction(old=>document.getElementById('share-link').value!==old,link);const publicLink=await first.locator('#share-link').inputValue(),publicId=publicLink.split('#')[1].split('.')[0];
-  await first.reload();await first.getByRole('button',{name:'Refresh messages'}).waitFor();await first.locator('#companion-token').fill('a'.repeat(64));await first.getByRole('button',{name:'Connect local companion'}).click();await first.getByText('Local companion connected with experimental Hegemon actions enabled.').waitFor();
+  await first.reload();await first.getByRole('button',{name:'Refresh messages'}).waitFor();await first.locator('#companion-token').fill('a'.repeat(64));await first.getByRole('button',{name:'Connect local companion'}).click();await first.locator('#companion-status').getByText('Local companion connected with experimental Hegemon actions enabled.').waitFor();
   await second.goto(base);let loseHandshakeResponse=true;await second.route('**/offers/*/messages',async route=>{if(loseHandshakeResponse&&route.request().method()==='POST'){loseHandshakeResponse=false;await route.fetch();return route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'fixture response lost'})});}return route.continue();});
   await second.getByRole('button',{name:'View offer'}).click();assert.equal(await second.evaluate(()=>location.hash),'#'+publicId);
   await second.getByRole('button',{name:'Reserve offer'}).click();await second.getByText('No funds have been locked.',{exact:false}).waitFor();
@@ -278,7 +278,7 @@ test('browser checks both local escrow legs against an offer',{timeout:60000},as
     {verified:true,snapshot:{confirmations:null,tip_block:8,tip_hash:'f'.repeat(64)}};
    return route.fulfill({status:200,headers,body:JSON.stringify(payload)});
   });
-  await page.goto(base);await page.locator('#companion-token').fill('a'.repeat(64));await page.getByRole('button',{name:'Connect local companion'}).click();await page.getByText('Local read-only companion connected.').waitFor();
+  await page.goto(base);await page.locator('#companion-token').fill('a'.repeat(64));await page.getByRole('button',{name:'Connect local companion'}).click();await page.locator('#companion-status').getByText('Local read-only companion connected.').waitFor();
   const policy='d'.repeat(56);await page.locator('[name="give-type"]').selectOption('bitcoin:btc');await page.locator('[name="give-amount"]').fill('100000');
   await page.locator('[name="receive-type"]').selectOption('cardano:native');await page.locator('[name="receive-id"]').fill(policy+'.00');await page.locator('[name="receive-amount"]').fill('5');
   await page.getByRole('button',{name:'Create offer'}).click();await page.locator('#selected').waitFor({state:'visible'});
