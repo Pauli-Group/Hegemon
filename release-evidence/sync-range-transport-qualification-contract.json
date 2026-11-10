@@ -16,6 +16,7 @@
   "required_gates": [
     "exact_new_source_inventory_delta_build_and_binary_manifest",
     "nine_transport_tests_and_restored_selector_negative",
+    "two_original_core_and_one_owner_ablation_negatives_with_frozen_strict_matcher",
     "twelve_exact_recovery_tests_six_modules_H0_five_backend_cases",
     "complete_current_network_disposable_donor_full_scratch_on_new_binary",
     "fresh_H0_importer_no_database_copy",

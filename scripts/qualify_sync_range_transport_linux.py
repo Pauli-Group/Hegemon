@@ -72,6 +72,26 @@ def main():
   pinned_text=(ROOT/'node/src/native/service.rs').read_text();function_start=pinned_text.index('    fn requested_range_batches_across_unsolicited_announce_threshold()');assertion=pinned_text.index('        assert_eq!(prefix, blocks);',function_start);assertion_line=pinned_text[:assertion].count('\n')+1
   verify_selector_failure(row['exit_code'],text,negative,assertion_line)
   receipt['restored_selector_negative_verified']=True
+  # Reuse the owned worktree, restoring the selector before the inherited
+  # core/owner ablations. Keep the exact frozen seams and strict matcher.
+  service_path=Path('node/src/native/service.rs')
+  shutil.copyfile(ROOT/service_path,baseline/service_path)
+  core_path=Path('node/src/native/node_impl.rs')
+  original_core=old.source.git(ROOT,'show',old.source.BASELINE_COMMIT+':'+core_path.as_posix())
+  (baseline/core_path).write_bytes(original_core)
+  receipt['core_ablation']={'scope':'Exact candidate harness with only node_impl.rs restored to3fb predecessor bytes','node_impl_sha256':sha(baseline/core_path),'test_overlay_sha256':sha(baseline/'node/src/native/sync_liveness_tests.rs')}
+  for index,name in enumerate(old.NEW_TESTS[:2]):
+   row,text=execute(old.cargo('hegemon-node')+[name,'--','--exact','--nocapture'],'core-ablation-negative-'+str(index),cwd=baseline)
+   old.verify_expected_failure(row['exit_code'],text,name)
+  receipt['core_ablation_expected_failure_verified']=True
+  shutil.copyfile(ROOT/core_path,baseline/core_path)
+  service_text=(ROOT/service_path).read_text();owner_guard='        || target_owner_pending\n'
+  need(service_text.count(owner_guard)==1,'exact completion-owner ablation seam differs')
+  (baseline/service_path).write_text(service_text.replace(owner_guard,'',1))
+  row,text=execute(old.cargo('hegemon-node')+[old.NEW_TESTS[3],'--','--exact','--nocapture'],'completion-owner-ablation-negative',cwd=baseline)
+  old.verify_expected_failure(row['exit_code'],text,old.NEW_TESTS[3])
+  receipt['completion_owner_ablation']={'scope':'Exact candidate harness and core; only new target_owner_pending admission conjunct removed','node_impl_sha256':sha(baseline/core_path),'service_sha256':sha(baseline/service_path),'test_overlay_sha256':sha(baseline/'node/src/native/sync_liveness_tests.rs'),'expected_failure_verified':True}
+  receipt['executed_negative_controls']=4
   for i,name in enumerate(TRANSPORT_TESTS+old.NEW_TESTS+old.CONTROLS):
    row,text=execute(old.cargo('hegemon-node')+[name,'--','--exact','--nocapture'],'exact-'+str(i));need(row['exit_code']==0 and passed_once(text),'exact test did not pass once: '+name)
   for i,(package,prefix)in enumerate(old.MODULES):
