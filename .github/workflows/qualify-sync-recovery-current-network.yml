@@ -1,0 +1,43 @@
+name: Qualify current network public import
+on:
+  push:
+    branches: [codex/sync-recovery-current-network-20261110]
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: sync-recovery-current-network-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  current-public-import:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    env:
+      RAYON_NUM_THREADS: "2"
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+          path: executor
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: de7a4f31b280eb52ed0c09e055840cec60d1f652
+          fetch-depth: 0
+          persist-credentials: false
+          path: frozen-source
+      - name: Download exact existing qualification artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ulimit -f 32768
+          timeout 120s gh api repos/Pauli-Group/Hegemon/actions/artifacts/13723231865/zip > prior-artifact.zip
+      - name: Fresh current public import and seedless restart
+        run: python3 -I -B executor/scripts/qualify_sync_recovery_current_network.py --run --source "$GITHUB_WORKSPACE/frozen-source" --artifact-zip "$GITHUB_WORKSPACE/prior-artifact.zip" --output "$GITHUB_WORKSPACE/current-network-import" --executor-commit "${{ github.sha }}"
+      - name: Preserve projected qualification evidence only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: sync-recovery-current-network-${{ github.sha }}-${{ github.run_attempt }}
+          path: current-network-import/CURRENT_NETWORK_RECEIPT.json
+          if-no-files-found: error
+          retention-days: 14
