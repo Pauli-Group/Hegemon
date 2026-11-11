@@ -1,6 +1,6 @@
 /* Page glue for the guided swap view. Read-only: it fills wallet forms the user then submits themselves, and shows
  * engine commands to copy. It writes nothing the engine treats as an action. */
-import {review, SIDE_STATES} from './guided.mjs';
+import {review, SIDE_STATES, waitingView} from './guided.mjs';
 
 const LABEL = {
   terms_saved: 'Terms saved', long_fund_submitted: 'Long leg funding submitted', long_funded: 'Long leg funded', short_verified: 'Short leg verified',
@@ -12,6 +12,10 @@ export function initGuided(d) {
   const {$, msg} = d;
   let last = null;
   const clock = d.now ?? (() => Math.floor(Date.now() / 1000));
+  const waiting = document.createElement('div');
+  waiting.id = 'guided-waiting'; waiting.className = 'journey-swap-status'; waiting.hidden = true;
+  waiting.setAttribute('role', 'status'); waiting.setAttribute('aria-live', 'polite');
+  $('guided-headline').before(waiting);
 
   function render(out) {
     const list = $('guided-sequence');
@@ -24,6 +28,12 @@ export function initGuided(d) {
     });
     $('guided-side').textContent = out.sequence.side ? `This swap is in a side state: ${LABEL[out.sequence.side]}.` : (out.sequence.index < 0 ? `Current state: ${LABEL[out.record.state] ?? out.record.state}.` : '');
     $('guided-headline').textContent = out.view.headline;
+    const current = waitingView({record: out.record, decision: out.view.decision, obs: out.obs});
+    const who = document.createElement('p'), heading = document.createElement('h3'), help = document.createElement('p');
+    who.className = 'journey-swap-actor'; who.textContent = 'NEXT ACTION: ' + current.actor.toUpperCase();
+    heading.textContent = current.title;
+    help.textContent = 'This is a snapshot based on the supplied local record and the latest reads. Refresh the record and check again before acting.';
+    waiting.replaceChildren(who, heading, help); waiting.hidden = false;
     const notes = $('guided-notes');
     notes.replaceChildren(...out.view.notes.map(text => { const li = document.createElement('li'); li.textContent = text; return li; }));
     const lines = [];
@@ -48,6 +58,7 @@ export function initGuided(d) {
 
   async function check() {
     $('guided-check').disabled = true;
+    waiting.hidden = true;
     try {
       msg($('guided-status'), 'Reading the chains.');
       const config = await d.loadTiming(), template = await d.template();
@@ -78,7 +89,7 @@ export function initGuided(d) {
       field.dispatchEvent(new Event('input', {bubbles: true}));
     }
     section.scrollIntoView({block: 'start'});
-    msg($('guided-status'), `The ${plan.operation} form is filled with the agreed terms. Review it and press its own button; this page asks no wallet for anything.`);
+    msg($('guided-status'), `The ${plan.operation} form is filled with the agreed terms. The wallet action does not recheck the other leg or its deadlines. Review both again before you proceed.`);
   }
 
   $('guided-check').addEventListener('click', check);

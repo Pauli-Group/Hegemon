@@ -2,6 +2,7 @@
  * so a test page can drive it. It never sees a wallet key: wallets sign, and every statement is verified here before it is
  * trusted. The relay stores statements but is not believed: a failed check blocks the conversation and the pair check. */
 import {legSpecs,draftStatement,statementText,signEthereum,signCardano,bitcoinProof,addProof,publishable,expectedInbox,judgeIdentity} from './identity-flow.mjs';
+import {legAddress} from './identity.mjs';
 import {inboxFingerprint,parsePublicSession} from './public-inbox.mjs';
 import {fromHex,toHex} from './cbor.mjs';
 
@@ -54,6 +55,23 @@ export function initIdentity(d){
    label.append(input);box.append(label);
   }
  }
+ /** Connected wallets can provide their public addresses without a signature or transaction.
+  * Only fill empty fields and never apply a delayed result to a different offer. */
+ async function autofill(){
+  const marker=$('identity-legs').dataset.offer;if(!marker)return;
+  const provider=d.getEthereum(),cardano=d.getCardano();
+  if(provider&&[...$('identity-legs').querySelectorAll('input')].some(i=>i.dataset.chain==='ethereum'&&!i.value)){
+   const accounts=await provider.request({method:'eth_accounts'});
+   if(marker===$('identity-legs').dataset.offer&&provider===d.getEthereum()&&Array.isArray(accounts)&&/^0x[0-9a-fA-F]{40}$/.test(accounts[0]||''))
+    for(const input of $('identity-legs').querySelectorAll('input'))if(input.dataset.chain==='ethereum'&&!input.value)input.value=accounts[0].toLowerCase();
+  }
+  if(cardano&&[...$('identity-legs').querySelectorAll('input')].some(i=>i.dataset.chain==='cardano'&&!i.value)){
+   const used=await cardano.getUsedAddresses(),unused=used.length?[]:await (cardano.getUnusedAddresses?.()??[]);
+   const found=[...used,...unused].map(fromHex).find(b=>b.length>=29&&[0,2,4,6].includes(b[0]>>4));
+   if(marker===$('identity-legs').dataset.offer&&cardano===d.getCardano()&&found)
+    for(const input of $('identity-legs').querySelectorAll('input'))if(input.dataset.chain==='cardano'&&!input.value)input.value=toHex(found.slice(1,29));
+  }
+ }
  /** Render the identity panel for the selected offer. Called by the page whenever it refreshes the offer or messages. */
  async function render(id,offer,messages){
   const role=roleOf(id,offer);
@@ -66,13 +84,21 @@ export function initIdentity(d){
   $('identity-form').hidden=!can;
   const key=d.messageKey(id),mine=result.owner?.status==='verified'&&role==='owner';
   $('identity-link-row').hidden=!mine||!key;if(mine&&key)$('identity-link').value=location.origin+'/#'+id+'.'+key+'.'+result.owner.identity.code;
-  if(can&&$('identity-legs').dataset.offer!==id+':'+role){legInputs(offer,role);$('identity-legs').dataset.offer=id+':'+role;state.draft=null;state.proofs=[];$('identity-sign').hidden=true;}
+  if(can&&$('identity-legs').dataset.offer!==id+':'+role){legInputs(offer,role);$('identity-legs').dataset.offer=id+':'+role;state.draft=null;state.proofs=[];$('identity-sign').hidden=true;renderProofs();}
+  if(can)await autofill().catch(()=>{});
   return result;
  }
  function renderProofs(){
   const list=$('identity-proofs');list.replaceChildren();
   for(const p of state.proofs){const li=document.createElement('li');li.textContent=p.chain+' · '+p.scheme+' · '+p.signer;list.append(li);}
-  $('identity-publish').disabled=state.proofs.length===0;
+  $('identity-publish').disabled=state.busy||state.proofs.length===0;
+  for(const id of ['identity-sign-ethereum','identity-sign-cardano','identity-bitcoin-add','identity-edit'])$(id).disabled=state.busy;
+  const legs=state.draft?.statement?.legs;
+  const missing=legs&&['give','receive'].find(side=>legs[side].chain!=='hegemon'&&!state.proofs.some(proof=>proof.chain===legs[side].chain&&proof.signer===legAddress(state.draft.statement,side)));
+  const next=missing?legs[missing].chain:'publish';
+  $('identity').dataset.stage=state.draft?'sign':'prepare';
+  $('identity-sign').dataset.next=next;
+  $('identity-next-sign').textContent=next==='publish'?'Your wallet proofs are ready. Publish your signed details.':`Next: sign with your ${next==='ethereum'?'Ethereum':next==='cardano'?'Cardano':'Bitcoin'} wallet. This does not move funds.`;
  }
  async function ownInbox(id,offer,messages,role){
   if(role==='owner'){
@@ -95,16 +121,22 @@ export function initIdentity(d){
   }catch(e){state.draft=null;$('identity-sign').hidden=true;msg($('identity-status'),e.message,true);}
  });
  async function sign(make){
+  if(state.busy)return;
   if(!state.draft||state.draft.id!==d.currentOffer())throw Error('Prepare a statement for the selected offer first.');
-  const proof=await make(statementText(state.draft.statement));
-  state.proofs=addProof(state.draft.statement,state.proofs,proof);renderProofs();
-  msg($('identity-status'),'Added '+proof.chain+' signature. Publish when every address you want proven is signed.');
+  state.busy=true;renderProofs();
+  try{
+   const draft=state.draft,proof=await make(statementText(draft.statement));
+   if(state.draft!==draft||draft.id!==d.currentOffer())throw Error('The offer changed while the wallet was signing. Prepare the statement again.');
+   state.proofs=addProof(draft.statement,state.proofs,proof);
+   msg($('identity-status'),'Added '+proof.chain+' signature. Publish when every address you want proven is signed.');
+  } finally {state.busy=false;renderProofs();}
  }
  $('identity-sign-ethereum').addEventListener('click',async()=>{try{
   const provider=d.getEthereum();if(!provider)throw Error('Connect an Ethereum wallet first.');
   const account=(await provider.request({method:'eth_accounts'}))[0];if(!account)throw Error('The Ethereum wallet has no account available.');
   await sign(text=>signEthereum(provider,account,text));}catch(e){msg($('identity-status'),e.message,true);}});
  $('identity-sign-cardano').addEventListener('click',async()=>{try{await sign(text=>signCardano(d.getCardano(),text));}catch(e){msg($('identity-status'),e.message,true);}});
+ $('identity-edit').addEventListener('click',()=>{state.draft=null;state.proofs=[];$('identity-sign').hidden=true;renderProofs();msg($('identity-status'),'Review your addresses before preparing a new statement.');});
  $('identity-bitcoin-add').addEventListener('click',async()=>{try{await sign(text=>bitcoinProof($('identity-bitcoin-scheme').value,$('identity-bitcoin-signature').value,text));$('identity-bitcoin-signature').value='';}catch(e){msg($('identity-status'),e.message,true);}});
  $('identity-ethereum-use').addEventListener('click',async()=>{try{const provider=d.getEthereum();if(!provider)throw Error('Connect an Ethereum wallet first.');
   const account=(await provider.request({method:'eth_accounts'}))[0];if(!account)throw Error('The Ethereum wallet has no account available.');
@@ -122,7 +154,7 @@ export function initIdentity(d){
    if(self.status!=='verified')throw Error('Your statement does not verify: '+self.error);
    await d.api('/offers/'+id+'/identity',{method:'POST',headers:{authorization:'Bearer '+d.participantToken(id)},body:JSON.stringify(role==='owner'?{identity:blob}:{identity:blob,reservationId:offer.reservationId})});
    msg($('identity-status'),'Published. Your identity code is '+self.identity.code+'. Give it to the other participant through a channel other than this relay.');
-   state.draft=null;$('identity-sign').hidden=true;const fresh=await context(id);await render(id,fresh.offer,fresh.messages);
+   state.draft=null;$('identity-sign').hidden=true;const fresh=await context(id);await render(id,fresh.offer,fresh.messages);await d.onUpdate?.();
   }catch(e){msg($('identity-status'),e.message,true);}finally{state.busy=false;renderProofs();}
  });
  $('identity-pin-save').addEventListener('click',()=>{try{
@@ -149,5 +181,5 @@ export function initIdentity(d){
   if(result.status==='verified'&&!result.pinned)localStorage.setItem(pinKey(id,'owner'),result.identity.code);
   return result.status==='none'?'The owner has not published a signed identity.':'Owner identity code '+result.identity.code+(result.pinned?' matches the pinned code.':'; confirm it with them another way.');
  }
- return {render,evaluate,requireIdentities,checkOwnerBeforeReserve,blocked:id=>state.failed.get(id)===true,parsePublicSession};
+ return {render,evaluate,autofill,requireIdentities,checkOwnerBeforeReserve,blocked:id=>state.failed.get(id)===true,parsePublicSession};
 }

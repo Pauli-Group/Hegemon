@@ -7,7 +7,18 @@ import {bitcoinWitnessScript, expectedBitcoinScript, TESTNET4_GENESIS} from './b
 import {PREVIEW_HTLC_ADDRESS} from './cardano-preview-verifier.mjs';
 import {expectedEtherRuntime} from './ethereum-escrow.mjs';
 import {TRANSITIONS, planWithMargin, swapId, termsDigest} from './swap-flow.mjs';
-import {SEQUENCE, SIDE_STATES, buildObservation, explainDecision, openActions, parseSwap, prefillFor, review, sequenceView} from './guided.mjs';
+import {SEQUENCE, SIDE_STATES, buildObservation, explainDecision, openActions, parseSwap, prefillFor, review, sequenceView, waitingView} from './guided.mjs';
+
+test('guided waiting messages distinguish action, counterparty, network and unreadable chain', () => {
+  const record = {role: 'initiator', state: 'long_funded', escrows: {long: {}, short: null}};
+  const obs = {errors: {}};
+  assert.equal(waitingView({record, decision: {kind: 'wait'}, obs}).actor, 'The other person');
+  assert.equal(waitingView({record: {...record, escrows: {...record.escrows, short: {}}}, decision: {kind: 'wait'}, obs}).actor, 'The network');
+  assert.equal(waitingView({record, decision: {kind: 'wait'}, obs: {errors: {short: 'unavailable'}}}).actor, 'Unknown');
+  assert.equal(waitingView({record, decision: {kind: 'act', action: 'claim'}, obs}).title, 'Claim the escrow you are owed');
+  assert.equal(waitingView({record, decision: {kind: 'move'}, obs}).title, 'Update the local swap record');
+  assert.equal(waitingView({record: {...record, state: 'refund_submitted'}, decision: {kind: 'wait'}, obs}).actor, 'The network');
+});
 
 const config = JSON.parse(fs.readFileSync(new URL('chain-timing.json', import.meta.url), 'utf8'));
 const template = JSON.parse(fs.readFileSync(new URL('ether-escrow-template.json', import.meta.url), 'utf8'));

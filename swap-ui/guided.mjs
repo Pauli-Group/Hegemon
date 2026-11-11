@@ -62,6 +62,25 @@ export function sequenceView(record) {
   return {path, index, side: SIDE_STATES.includes(record.state) ? record.state : null};
 }
 
+/** A human-readable owner of the next step. Chain reads are snapshots: absence of a
+ * recorded reference cannot prove that the other person has not already acted. */
+export function waitingView({record, decision, obs}) {
+  if (decision.kind === 'terminal') return {actor: 'No one', title: 'This swap is finished'};
+  if (decision.kind === 'halt' || decision.kind === 'abort') return {actor: 'You', title: 'Review the problem before continuing'};
+  if (decision.kind === 'act') return {actor: 'You', title: decision.action === 'fund' ? 'Lock your side of the swap' : decision.action === 'claim' ? 'Claim the escrow you are owed' : 'Refund your escrow'};
+  if (decision.kind === 'move') return {actor: 'You', title: 'Update the local swap record'};
+  if (Object.keys(obs.errors ?? {}).length) return {actor: 'Unknown', title: 'A chain could not be checked'};
+  if (record.state === 'long_fund_submitted' || record.state === 'short_fund_submitted' || record.state === 'short_claim_submitted' || record.state === 'long_claim_submitted' || record.state === 'refund_submitted') {
+    return {actor: 'The network', title: 'Waiting for transaction confirmation'};
+  }
+  if ((record.role === 'initiator' && record.state === 'long_funded') || (record.role === 'responder' && (record.state === 'terms_saved' || record.state === 'short_funded'))) {
+    const ref = record.escrows[record.role === 'initiator' ? 'short' : record.state === 'terms_saved' ? 'long' : 'short'];
+    if (ref && record.state !== 'short_funded') return {actor: 'The network', title: 'Checking the other escrow'};
+    return {actor: 'The other person', title: record.state === 'short_funded' ? 'Waiting for their claim' : 'Waiting for their escrow details'};
+  }
+  return {actor: 'Unknown', title: 'Check the latest swap state'};
+}
+
 // ---------------------------------------------------------------- observations
 
 const unreadable = (errors, name, error) => { errors[name] = String(error?.message ?? error).slice(0, 200); return null; };
@@ -230,9 +249,9 @@ export async function review({termsText, statusText, config, now, readers, templ
   const {terms, record, id} = await parseSwap({termsText, statusText});
   const secret = typeof hasSecret === 'function' ? await hasSecret(terms.hashlock) : hasSecret;
   const obs = await buildObservation({terms, record, now, readers, template, hasSecret: secret});
-  const decision = decide(record, terms, obs, config, now);
-  const view = explainDecision({decision, record, terms, obs, config, id});
   const open = openActions(records, terms);
+  const decision = open.length ? {kind: 'halt', why: 'a saved action is pending or uncertain; check its outcome before continuing'} : decide(record, terms, obs, config, now);
+  const view = explainDecision({decision, record, terms, obs, config, id});
   if (open.length) view.notes.push(`${open.length} saved action record${open.length > 1 ? 's' : ''} for these chains ${open.length > 1 ? 'are' : 'is'} pending or uncertain. Check the chain and the local action journal before acting.`);
   const policy = obs.heads.long && obs.heads.short ? checkOrdered(config, {...policyLegs(terms), heads: obs.heads, now}) : null;
   return {id, terms, record, obs, sequence: sequenceView(record), view, open, policy};

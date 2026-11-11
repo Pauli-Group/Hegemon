@@ -6,12 +6,23 @@
 html[data-journey-mode="guided"] main > section:not(#journey-shell):not([data-journey-active]){display:none!important}
 html[data-journey-mode="guided"] #selected[data-journey-owner="true"] #reserve,
 html[data-journey-mode="guided"] #selected[data-journey-reserved="true"] #reserve{display:none}
+html[data-journey-mode="advanced"] #identity-edit,
+html[data-journey-mode="advanced"] #identity-next-sign{display:none}
+html[data-journey-mode="guided"] #identity[data-stage="sign"] #identity-form,
+html[data-journey-mode="guided"] #identity-sign #identity-edit + p,
+html[data-journey-mode="guided"] #identity-sign #identity-text,
+html[data-journey-mode="guided"] #identity-sign #identity-proofs,
+html[data-journey-mode="guided"] #identity-sign:not([data-next="ethereum"]) #identity-sign-ethereum,
+html[data-journey-mode="guided"] #identity-sign:not([data-next="cardano"]) #identity-sign-cardano,
+html[data-journey-mode="guided"] #identity-sign:not([data-next="bitcoin"]) #identity-bitcoin-proof,
+html[data-journey-mode="guided"] #identity-sign:not([data-next="publish"]) #identity-publish{display:none}
 html[data-journey-mode="guided"] #guided-section .assets{grid-template-columns:1fr}
 html[data-journey-mode="guided"] #guided-section[data-journey-guided-step="terms"] #journey-guided-status-panel,
 html[data-journey-mode="guided"] #guided-section[data-journey-guided-step="terms"] #journey-guided-actions,
 html[data-journey-mode="guided"] #guided-section[data-journey-guided-step="terms"] #guided-status,
 html[data-journey-mode="guided"] #guided-section[data-journey-guided-step="terms"] #guided-sequence,
 html[data-journey-mode="guided"] #guided-section[data-journey-guided-step="terms"] #guided-side,
+html[data-journey-mode="guided"] #guided-section[data-journey-guided-step="terms"] #guided-waiting,
 html[data-journey-mode="guided"] #guided-section[data-journey-guided-step="terms"] #guided-headline,
 html[data-journey-mode="guided"] #guided-section[data-journey-guided-step="terms"] #guided-notes,
 html[data-journey-mode="guided"] #guided-section[data-journey-guided-step="terms"] #guided-detail,
@@ -77,6 +88,10 @@ button.journey-secondary:hover{background:#193b55}
 .journey-checkbox{display:flex;gap:10px;align-items:flex-start;margin:16px 0!important}
 .journey-context-actions{display:flex;gap:12px;flex-wrap:wrap}
 .journey-context-actions button{margin-top:0!important}
+.journey-swap-status{margin-top:24px;padding:20px 24px;border:1px solid #48617c;border-left:4px solid #1be7ff;border-radius:8px;background:#0e1c36}
+.journey-swap-status .journey-swap-actor{margin:0 0 8px;color:#1be7ff;font-size:12px;font-weight:600;letter-spacing:.06em}
+.journey-swap-status h3{margin:0;font-size:19px}
+.journey-swap-status p:not(.journey-swap-actor){max-width:60ch;margin:8px 0;color:#bbc8d8}
 #hosted-node-instructions pre{max-width:100%;overflow-x:auto;padding:12px;border-radius:4px;background:#0e1c36;color:#e1e6ee;font-size:13px}
 #hosted-node-instructions p code{overflow-wrap:anywhere}
 .swap-flow{margin:40px 0 0;padding:32px 0 0;border-top:1px solid #354d6a}

@@ -89,9 +89,12 @@ test('Guided swap in the page: policy verdict, engine-equal decision, wallet for
     assert.equal((await page.evaluate(async () => (await import('/action-journal.mjs')).listActions())).length, 0, 'filling a form writes no action record');
 
     // 4. An unsettled saved action for this swap is reported before anything else.
-    await page.evaluate(async hash => (await import('/action-journal.mjs')).beginAction('cardano', 'claim', {operation: 'claim', hashlock: hash, claimant: 'c5'.repeat(28), refundee: '88'.repeat(28), expiry_ms: '1', expected_value: {lovelace: '1'}, outref: 'cc'.repeat(32) + '#0', fee_input: '01'.repeat(32) + '#0', collateral: '02'.repeat(32) + '#0'}), hashlock);
+    const pending = await page.evaluate(async hash => (await import('/action-journal.mjs')).beginAction('cardano', 'claim', {operation: 'claim', hashlock: hash, claimant: 'c5'.repeat(28), refundee: '88'.repeat(28), expiry_ms: '1', expected_value: {lovelace: '1'}, outref: 'cc'.repeat(32) + '#0', fee_input: '01'.repeat(32) + '#0', collateral: '02'.repeat(32) + '#0'}), hashlock);
     await check(terms, await status({state: 'short_verified'}));
     assert.match(await text('guided-notes'), /pending or uncertain/);
+    assert.match(await text('guided-headline'), /Stopped: a saved action/);
+    assert.equal(await page.locator('#guided-fill').isHidden(), true, 'uncertain actions must prevent another wallet action');
+    await page.evaluate(async id => (await import('/action-journal.mjs')).removeAction(id), pending);
 
     // 5. needs_human and inflight are shown and the page does not suggest an action.
     await check(terms, await status({state: 'short_claim_submitted', needs_human: 'claim not visible long after submission', inflight: {action: 'claim'}}));

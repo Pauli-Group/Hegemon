@@ -54,7 +54,7 @@ export function initCardanoWalletActions(d) {
         preimage = toHex(secret);
       }
       const verifyEscrow = t => d.verifyEscrow({...t, expiry_ms: Number(t.expiry_ms)}, op === 'refund' ? {confirmations: requirements.confirmations, allowExpired: true} : requirements);
-      const warning = op === 'claim' ? 'A claim reveals the swap secret on chain. Claim only the escrow you are owed, and only after verifying the other leg and its deadlines. This page does not check the other leg unless you started from a guided swap.' : op === 'fund' ? 'Fund only after the other party has verified terms you both agreed to. This page does not check the other leg unless you started from a guided swap.' : '';
+      const warning = op === 'claim' ? 'A claim reveals the swap secret on chain. Claim only the escrow you are owed, and only after verifying the other leg and its deadlines. This action does not recheck the other leg, even when opened from the guided review.' : op === 'fund' ? 'Fund only after the other party has verified terms you both agreed to. This action does not recheck the other leg, even when opened from the guided review.' : '';
       const journal = {
         begin: async (chain, operation, request) => { const id = await d.journal.begin(chain, operation, request); d.refresh(); return id; },
         finish: async (id, receipt) => { await d.journal.finish(id, receipt); d.refresh(); },

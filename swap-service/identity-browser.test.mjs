@@ -11,7 +11,7 @@ import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {createServer} from 'node:net';
 import {once} from 'node:events';
-import {ethereumWallet,ethereumProviderSource,bitcoinMessageWallet} from '../swap-ui/test-wallets.mjs';
+import {ethereumWallet,ethereumProviderSource,bitcoinMessageWallet,cardanoWallet} from '../swap-ui/test-wallets.mjs';
 import {draftStatement,statementText,signEthereum,bitcoinProof,addProof,publishable} from '../swap-ui/identity-flow.mjs';
 import {inboxFingerprint} from '../swap-ui/public-inbox.mjs';
 
@@ -204,4 +204,53 @@ test('the browser refuses to run a served module or entry script that differs fr
   if(server.exitCode===null){server.kill('SIGTERM');await once(server,'exit');}
   await rm(dir,{recursive:true,force:true});
  }
+});
+
+test('connected Cardano and Ethereum wallets supply empty identity fields without signing or overwriting edits',{timeout:90000},async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'swap-autofill-')),n=await port(),base=`http://127.0.0.1:${n}`;
+ const server=spawn(process.execPath,[resolve('swap-service/server.ts')],{env:{...process.env,SWAP_DB:join(dir,'offers.db'),SWAP_PORT:String(n)},stdio:'ignore'});
+ let browser;
+ try{
+  for(let i=0;i<100;i++){try{if((await fetch(base+'/health')).ok)break;}catch{}await new Promise(r=>setTimeout(r,50));}
+  browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH||'/usr/bin/chromium',headless:true,args:['--no-sandbox','--disable-gpu','--disable-background-networking']});
+  const context=await browser.newContext(),eth=ethereumWallet('16'.repeat(32)),ada=cardanoWallet('17'.repeat(32));
+  await context.exposeFunction('__testEthereumSign',payload=>eth.personalSign(payload));
+  await context.exposeFunction('__testCardanoSign',(address,payload)=>ada.signData(address,payload));
+  await context.addInitScript(({address,cardanoAddress})=>{
+   window.walletApprovals=0;
+   window.ethereum={request:async({method,params})=>{if(method==='eth_requestAccounts'||method==='eth_accounts')return [address];if(method==='eth_chainId')return '0xaa36a7';if(method==='personal_sign'){window.walletApprovals++;return window.__testEthereumSign(params[0]);}throw Error('Unexpected wallet request');},on(){}};
+   window.cardano={test:{name:'Test wallet',enable:async()=>({getNetworkId:async()=>0,getUsedAddresses:async()=>[cardanoAddress],signData:async(a,p)=>{window.walletApprovals++;return window.__testCardanoSign(a,p);}})}};
+  },{address:eth.address,cardanoAddress:ada.addressHex});
+  const page=await context.newPage();await page.goto(base);
+  await page.locator('#connect-ethereum').click();await page.locator('#wallet-status').getByText('Ethereum connected',{exact:false}).waitFor();
+  await page.locator('#cardano-wallet').selectOption('test');await page.locator('#connect-cardano').click();await page.locator('#wallet-status').getByText('Cardano connected',{exact:false}).waitFor();
+  await page.locator('#offer-form [name="give-type"]').selectOption('cardano:ada');
+  await page.locator('#offer-form [name="give-amount"]').fill('5000000');
+  await page.locator('#offer-form [name="receive-type"]').selectOption('ethereum:eth');
+  await page.locator('#offer-form [name="receive-amount"]').fill('100000000000000000');
+  await page.locator('#offer-form button[type="submit"]').click();
+  await page.locator('#identity-form').waitFor({state:'visible'});
+  await page.waitForFunction(({key,address})=>document.querySelector('#identity-legs [name="give"]').value===key&&document.querySelector('#identity-legs [name="receive"]').value===address,{key:ada.keyHash,address:eth.address});
+  await page.locator('#identity-legs [name="receive"]').fill('0x'+'aa'.repeat(20));
+  await page.locator('#connect-ethereum').click();
+  assert.equal(await page.locator('#identity-legs [name="receive"]').inputValue(),'0x'+'aa'.repeat(20),'an explicit edit must not be overwritten');
+  assert.equal(await page.evaluate(()=>window.walletApprovals),0,'autofill must never request a signature or transaction');
+  await page.locator('#identity-legs [name="receive"]').fill(eth.address);
+  await page.locator('#journey-mode').click();
+  await page.evaluate(()=>window.dispatchEvent(new Event('hashchange')));
+  await page.locator('#journey-identity-next').click();
+  await page.locator('#identity-prepare').click();
+  await page.locator('#identity-sign-cardano').waitFor({state:'visible'});
+  assert.equal(await page.locator('#identity-sign-ethereum').isVisible(),false,'only the next wallet signature is shown');
+  await page.locator('#identity-sign-cardano').click();
+  await page.locator('#identity-sign-ethereum').waitFor({state:'visible'});
+  assert.equal(await page.locator('#identity-sign-cardano').isVisible(),false);
+  assert.equal(await page.locator('#identity-publish').isVisible(),false,'both wallet proofs are required in guided view');
+  await page.locator('#identity-sign-ethereum').click();
+  await page.locator('#identity-publish').waitFor({state:'visible'});
+  assert.equal(await page.evaluate(()=>window.walletApprovals),2);
+  await page.locator('#identity-publish').click();
+  await page.locator('#identity-status').getByText('Published.',{exact:false}).waitFor();
+  await page.locator('.journey-swap-status').getByText('Waiting for someone to reserve').waitFor();
+ }finally{await browser?.close();server.kill('SIGTERM');await Promise.race([once(server,'exit'),new Promise(r=>setTimeout(r,2000))]);await rm(dir,{recursive:true,force:true});}
 });

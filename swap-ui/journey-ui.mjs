@@ -24,6 +24,26 @@ const CONTEXT = {
   tool: ['WALLET ACTION', 'Review the next action.', 'Check every field and the other swap leg before asking a wallet to sign.'],
 };
 
+/** Describe only the offer and locally verified identity evidence we actually have.
+ * The relay's reservation and identity fields are not evidence of a funded escrow. */
+export function offerProgress({available, owner, reserved, reservationActive, closed, expired, identity}) {
+  if (!available) return {actor: 'Unknown', title: 'Offer status unavailable', detail: 'Refresh to try again. No transaction status is known.'};
+  if (closed || expired) return {actor: 'Unknown', title: 'This offer is no longer open', detail: 'A closed offer does not establish the status of any existing swap. Check any transaction separately.'};
+  if (!owner && !reserved) return reservationActive
+    ? {actor: 'Another person', title: 'This offer is reserved', detail: 'Someone else currently holds the reservation. Refresh to check again.'}
+    : {actor: 'You', title: 'Review and reserve the offer', detail: 'Reserving does not move funds.'};
+  if (!identity) return {actor: 'Checking', title: 'Checking participant details', detail: 'The page is reading the offer and verifying signed identities.'};
+  if (identity.error || identity.blocked) return {actor: 'Unknown', title: 'Participant details need attention', detail: 'An identity could not be verified or the offer could not be read. Do not move funds based on this status.'};
+  const self = owner ? identity.owner : identity.taker, other = owner ? identity.taker : identity.owner;
+  if (self === 'unsupported' || other === 'unsupported') return {actor: 'Unknown', title: 'An address proof is not available', detail: 'Hegemon address proofs are not available in this preview. Do not treat this status as verification of either escrow.'};
+  if (self === 'partial') return {actor: 'You', title: 'Complete your wallet proofs', detail: 'At least one address has not been proven by its wallet. Add its wallet signature before continuing.'};
+  if (self !== 'verified') return {actor: 'You', title: 'Sign your participant details', detail: 'Connect the required wallets and publish your signed identity. Signing a message does not move funds.'};
+  if (!reservationActive) return {actor: 'The other person', title: 'Waiting for someone to reserve', detail: 'Share your offer and refresh to check for a reservation.'};
+  if (other === 'partial') return {actor: 'The other person', title: 'Waiting for their wallet proofs', detail: 'At least one of their addresses has not been proven by its wallet.'};
+  if (other !== 'verified') return {actor: 'The other person', title: 'Waiting for their signed details', detail: 'Refresh after they publish their identity. No escrow has been verified by this status.'};
+  return {actor: 'Not yet known', title: 'Both participants have signed their wallet details', detail: 'This preview cannot yet coordinate or track the whole swap automatically. Check the agreed terms, both escrows and deadlines before moving funds.'};
+}
+
 /** Navigate the existing page without changing any wallet, identity or transaction checks. */
 export function initJourney({legacyForm, msg, hegemonWallet = null}) {
   const $ = id => document.getElementById(id);
@@ -36,6 +56,11 @@ export function initJourney({legacyForm, msg, hegemonWallet = null}) {
   try { savedMode = sessionStorage.getItem(modeKey); } catch { /* Storage is optional. */ }
   let mode = ['guided', 'advanced'].includes(savedMode) ? savedMode : hosted ? 'guided' : 'advanced';
   let route = 'home', history = [], step = 0, guidedStep = 'terms', posting = false, stepping = false, completedDraft = false, selected = null, hgnSnapshot = null, hgnActivity = null, hgnWatchEpoch = 0;
+  const savedRoutes = new Set(['offer', 'identity', 'chat']);
+  function saveRoute() {
+    if (!selected?.id) return;
+    try { if (savedRoutes.has(route)) sessionStorage.setItem('hegemon.swap.route:' + selected.id, route); else sessionStorage.removeItem('hegemon.swap.route:' + selected.id); } catch { /* Navigation still works without storage. */ }
+  }
   const wallet = hegemonWallet || {paired: () => false, unlock: async () => { throw Error('Connect the local companion started with --hosted-wallet-status.'); }, balance: async () => { throw Error('Connect the local companion started with --hosted-wallet-status.'); }};
 
   for (const side of ['give', 'receive']) {
@@ -54,6 +79,29 @@ export function initJourney({legacyForm, msg, hegemonWallet = null}) {
     if (secondary) button.className = 'journey-secondary';
     button.addEventListener('click', action);
     $('journey-context-actions').append(button);
+  }
+
+  const offerStatus = document.createElement('div');
+  offerStatus.className = 'journey-swap-status';
+  offerStatus.setAttribute('role', 'status');
+  offerStatus.setAttribute('aria-live', 'polite');
+  $('journey-context').append(offerStatus);
+
+  function renderOfferProgress() {
+    offerStatus.hidden = !selected || !['offer', 'identity', 'chat'].includes(route);
+    if (offerStatus.hidden) return;
+    const progress = offerProgress(selected);
+    offerStatus.replaceChildren();
+    const who = document.createElement('p'), title = document.createElement('h3'), detail = document.createElement('p');
+    who.className = 'journey-swap-actor';
+    who.textContent = 'NEXT ACTION: ' + progress.actor.toUpperCase();
+    title.textContent = progress.title;
+    detail.textContent = progress.detail;
+    const refresh = document.createElement('button');
+    refresh.type = 'button'; refresh.className = 'journey-secondary';
+    refresh.textContent = 'Refresh progress';
+    refresh.addEventListener('click', () => window.location.reload());
+    offerStatus.append(who, title, detail, refresh);
   }
 
   function resetDraft() {
@@ -116,6 +164,7 @@ export function initJourney({legacyForm, msg, hegemonWallet = null}) {
     const panel = panelFor(route);
     if (route === 'guided' && panel) { panel.hidden = false; panel.dataset.journeyGuidedStep = guidedStep; }
     activate(panel);
+    renderOfferProgress();
 
     if (route === 'offer') {
       const next = $('journey-offer-next');
@@ -150,6 +199,7 @@ export function initJourney({legacyForm, msg, hegemonWallet = null}) {
     if (next === 'create' && completedDraft) resetDraft();
     if (remember && next !== route) history.push(route);
     route = next;
+    saveRoute();
     render();
     if (route === 'create') focusHeading('journey-create-title');
     else if (!['home', 'created', 'open'].includes(route)) focusHeading('journey-context-title');
@@ -475,17 +525,29 @@ export function initJourney({legacyForm, msg, hegemonWallet = null}) {
   });
 
   document.addEventListener('journey:offer-selected', event => {
-    selected = event.detail;
+    const previous = selected;
+    selected = {...event.detail, identity: previous?.id === event.detail.id && previous.reservationId === event.detail.reservationId ? previous.identity : null};
     $('selected').dataset.journeyOwner = String(!!selected.owner);
     $('selected').dataset.journeyReserved = String(!!selected.reserved);
     // A slow offer refresh must not pull a person away from an identity, wallet or swap-review screen.
-    if (mode === 'guided' && ['home', 'open', 'browse', 'offer'].includes(route)) navigate('offer', route !== 'offer');
+    if (mode === 'guided' && ['home', 'open', 'browse', 'offer'].includes(route)) {
+      let resume = 'offer';
+      if (route === 'home' && selected.participant) {
+        try { const saved = sessionStorage.getItem('hegemon.swap.route:' + selected.id); if (savedRoutes.has(saved)) resume = saved; } catch { /* Start at the offer. */ }
+      }
+      navigate(resume, route !== resume);
+    }
   });
   document.addEventListener('journey:reserved', event => {
     if (selected?.id !== event.detail.id) return;
-    selected = {...selected, participant: true, reserved: true};
+    selected = {...selected, participant: true, reserved: true, reservationId: event.detail.reservationId, reservationActive: true, identity: null};
     $('selected').dataset.journeyReserved = 'true';
     if (mode === 'guided' && route === 'offer') render();
+  });
+  document.addEventListener('journey:identity-state', event => {
+    if (selected?.id !== event.detail.id || (event.detail.reservationId !== undefined && selected.reservationId !== event.detail.reservationId)) return;
+    selected = {...selected, identity: event.detail.identity};
+    if (mode === 'guided') renderOfferProgress();
   });
   $('journey-identity-next').addEventListener('click', () => navigate('identity'));
   for (const button of document.querySelectorAll('[data-journey-go]')) button.addEventListener('click', () => navigate(button.dataset.journeyGo));
@@ -493,6 +555,7 @@ export function initJourney({legacyForm, msg, hegemonWallet = null}) {
     if (posting) return;
     if (route === 'create' && step > 0) { step--; status('journey-create-status', ''); renderStep(); focusHeading('journey-create-title'); return; }
     route = history.pop() || 'home';
+    saveRoute();
     render();
     window.scrollTo({top: 0, behavior: 'instant'});
   });

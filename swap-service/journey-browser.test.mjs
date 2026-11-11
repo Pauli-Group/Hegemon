@@ -102,6 +102,8 @@ test('hosted guided flow creates one reviewed offer and opens it in a second bro
     await first.locator('#journey-see-offer').click();
     assert.equal(await first.locator('#selected').isVisible(), true);
     assert.equal(await first.locator('#reserve').isVisible(), false, 'an owner should not be asked to reserve their own offer');
+    await first.locator('.journey-swap-status').getByText('Sign your participant details').waitFor();
+    assert.match(await first.locator('.journey-swap-actor').innerText(), /YOU/);
 
     const requested = [];
     second.on('request', request => requested.push(request.url()));
@@ -119,6 +121,12 @@ test('hosted guided flow creates one reviewed offer and opens it in a second bro
     await second.locator('#reserve').click();
     await second.getByText('No funds have been locked.', {exact: false}).last().waitFor();
     assert.equal(await second.locator('#reserve').isVisible(), false);
+    await second.locator('.journey-swap-status').getByText('Sign your participant details').waitFor();
+    await first.locator('.journey-swap-status button').click();
+    await first.locator('#selected').waitFor({state: 'visible'});
+    await first.locator('.journey-swap-status').getByText('Sign your participant details').waitFor();
+    assert.match(await first.locator('.journey-swap-actor').innerText(), /YOU/, 'reload must not pretend the peer signed or a transaction happened');
+    assert.equal(await first.evaluate(() => window.walletCalls), 0, 'refresh never asks a wallet for approval');
     await second.locator('#journey-identity-next').click();
     await second.locator('#identity').waitFor({state: 'visible'});
     assert.match(await second.locator('#journey-context-copy').innerText(), /Hegemon addresses cannot yet be signed/);
@@ -129,6 +137,10 @@ test('hosted guided flow creates one reviewed offer and opens it in a second bro
     });
     await second.waitForFunction(() => window.journeyRefreshed);
     assert.equal(await second.locator('#identity').isVisible(), true, 'an offer refresh must not pull someone away from identity verification');
+    await second.reload();
+    await second.locator('#identity').waitFor({state: 'visible'});
+    await second.locator('.journey-swap-status').getByText('Sign your participant details').waitFor();
+    assert.equal(await second.evaluate(() => window.walletCalls), 0, 'a browser reload never starts a wallet action');
     await second.getByRole('button', {name: 'Continue to messages →'}).click();
     await second.locator('#chat').waitFor({state: 'visible'});
     await second.locator('#journey-mode').click();

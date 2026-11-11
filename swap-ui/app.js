@@ -80,7 +80,7 @@ async function sepoliaAction(operation){
    }
    return operation==='deploy'?deploySepoliaEscrow(guarded,template,terms):operation==='refund'?refundSepoliaEscrow(guarded,template,terms):tokenSepoliaStep(guarded,template,terms,operation);
   };
-  if(operation==='claim'&&!window.confirm('This claim does not check the other swap leg unless you started it from a guided swap. Your wallet receives the preimage as soon as the request is made, even if you reject it. Continue only after verifying the other leg and its deadlines.'))return;
+  if(operation==='claim'&&!window.confirm('This action does not recheck the other swap leg, even when opened from the guided review. Your wallet receives the preimage as soon as the request is made, even if you reject it. Continue only after verifying the other leg and its deadlines.'))return;
   const {result,warning}=await recordedAction('ethereum',operation,terms,action);$('sepolia-action-result').textContent=JSON.stringify(result,null,2);
   msg($('sepolia-action-status'),warning||(operation==='deploy'&&terms.kind!=='eth'?'Deployment submitted. Check its receipt, then approve and fund the token escrow.':'Transaction submitted. Check its receipt and confirmations.'),!!warning);
  }catch(e){msg($('sepolia-action-status'),e.message,true);}finally{secret?.fill(0);sepoliaActionBusy=false;for(const button of sepoliaActionForm.querySelectorAll('button'))button.disabled=false;}
@@ -133,6 +133,7 @@ $('connect-ethereum').addEventListener('click',async()=>{
    provider.on('accountsChanged',changed);provider.on('chainChanged',changed);provider.on('disconnect',changed);observedEthereumProvider=provider;
   }
   activeEthereumProvider=provider;msg($('wallet-status'),'Ethereum connected: '+accounts[0]+' · chain '+chain+'. No transaction has been requested.');
+  void identityUi.autofill().catch(()=>{});
  }catch(e){msg($('wallet-status'),e.message,true);}
 });
 $('verify-form').addEventListener('submit',async event=>{event.preventDefault();
@@ -150,7 +151,7 @@ let activeCardanoApi=null;
 $('connect-cardano').addEventListener('click',async()=>{
  try{const id=$('cardano-wallet').value,wallet=window.cardano?.[id];if(!wallet||typeof wallet.enable!=='function')throw Error('Select an available Cardano browser wallet.');
   activeCardanoApi=null;const api=await wallet.enable(),network=await api.getNetworkId();if(network!==0&&network!==1)throw Error('Wallet returned an invalid network.');
-  if(network===0)activeCardanoApi=api;
+  if(network===0){activeCardanoApi=api;void identityUi.autofill().catch(()=>{});}
   msg($('wallet-status'),'Cardano connected: '+String(wallet.name||id)+' · '+(network===1?'mainnet':'testnet')+'. No transaction has been requested.');
  }catch(e){msg($('wallet-status'),e.message,true);}
 });
@@ -372,13 +373,19 @@ function messageKey(id){return localStorage.getItem('offer-message-key:'+id);}
 function sessionId(id){return localStorage.getItem('offer-session:'+id);}
 function checkOwnerInbox(id,offer){const known=localStorage.getItem('offer-inbox:'+id);if(credential(id)&&known&&known!==offer.ownerPublicKey)throw Error('Offer inbox key changed. Verify the offer independently.');}
 function participantToken(id){return credential(id)||localStorage.getItem('offer-reservation:'+id);}
-const identityUi=initIdentity({$,msg,api,getEthereum:()=>activeEthereumProvider,getCardano:()=>activeCardanoApi,credential,participantToken,messageKey,reservationToken:id=>localStorage.getItem('offer-reservation:'+id),currentOffer});
+const identityUi=initIdentity({$,msg,api,getEthereum:()=>activeEthereumProvider,getCardano:()=>activeCardanoApi,credential,participantToken,messageKey,reservationToken:id=>localStorage.getItem('offer-reservation:'+id),currentOffer,onUpdate:()=>refreshChat()});
 function selectOffer(id){location.hash=id;return loadSelected();}
 let chatRenderVersion=0,selectionVersion=0;
 function updateChat(id){$('chat').hidden=!participantToken(id);$('chat-form').querySelector('button').disabled=true;$('chat-form').elements.message.disabled=true;if(!$('chat').hidden)refreshChat();else chatRenderVersion++;}
 async function refreshChat(){const version=++chatRenderVersion,id=currentOffer(),token=participantToken(id);if(!token)return;
  try{const offer=await api('/offers/'+id),{messages}=await api('/offers/'+id+'/messages',{headers:{authorization:'Bearer '+token}});if(version!==chatRenderVersion||id!==currentOffer())return;checkOwnerInbox(id,offer);
   const identity=await identityUi.render(id,offer,messages);if(version!==chatRenderVersion||id!==currentOffer())return;
+  const identityStatus=item=>{
+   if(item?.status!=='verified')return item?.status||'none';
+   const missing=['give','receive'].filter(side=>!item.identity.proven[side]);
+   return missing.some(side=>item.identity.statement.legs[side].chain==='hegemon')?'unsupported':missing.length?'partial':'verified';
+  };
+  document.dispatchEvent(new CustomEvent('journey:identity-state',{detail:{id,reservationId:offer.reservationId||null,identity:{blocked:identity.blocked,owner:identityStatus(identity.owner),taker:identityStatus(identity.taker)}}}));
   let key=messageKey(id),bound=sessionId(id);const reservation=offer.reservationId;
   const handshake=offer.ownerPublicKey&&reservation?messages.find(item=>item.sender==='taker'&&parsePublicSession(item.ciphertext)?.reservation===reservation):null;
   if(credential(id)&&offer.ownerPublicKey&&reservation&&bound!==reservation){
@@ -391,7 +398,7 @@ async function refreshChat(){const version=++chatRenderVersion,id=currentOffer()
   for(const item of messages){if(parsePublicSession(item.ciphertext))continue;const p=document.createElement('p');try{if(!readable)throw Error();p.textContent=item.sender+': '+await decryptMessage(key,id,item.ciphertext);}catch{p.textContent=item.sender+': [unable to decrypt message]';}if(version!==chatRenderVersion||id!==currentOffer())return;$('chat-list').append(p);}
   $('retry-handshake').hidden=!localStorage.getItem('offer-handshake:'+id);
   msg($('chat-status'),identity.blocked?'Blocked: the other participant\'s signed identity failed verification. See Signed identity above.':ready?(messages.length?'':'No messages yet.'):readable?'Reservation expired; retained messages remain available.':'Waiting for a reserved participant to establish the encrypted conversation.');
- }catch(e){if(version===chatRenderVersion&&id===currentOffer()){$('chat-form').querySelector('button').disabled=true;$('chat-form').elements.message.disabled=true;msg($('chat-status'),e.message,true);}}}
+ }catch(e){if(version===chatRenderVersion&&id===currentOffer()){$('chat-form').querySelector('button').disabled=true;$('chat-form').elements.message.disabled=true;msg($('chat-status'),e.message,true);document.dispatchEvent(new CustomEvent('journey:identity-state',{detail:{id,reservationId:undefined,identity:{error:true}}}));}}}
 async function loadSelected(){
  const version=++selectionVersion,[id,key]=location.hash.slice(1).split('.');if(!/^[0-9a-f]{64}$/.test(id)){$('selected').hidden=true;$('chat').hidden=true;$('public-pair').hidden=true;$('identity').hidden=true;return;}
  if(key&&/^[0-9a-f]{64}$/.test(key))localStorage.setItem('offer-message-key:'+id,key);
@@ -399,9 +406,9 @@ async function loadSelected(){
   if(pairContext?.id!==id){pairContext={id,give:structuredClone(offer.give),receive:structuredClone(offer.receive)};pairLegs={give:null,receive:null};publicPairLegs={give:null,receive:null};$('public-pair-result').textContent='';msg($('public-pair-status'),'Capture both escrow terms from the checks above.');$('pair-result').textContent='';msg($('pair-status'),'Capture both escrow terms from the verification forms.');}
   $('public-pair').hidden=!document.documentElement.hasAttribute('data-hosted-testnet');
   for(const line of ['Maker gives: '+describe(offer.give),'Maker wants: '+describe(offer.receive),'Expires: '+new Date(offer.expires*1000).toLocaleString(),offer.closed?'Closed':'Open']){const p=document.createElement('p');p.textContent=line;$('details').append(p);}
-  $('reserve').disabled=offer.closed||offer.expires*1000<=Date.now();$('close').hidden=!credential(id)||offer.closed;msg($('detail-status'),'');updateChat(id);
+  $('reserve').disabled=offer.closed||!!offer.reservationId||offer.expires*1000<=Date.now();$('close').hidden=!credential(id)||offer.closed;msg($('detail-status'),'');updateChat(id);
   const owner=!!credential(id),reserved=!!localStorage.getItem('offer-reservation:'+id)&&!!offer.reservationId;
-  document.dispatchEvent(new CustomEvent('journey:offer-selected',{detail:{id,owner,reserved,participant:owner||reserved,available:true}}));
+  document.dispatchEvent(new CustomEvent('journey:offer-selected',{detail:{id,owner,reserved,participant:owner||reserved,available:true,reservationId:offer.reservationId||null,reservationActive:!!offer.reservationId,closed:offer.closed,expired:offer.expires*1000<=Date.now()}}));
   if(!participantToken(id))identityUi.render(id,offer,[]).catch(e=>msg($('identity-status'),e.message,true));
  }catch(e){if(version!==selectionVersion||currentOffer()!==id)return;chatRenderVersion++;pairContext=null;pairLegs={give:null,receive:null};publicPairLegs={give:null,receive:null};$('public-pair').hidden=true;$('identity').hidden=true;$('pair-result').textContent='';$('selected').hidden=false;msg($('details'),e.message,true);$('reserve').disabled=true;$('close').hidden=true;$('chat').hidden=true;document.dispatchEvent(new CustomEvent('journey:offer-selected',{detail:{id,owner:false,reserved:false,participant:false,available:false}}));}
 }
@@ -555,7 +562,7 @@ async function sendPendingHandshake(id){const raw=localStorage.getItem('offer-ha
  if(!parsePublicSession(item.ciphertext))throw Error('Invalid pending conversation setup.');
  await api('/offers/'+id+'/messages',{method:'POST',headers:{authorization:'Bearer '+token},body:JSON.stringify({ciphertext:item.ciphertext,reservationId:item.reservation})});
  localStorage.setItem('offer-session:'+id,item.reservation);localStorage.removeItem('offer-handshake:'+id);await refreshChat();}
-$('reserve').addEventListener('click',async()=>{const id=currentOffer();try{const offer=await api('/offers/'+id),identityNote=await identityUi.checkOwnerBeforeReserve(id,offer),result=await api('/offers/'+id+'/reserve',{method:'POST'});localStorage.setItem('offer-reservation:'+id,result.reservationToken);msg($('detail-status'),'Reserved until '+new Date(result.expires*1000).toLocaleString()+'. No funds have been locked. '+identityNote);$('reserve').disabled=true;document.dispatchEvent(new CustomEvent('journey:reserved',{detail:{id}}));
+$('reserve').addEventListener('click',async()=>{const id=currentOffer();try{const offer=await api('/offers/'+id),identityNote=await identityUi.checkOwnerBeforeReserve(id,offer),result=await api('/offers/'+id+'/reserve',{method:'POST'});localStorage.setItem('offer-reservation:'+id,result.reservationToken);msg($('detail-status'),'Reserved until '+new Date(result.expires*1000).toLocaleString()+'. No funds have been locked. '+identityNote);$('reserve').disabled=true;document.dispatchEvent(new CustomEvent('journey:reserved',{detail:{id,reservationId:result.reservationId}}));
   if(offer.ownerPublicKey){const fragment=location.hash.slice(1).split('.')[1],key=/^[0-9a-f]{64}$/.test(fragment||'')?fragment:newMessageKey();localStorage.setItem('offer-message-key:'+id,key);localStorage.removeItem('offer-session:'+id);
    localStorage.setItem('offer-handshake:'+id,JSON.stringify({reservation:result.reservationId,ownerPublicKey:offer.ownerPublicKey,ciphertext:null}));updateChat(id);
    try{await sendPendingHandshake(id);}catch{await refreshChat();msg($('chat-status'),'Conversation setup was not confirmed. Use retry; the reservation remains active.',true);$('retry-handshake').hidden=false;}
