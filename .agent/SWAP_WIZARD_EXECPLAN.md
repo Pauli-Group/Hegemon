@@ -11,6 +11,7 @@ A person swapping on Cardano preview and Ethereum Sepolia should see one next ac
 - [x] (2026-11-11 21:14Z) Inspect the existing offer journey, relay, identity, signed session protocol, chain observers and wallet transaction actions.
 - [x] (2026-11-11 21:21Z) Add evidence-based offer and engine-review actor labels, restore offer navigation on reload, and stop guided action prefill on an uncertain local action.
 - [x] (2026-11-11 21:29Z) Automatically fill empty wallet addresses, sequence the guided identity signatures, test Cardano–Ethereum signed proposals and add a durable encrypted-packet outbox with lost-response tests.
+- [x] (2026-11-11 21:38Z) Add exact Cardano/Ethereum session-asset translation and a purpose-bound, wallet-identity and chain-verification gate, with tests for stale heads, altered terms and premature identity expiry.
 - [ ] Connect the signed session protocol to a durable two-browser wizard without weakening its wallet, chain, deadline, secret-backup or uncertain-transaction protections.
 - [ ] Exercise both parties through creation, refresh, wallet approval, funding, confirmation, claiming and refunds, including refusal cases.
 - [ ] Verify the browser and fast suites, push the branch, back up the remote database, deploy and verify the hosted client.
@@ -26,11 +27,11 @@ The offer wizard and the standalone guided swap reviewer are separate. The latte
 
 ## Outcomes & Retrospective
 
-The first local milestone adds truthful participant and network status, wallet address autofill, one-at-a-time identity signatures, and a tested outbox for future session coordination. The signed session protocol is still disconnected from the interface, so this is not yet the requested end-to-end wizard and has not been deployed.
+The first local milestone adds truthful participant and network status, wallet address autofill, one-at-a-time identity signatures, and a tested outbox for future session coordination. The exact-asset translator and purpose-bound two-chain verifier pass synthetic tests, but are not yet called by the page. The signed session protocol is still disconnected from the interface, so this is not yet the requested end-to-end wizard and has not been deployed.
 
 ## Context and Orientation
 
-`swap-ui/journey-ui.mjs` controls the hosted and local step-by-step navigation. `swap-ui/app.js` fetches offers, handles identities, and connects wallets. `swap-ui/session-channel.mjs`, `session-identity.mjs`, `session-packets.mjs` and `session-recovery.mjs` provide authenticated, encrypted session coordination but are not wired to the page. `swap-service/cloudflare/worker.mjs` stores opaque session packets and `swap-service/session-protocol.test.mjs` demonstrates their exchange. `swap-ui/cardano-wallet.mjs` and `sepolia-actions.mjs` contain the wallet operations; `swap-ui/observers.mjs` and the chain verifiers check on-chain outcomes. `swap-ui/action-journal.mjs` records actions before signing. `swap-ui/chain-timing.json` and `timelock-policy.mjs` govern safe windows. The deployment procedure is `.cursor/skills/hegemon-hosted-swap-deploy/SKILL.md`.
+`swap-ui/journey-ui.mjs` controls the hosted and local step-by-step navigation. `swap-ui/app.js` fetches offers, handles identities, and connects wallets. `swap-ui/session-channel.mjs`, `session-identity.mjs`, `session-packets.mjs` and `session-recovery.mjs` provide authenticated, encrypted session coordination but are not wired to the page. `swap-service/cloudflare/worker.mjs` stores opaque session packets and `swap-service/session-protocol.test.mjs` demonstrates their exchange. `swap-ui/session-assets.mjs` translates authenticated session terms into exact wallet fields and `swap-ui/session-verify.mjs` verifies the participants, deadlines and required Cardano/Ethereum escrows for specific funding or initiator-claim purposes. Neither is yet wired into the browser. `swap-ui/cardano-wallet.mjs` and `sepolia-actions.mjs` contain the wallet operations; `swap-ui/observers.mjs` and the chain verifiers check on-chain outcomes. `swap-ui/action-journal.mjs` records actions before signing. `swap-ui/chain-timing.json` and `timelock-policy.mjs` govern safe windows. The deployment procedure is `.cursor/skills/hegemon-hosted-swap-deploy/SKILL.md`.
 
 ## Plan of Work
 

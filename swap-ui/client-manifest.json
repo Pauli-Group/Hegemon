@@ -6,12 +6,12 @@
   "local": "index.html"
  },
  "import_map": {
-  "source": "sha256-WAT6FJXXaI0oLii1rC+WS3pgLLEXlHV1d+wE8Y2QYWA=",
-  "modules": 42
+  "source": "sha256-VqOkElF/uOpG/5d4UHR3cCkQ62/bE/ZsseqqrpdvZLI=",
+  "modules": 44
  },
  "csp": {
-  "hosted": "default-src 'self'; script-src 'self' 'sha256-WAT6FJXXaI0oLii1rC+WS3pgLLEXlHV1d+wE8Y2QYWA='; style-src 'self'; connect-src 'self' http://127.0.0.1:8788; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
-  "local": "default-src 'self'; script-src 'self' 'sha256-WAT6FJXXaI0oLii1rC+WS3pgLLEXlHV1d+wE8Y2QYWA='; style-src 'self'; connect-src 'self' http://127.0.0.1:8788; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+  "hosted": "default-src 'self'; script-src 'self' 'sha256-VqOkElF/uOpG/5d4UHR3cCkQ62/bE/ZsseqqrpdvZLI='; style-src 'self'; connect-src 'self' http://127.0.0.1:8788; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+  "local": "default-src 'self'; script-src 'self' 'sha256-VqOkElF/uOpG/5d4UHR3cCkQ62/bE/ZsseqqrpdvZLI='; style-src 'self'; connect-src 'self' http://127.0.0.1:8788; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
  },
  "headers": {
   "x-content-type-options": "nosniff",
@@ -101,8 +101,8 @@
    "bytes": 18803
   },
   "hosted.html": {
-   "sha256": "5fc38258d913b36217aa24ffcf9b805c4b9cb653731e311298b38c9d1b6769e7",
-   "bytes": 72530
+   "sha256": "c55a6ac4929208f65afc21b0d430bbf699cfdd034e3a6012bda917b2e44b8843",
+   "bytes": 72682
   },
   "identity-flow.mjs": {
    "sha256": "887417777f3780141cc89670e0252af511c10a323f5b523d4a5c60f368c5d7c6",
@@ -125,8 +125,8 @@
    "bytes": 3697
   },
   "index.html": {
-   "sha256": "1aea56af52f718c242ac0a0a72420360241a0db4bf2badd1bdcc15795d33f6b4",
-   "bytes": 72680
+   "sha256": "a6854a3c1355fa5edf6f7b6c8568300bd739c6777721097c3062bae9f6c4c732",
+   "bytes": 72832
   },
   "journey-ui.mjs": {
    "sha256": "2ca6b1a98acf35edac20c101e9ff76a7b826c759fa1b8a3a500bb0a2bf843519",
@@ -168,6 +168,10 @@
    "sha256": "e7e7c1b2032758893a59cc070dd3c06834bbc76b37553df85a4f8eec7f2078bb",
    "bytes": 2497
   },
+  "session-assets.mjs": {
+   "sha256": "f7cfdb894c6c227ff60b737be6cb84bc413309cb70ad49435cecbd8b40bd392d",
+   "bytes": 1924
+  },
   "session-channel.mjs": {
    "sha256": "a7656ac34d070d30e55e9f1406c6ab2630ec4d1bf7b66eae0cab913d79b164a0",
    "bytes": 6515
@@ -187,6 +191,10 @@
   "session-recovery.mjs": {
    "sha256": "86741729ce57cdcb09ae07469ad3c7fd2c73f08e16c1165d677223d05f1b47ac",
    "bytes": 10051
+  },
+  "session-verify.mjs": {
+   "sha256": "539358b1f5fc2ac19e5639f0e4620a76d61bdd0ec3187fcbe546fa0a93e3c2c5",
+   "bytes": 6859
   },
   "style.css": {
    "sha256": "48860b2dbb77d970093fbc7d91c615485ce253c9e05ab41892d46f79ae7dd954",
