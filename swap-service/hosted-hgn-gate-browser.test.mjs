@@ -165,13 +165,19 @@ test('hosted HGN offers require a local wallet snapshot and other assets do not'
       if (!body) return route.fulfill({status: 404, contentType: 'application/json', body: '{"error":"not found"}'});
       return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify(body)});
     });
-    async function reachStaleAmount(page) {
+    async function reachStaleAmount(page, previouslyPaired = false) {
       await page.goto(base);
-      await page.locator('#companion-indicator').click();
-      await page.locator('#companion-token').fill(staleToken);
-      await page.locator('#connect-companion').click();
-      await page.locator('#companion-status').getByText(/does not lock funds/).waitFor();
-      await page.locator('#journey-back').click();
+      if (!previouslyPaired) {
+        await page.locator('#companion-indicator').click();
+        await page.locator('#companion-token').fill(staleToken);
+        await page.locator('#connect-companion').click();
+      }
+      if (previouslyPaired) {
+        await page.waitForFunction(() => document.getElementById('companion-indicator').dataset.state === 'connected');
+      } else {
+        await page.locator('#companion-status').getByText(/does not lock funds/).waitFor();
+        await page.locator('#journey-back').click();
+      }
       await page.getByRole('button', {name: /Create an offer/}).click();
       await page.locator('#journey-give-type').selectOption('hegemon:hgn');
       await page.locator('#journey-next').click();
@@ -191,7 +197,7 @@ test('hosted HGN offers require a local wallet snapshot and other assets do not'
     assert.equal(balanceReads, 1);
 
     const continuePage = await stale.newPage();
-    await reachStaleAmount(continuePage);
+    await reachStaleAmount(continuePage, true);
     const unlocksBeforeContinue = unlockPosts, readsBeforeContinue = balanceReads;
     await continuePage.locator('#journey-next').evaluate(button => { button.disabled = false; button.click(); });
     await continuePage.getByRole('heading', {name: 'What would you like in return?'}).waitFor();
