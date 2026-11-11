@@ -6,12 +6,12 @@
   "local": "index.html"
  },
  "import_map": {
-  "source": "sha256-mWcOyU7l7yJx0PLmMORP7S/XZgVA4p1E5/D+knhrh4Y=",
+  "source": "sha256-rnrPrU7Xe+Cvw+dh99QFfpVXNPCs0x1/uMrpcRUUo3o=",
   "modules": 41
  },
  "csp": {
-  "hosted": "default-src 'self'; script-src 'self' 'sha256-mWcOyU7l7yJx0PLmMORP7S/XZgVA4p1E5/D+knhrh4Y='; style-src 'self'; connect-src 'self' http://127.0.0.1:8788; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
-  "local": "default-src 'self'; script-src 'self' 'sha256-mWcOyU7l7yJx0PLmMORP7S/XZgVA4p1E5/D+knhrh4Y='; style-src 'self'; connect-src 'self' http://127.0.0.1:8788; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+  "hosted": "default-src 'self'; script-src 'self' 'sha256-rnrPrU7Xe+Cvw+dh99QFfpVXNPCs0x1/uMrpcRUUo3o='; style-src 'self'; connect-src 'self' http://127.0.0.1:8788; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+  "local": "default-src 'self'; script-src 'self' 'sha256-rnrPrU7Xe+Cvw+dh99QFfpVXNPCs0x1/uMrpcRUUo3o='; style-src 'self'; connect-src 'self' http://127.0.0.1:8788; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
  },
  "headers": {
   "x-content-type-options": "nosniff",
@@ -25,8 +25,8 @@
    "bytes": 10074
   },
   "app.js": {
-   "sha256": "33047044fe750a43d097bf34ccf67c60f1f2f5cee977bdf9954b9c7f415627f7",
-   "bytes": 86014
+   "sha256": "30b1f6d4f82fef3fcdc95a46fd51e150838c0675cdfcacd8d0337b7f614dd187",
+   "bytes": 88035
   },
   "bitcoin-psbt.mjs": {
    "sha256": "1409022bea941c40ff8d9583648c661a4eecaa362359e64a05e9071deddebcff",
@@ -101,8 +101,8 @@
    "bytes": 16892
   },
   "hosted.html": {
-   "sha256": "3dedbe732516bac6cab5d5e36aad06676cd42bb0cae986291c61cb613ae162cf",
-   "bytes": 71976
+   "sha256": "ba71a8d238bb25126a9bd6447437883b8e3aa59bb4ad3bec62813e26317d27cf",
+   "bytes": 72254
   },
   "identity-flow.mjs": {
    "sha256": "887417777f3780141cc89670e0252af511c10a323f5b523d4a5c60f368c5d7c6",
@@ -125,8 +125,8 @@
    "bytes": 3697
   },
   "index.html": {
-   "sha256": "50c5d2f4b690d06db51a2d5e74ed4c539626c24460295e38b2102a8b07c7a30d",
-   "bytes": 72116
+   "sha256": "cde527f90956170ecf04152b8f3e7ed80f501e2c154a83502cabaa017e2e9277",
+   "bytes": 72404
   },
   "journey-ui.mjs": {
    "sha256": "42eb08c350c2d79991efe7ec042af15c42483de36b03a4424ef3ac03e0dc6929",

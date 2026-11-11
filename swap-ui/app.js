@@ -176,33 +176,46 @@ async function refreshCompanion(){
     companionIndicator('connected','Hegemon node · block '+node.height+' · '+(node.syncing?'syncing':'not syncing')+' · '+node.peers+' peers. '+(node.wallet_rpc_ready?'The expected wallet RPC is available.':'Wallet RPC compatibility is not confirmed.')+(balanceMode?' HGN offers can use the unlocked wallet on this computer. Creating a listing does not lock funds.':' This checks status only; Hegemon swaps are not ready here yet.'));
    }catch{if(companionToken===token)companionIndicator('connected','Companion connected, but the Hegemon node status is unavailable.');}
   }
- }catch{if(companionToken===token)companionIndicator('disconnected','The companion connection was lost. Check that it is running and reconnect.');}
+ }catch(e){if(companionToken===token){
+  if(e?.message==='forbidden'){clearCompanionSession();forgetCompanionToken(token);const message='Pairing code not accepted. Check the code in your local token file.';msg($('companion-status'),message,true);companionIndicator('disconnected',message);}
+  else companionIndicator('disconnected','The companion connection was lost. Check that it is running and reconnect.');
+ }}
  finally{companionCheckBusy=false;if(companionCheckAgain){companionCheckAgain=false;void refreshCompanion();}}
 }
 $('companion-indicator').addEventListener('click',()=>{if(companionState==='connected'){$('companion-details').showModal();void refreshCompanion();}else journey?.showNode();});
 setInterval(()=>{if(!document.hidden)void refreshCompanion();},15000);
-window.addEventListener('focus',()=>{if(companionToken){companionIndicator('checking','Checking the companion connection…');void refreshCompanion();}});
-$('connect-companion').addEventListener('click',async()=>{
- const token=$('companion-token').value;$('companion-token').value='';companionToken=null;companionCapabilities=[];journey?.clearHegemonFunds();$('hegemon-actions').hidden=true;$('ethereum-actions').hidden=true;$('bitcoin-actions').hidden=true;$('cardano-actions').hidden=true;
- companionIndicator('checking','Checking the companion connection…');
+window.addEventListener('focus',()=>{if(companionToken){companionIndicator('checking','Checking the companion connection…');void refreshCompanion();return;}const saved=savedCompanionToken();if(saved)void connectCompanion(saved);});
+const COMPANION_TOKEN_KEY='hegemon.companion.pairing-token';
+let companionConnectGeneration=0;
+function savedCompanionToken(){try{const token=localStorage.getItem(COMPANION_TOKEN_KEY);return /^[0-9a-f]{64}$/.test(token||'')?token:null;}catch{return null;}}
+function setForgetVisible(visible){for(const id of ['forget-companion','forget-companion-dialog'])$(id).hidden=!visible;}
+function rememberCompanionToken(token){try{localStorage.setItem(COMPANION_TOKEN_KEY,token);}catch{}setForgetVisible(true);}
+function forgetCompanionToken(token){try{if(token&&localStorage.getItem(COMPANION_TOKEN_KEY)!==token)return;localStorage.removeItem(COMPANION_TOKEN_KEY);}catch{}setForgetVisible(!!savedCompanionToken());}
+function clearCompanionSession(){companionToken=null;companionCapabilities=[];journey?.clearHegemonFunds();$('hegemon-actions').hidden=true;$('ethereum-actions').hidden=true;$('bitcoin-actions').hidden=true;$('cardano-actions').hidden=true;}
+async function connectCompanion(token){
+ const generation=++companionConnectGeneration;clearCompanionSession();companionIndicator('checking','Checking the companion connection…');
  try{if(!/^[0-9a-f]{64}$/.test(token))throw Error('Enter the 64-character pairing token.');
-  const result=await companion('/health',token);if(!Array.isArray(result.capabilities)||!result.capabilities.length)throw Error('No local verifiers are available.');
+  const result=await companion('/health',token);if(generation!==companionConnectGeneration)return;if(!Array.isArray(result.capabilities)||!result.capabilities.length)throw Error('No local verifiers are available.');
   if(document.documentElement.hasAttribute('data-hosted-testnet')){
    const names=result.capabilities;
    if(names.some(item=>item!=='hegemon-public-status'&&item!=='hegemon-public-balance')||!names.includes('hegemon-public-status')||new Set(names).size!==names.length)throw Error('Start the companion in hosted node status mode.');
-   const node=await companion('/hegemon/status',token);
+   const node=await companion('/hegemon/status',token);if(generation!==companionConnectGeneration)return;
    if(node.network!=='v0.11 pre-mainnet'||typeof node.height!=='string'||!/^(0|[1-9][0-9]{0,19})$/.test(node.height)||typeof node.syncing!=='boolean'||!Number.isSafeInteger(node.peers)||node.peers<0||typeof node.wallet_rpc_ready!=='boolean')throw Error('The local node returned an invalid status.');
-   companionToken=token;companionCapabilities=names;
+   companionToken=token;companionCapabilities=names;rememberCompanionToken(token);
    const balanceMode=names.includes('hegemon-public-balance');
    msg($('companion-status'),'Hegemon node connected · block '+node.height+' · '+(node.syncing?'syncing':'not syncing')+' · '+node.peers+' peers. '+(node.wallet_rpc_ready?'The expected wallet RPC is available.':'Wallet RPC compatibility is not confirmed.')+(balanceMode?' HGN offers can use the unlocked wallet on this computer. Creating a listing does not lock funds.':' This is a status check; Hegemon swaps are not ready here yet.'));
    companionIndicator('connected',$('companion-status').textContent);
    return;
   }
-  companionToken=token;companionCapabilities=result.capabilities;$('hegemon-actions').hidden=!companionCapabilities.includes('hegemon-local-actions');$('ethereum-actions').hidden=!companionCapabilities.includes('ethereum-local-anchor');$('bitcoin-actions').hidden=!companionCapabilities.includes('bitcoin-regtest-actions');$('cardano-actions').hidden=!companionCapabilities.includes('cardano-local-actions');msg($('companion-status'),companionCapabilities.includes('hegemon-local-actions')?'Local companion connected with experimental Hegemon actions enabled.':companionCapabilities.includes('bitcoin-regtest-actions')?'Local companion connected with experimental Bitcoin actions enabled.':companionCapabilities.includes('cardano-local-actions')?'Local companion connected with experimental Cardano actions enabled.':companionCapabilities.includes('ethereum-local-anchor')?'Local companion connected with an Ethereum test-chain anchor.':'Local read-only companion connected.');companionIndicator('connected',$('companion-status').textContent);
- }catch(e){const hosted=document.documentElement.hasAttribute('data-hosted-testnet');
+  companionToken=token;companionCapabilities=result.capabilities;rememberCompanionToken(token);$('hegemon-actions').hidden=!companionCapabilities.includes('hegemon-local-actions');$('ethereum-actions').hidden=!companionCapabilities.includes('ethereum-local-anchor');$('bitcoin-actions').hidden=!companionCapabilities.includes('bitcoin-regtest-actions');$('cardano-actions').hidden=!companionCapabilities.includes('cardano-local-actions');msg($('companion-status'),companionCapabilities.includes('hegemon-local-actions')?'Local companion connected with experimental Hegemon actions enabled.':companionCapabilities.includes('bitcoin-regtest-actions')?'Local companion connected with experimental Bitcoin actions enabled.':companionCapabilities.includes('cardano-local-actions')?'Local companion connected with experimental Cardano actions enabled.':companionCapabilities.includes('ethereum-local-anchor')?'Local companion connected with an Ethereum test-chain anchor.':'Local read-only companion connected.');companionIndicator('connected',$('companion-status').textContent);
+ }catch(e){if(generation!==companionConnectGeneration)return;if(e?.message==='forbidden')forgetCompanionToken(token);
+  const hosted=document.documentElement.hasAttribute('data-hosted-testnet');
   const message=hosted&&e instanceof TypeError?'Cannot reach the local companion. Start it on this computer and allow local network access in your browser settings.':hosted&&e.message==='forbidden'?'Pairing code not accepted. Check the code in your local token file.':e.message;
   journey?.clearHegemonFunds();msg($('companion-status'),message,true);companionIndicator('disconnected',message);}
-});
+}
+setForgetVisible(!!savedCompanionToken());
+$('connect-companion').addEventListener('click',()=>{const token=$('companion-token').value;$('companion-token').value='';void connectCompanion(token);});
+for(const id of ['forget-companion','forget-companion-dialog'])$(id).addEventListener('click',()=>{companionConnectGeneration++;clearCompanionSession();forgetCompanionToken();$('companion-details').close();msg($('companion-status'),'Saved pairing code forgotten. Enter it again to connect.');companionIndicator('disconnected','Saved pairing code forgotten.');});
 const ethereumActionForm=$('ethereum-action-form');let ethereumActionBusy=false;
 function toggleEthereumActionFields(){const kind=ethereumActionForm.elements.kind.value,native=kind==='eth';for(const name of ['token','tokenId']){ethereumActionForm.elements[name].disabled=native;ethereumActionForm.elements[name].required=!native;}$('ethereum-token-steps').hidden=native;$('ethereum-revoke').hidden=kind!=='2';}
 function setEthereumActionBusy(value){ethereumActionBusy=value;for(const button of ethereumActionForm.querySelectorAll('button'))button.disabled=value;}
@@ -642,6 +655,7 @@ journey=initJourney({legacyForm:$('offer-form'),msg,hegemonWallet:{
  balance:()=>hostedHegemonBalance('/hegemon/balance'),
  watch:watchWalletActivity,
 }});
+const restoredCompanionToken=savedCompanionToken();if(restoredCompanionToken)void connectCompanion(restoredCompanionToken);
 refresh();loadSelected();
 
 $('inbox-backup-copy').addEventListener('click',async()=>{try{await navigator.clipboard.writeText($('inbox-backup-text').value);msg($('create-result'),'Backup copied.');}catch{msg($('create-result'),'Select and copy the backup above.');}});

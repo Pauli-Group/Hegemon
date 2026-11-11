@@ -82,16 +82,21 @@ test('hosted page connects only on request to a read-only local Hegemon companio
     await page.locator('#companion-token').fill('0'.repeat(64));
     await page.locator('#connect-companion').click();
     await page.locator('#companion-status.error').waitFor();
+    assert.equal(await page.evaluate(() => localStorage.getItem('hegemon.companion.pairing-token')), null);
     await page.locator('#companion-token').fill(token);
     await page.locator('#connect-companion').click();
     try {await page.locator('#companion-status').getByText(/Hegemon node connected · block 8659/).waitFor({timeout:5000});}
     catch {throw Error('Node status did not connect: '+await page.locator('#companion-status').innerText()+'; browser errors: '+browserErrors.join(' | '));}
     assert.match(await page.locator('#companion-status').innerText(),/status check; Hegemon swaps are not ready/);
     assert.equal(await indicator.getAttribute('data-state'),'connected');
+    assert.equal(await page.evaluate(() => localStorage.getItem('hegemon.companion.pairing-token')), token);
+    await page.reload();
+    await page.waitForFunction(() => document.getElementById('companion-indicator').dataset.state === 'connected');
+    assert.equal(await page.locator('#companion-token').inputValue(), '');
     await indicator.click();
     await page.locator('#companion-details[open]').waitFor();
     await page.waitForFunction(()=>document.getElementById('companion-details-status').textContent.includes('block 8659'));
-    await page.locator('#companion-details button').click();
+    await page.locator('#companion-details [type="submit"]').click();
     companion.kill('SIGTERM');
     await once(companion,'exit');
     await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
@@ -106,8 +111,17 @@ test('hosted page connects only on request to a read-only local Hegemon companio
     await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
     await page.waitForFunction(()=>document.getElementById('companion-indicator').dataset.state==='connected');
     assert.equal(await page.locator('#companion-token').inputValue(),'');
-    assert.equal(await page.evaluate(secret => JSON.stringify({...localStorage,...sessionStorage}).includes(secret),token),false);
+    assert.equal(await page.evaluate(() => localStorage.getItem('hegemon.companion.pairing-token')), token);
+    assert.equal(await page.evaluate(secret => JSON.stringify(sessionStorage).includes(secret), token), false);
     assert.equal(localRequests.some(url => url.includes(token)),false,'the pairing code never appears in a URL');
+    const requestsBeforeForget=localRequests.length;
+    await page.locator('#forget-companion').click();
+    assert.equal(await page.evaluate(() => localStorage.getItem('hegemon.companion.pairing-token')), null);
+    await page.reload();
+    await page.waitForFunction(() => document.documentElement.dataset.journeyMode==='guided');
+    await sleep(300);
+    assert.equal(localRequests.length, requestsBeforeForget, 'forgetting the pairing code stops the next load from contacting the companion');
+    assert.equal(await indicator.getAttribute('data-state'),'disconnected');
   } finally {
     await browser?.close();
     companion.kill('SIGTERM');if(companion.exitCode===null)await Promise.race([once(companion,'exit'),sleep(2000)]);
