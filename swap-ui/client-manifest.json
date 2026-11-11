@@ -6,12 +6,12 @@
   "local": "index.html"
  },
  "import_map": {
-  "source": "sha256-sJS90xrBN3Zvxg3QWUbkzf1fOBa3WICm7a5F1cpD+iI=",
-  "modules": 48
+  "source": "sha256-uSD52CqcBL0cmH9V8xD9L17Eqh644CbnlvxSX6Dg/aQ=",
+  "modules": 49
  },
  "csp": {
-  "hosted": "default-src 'self'; script-src 'self' 'sha256-sJS90xrBN3Zvxg3QWUbkzf1fOBa3WICm7a5F1cpD+iI='; style-src 'self'; connect-src 'self' http://127.0.0.1:8788; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
-  "local": "default-src 'self'; script-src 'self' 'sha256-sJS90xrBN3Zvxg3QWUbkzf1fOBa3WICm7a5F1cpD+iI='; style-src 'self'; connect-src 'self' http://127.0.0.1:8788; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+  "hosted": "default-src 'self'; script-src 'self' 'sha256-uSD52CqcBL0cmH9V8xD9L17Eqh644CbnlvxSX6Dg/aQ='; style-src 'self'; connect-src 'self' http://127.0.0.1:8788; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+  "local": "default-src 'self'; script-src 'self' 'sha256-uSD52CqcBL0cmH9V8xD9L17Eqh644CbnlvxSX6Dg/aQ='; style-src 'self'; connect-src 'self' http://127.0.0.1:8788; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
  },
  "headers": {
   "x-content-type-options": "nosniff",
@@ -101,8 +101,8 @@
    "bytes": 18803
   },
   "hosted.html": {
-   "sha256": "1110d2d4ef5537ebb04e67bbf817c7514e92a7da202d7580c69db819887cc68d",
-   "bytes": 72996
+   "sha256": "7578e20cd3c2374ce3d52fe5362e22f1c460e4b4626bf7a43010bb33b084d72f",
+   "bytes": 73071
   },
   "identity-flow.mjs": {
    "sha256": "887417777f3780141cc89670e0252af511c10a323f5b523d4a5c60f368c5d7c6",
@@ -125,8 +125,8 @@
    "bytes": 3697
   },
   "index.html": {
-   "sha256": "e21b0c3eeec3c427d43d11ab74f693e686b4bea65b5893f7b454e7a3cb1b4e35",
-   "bytes": 73146
+   "sha256": "a25f764c0706bdf6947d0c17b71a2f6c451f391e6b9076e5218cc6142777eeeb",
+   "bytes": 73221
   },
   "journey-ui.mjs": {
    "sha256": "2ca6b1a98acf35edac20c101e9ff76a7b826c759fa1b8a3a500bb0a2bf843519",
@@ -203,6 +203,10 @@
   "session-replay.mjs": {
    "sha256": "0ae4571563bd44fa1d166c2ad04c45aad3f96f1171fb1acf99499631057c711e",
    "bytes": 3720
+  },
+  "session-start.mjs": {
+   "sha256": "444c90e6ab7e3d8c3e1353addb36265c0025075f4cdcdbf074077662c456cdcf",
+   "bytes": 9045
   },
   "session-store.mjs": {
    "sha256": "37209bc88603f0039da4d2991ba0b45a4de0b53728604f47e7a78da94cfeca35",

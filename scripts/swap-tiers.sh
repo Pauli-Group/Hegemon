@@ -40,6 +40,7 @@ BROWSER_TESTS=(
   swap-service/guided-browser.test.mjs
   swap-service/identity-browser.test.mjs
   swap-service/session-store-browser.test.mjs
+  swap-service/session-start-browser.test.mjs
   swap-service/observer-browser.test.mjs
   swap-service/timing-browser.test.mjs
   swap-service/sepolia-browser.test.mjs
