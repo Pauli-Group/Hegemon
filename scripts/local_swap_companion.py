@@ -12,18 +12,20 @@ import datetime
 import getpass
 import hashlib
 import hmac
+import http.client
 import json
 import os
 import re
 import secrets
 import signal
 import stat
+import sys
 import subprocess
 import tempfile
 import threading
 import time
 from decimal import Decimal
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
 from bitcoin_escrow_verifier import verify_bitcoin_htlc
@@ -48,6 +50,769 @@ def confirm_unlock():
 
 def read_passphrase():
     return getpass.getpass('Hegemon encrypted wallet passphrase (local terminal only): ')
+
+
+class KeyringUnavailable(RuntimeError):
+    pass
+
+
+class DesktopKeyring:
+    """Remember a wallet passphrase in the desktop Secret Service via secret-tool.
+
+    The passphrase is written on stdin. It is never a command argument and never a file.
+    """
+
+    def __init__(self, run=None):
+        self._run = run or subprocess.run
+
+    def attributes(self, wallet_path):
+        return ['service', 'hegemon-swap-companion', 'wallet', str(Path(wallet_path).resolve())]
+
+    def _call(self, argv, input_bytes=None):
+        try:
+            return self._run(argv, input=input_bytes, capture_output=True, timeout=10)
+        except FileNotFoundError as error:
+            raise KeyringUnavailable('The desktop keyring is unavailable. Install secret-tool from the libsecret-tools package. The passphrase was not saved.') from error
+
+    def load(self, wallet_path):
+        result = self._call(['secret-tool', 'lookup', *self.attributes(wallet_path)])
+        if result.returncode != 0 or not result.stdout:
+            return None
+        text = result.stdout.decode('utf-8', 'replace')
+        if text.endswith('\n'):
+            text = text[:-1]
+        return text or None
+
+    def save(self, wallet_path, passphrase):
+        if not isinstance(passphrase, str) or passphrase == '' or '\n' in passphrase or '\x00' in passphrase:
+            raise ValueError('passphrase required')
+        argv = ['secret-tool', 'store', '--label', 'Hegemon companion wallet', *self.attributes(wallet_path)]
+        if passphrase in argv:
+            raise ValueError('passphrase required')
+        result = self._call(argv, passphrase.encode() + b'\n')
+        if result.returncode != 0:
+            raise KeyringUnavailable('The desktop keyring is unavailable. Install secret-tool from the libsecret-tools package. The passphrase was not saved.')
+
+    def delete(self, wallet_path):
+        result = self._call(['secret-tool', 'clear', *self.attributes(wallet_path)])
+        if result.returncode not in (0, 1):
+            raise KeyringUnavailable('The desktop keyring is unavailable. Install secret-tool from the libsecret-tools package. The passphrase was not saved.')
+
+
+class GuiApproval:
+    """One local click that replaces typing UNLOCK and the terminal passphrase prompt."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._waiting = threading.Event()
+        self._answered = threading.Event()
+        self._answer = None
+        self.notice = ''
+
+    def ask(self):
+        with self._lock:
+            self._answer = None
+            self.notice = ''
+        self._answered.clear()
+        self._waiting.set()
+        self._answered.wait()
+        self._waiting.clear()
+        with self._lock:
+            return self._answer
+
+    def waiting(self):
+        return self._waiting.is_set() and not self._answered.is_set()
+
+    def submit(self, passphrase, remember):
+        if not self.waiting():
+            return False
+        with self._lock:
+            self._answer = ('ok', passphrase, bool(remember))
+        self._answered.set()
+        return True
+
+    def decline(self):
+        if not self.waiting():
+            return False
+        with self._lock:
+            self._answer = ('decline',)
+        self._answered.set()
+        return True
+
+    def report(self, text):
+        with self._lock:
+            self.notice = text
+
+    def read_notice(self):
+        with self._lock:
+            return self.notice
+
+
+def describe_companion_status(snapshot, notice=''):
+    if notice:
+        return notice
+    if not isinstance(snapshot, dict):
+        return 'Companion is listening on this computer.'
+    phase = snapshot.get('phase')
+    if phase == 'awaiting_approval':
+        return 'The browser is waiting. Click Unlock. The passphrase stays on this computer.'
+    if phase == 'awaiting_passphrase':
+        return 'Enter the wallet passphrase in this window. It is not sent to the page.'
+    if phase == 'syncing':
+        current, target = snapshot.get('current_height'), snapshot.get('target_height')
+        height = re.compile(r'^(0|[1-9][0-9]{0,19})$')
+        if isinstance(current, str) and isinstance(target, str) and height.fullmatch(current) and height.fullmatch(target):
+            if snapshot.get('kind') == 'history':
+                return f'Checking saved notes: {current} of {target}.'
+            if snapshot.get('resumed') is True:
+                return f'Resuming from the saved wallet: block {current} of {target}.'
+            return f'Syncing the wallet: block {current} of {target}.'
+        return 'Passphrase accepted. Syncing the wallet with the local node. This can take several minutes.'
+    return 'Companion is listening on this computer.'
+
+
+NODE_ACTIVITY_PHASES = {
+    'opening_database': 'Opening the chain database',
+    'loading_rows': 'Loading saved blocks',
+    'rebuilding_state': 'Rebuilding chain state',
+    'rechecking_proofs': 'Rechecking private proofs',
+    'saving_verified_state': 'Saving the checked chain',
+    'checking_indexes': 'Checking chain indexes',
+    'ready': 'Starting the network',
+}
+NODE_ACTIVITY_FRACTIONS = {'rebuilding_state', 'rechecking_proofs', 'saving_verified_state'}
+NODE_ACTIVITY_QUIET_MS = 120_000
+
+
+def format_node_eta(remaining_seconds, slowed, network_target):
+    """Plain time left. Estimates of 90 seconds or less stay under a minute."""
+    if remaining_seconds is None or remaining_seconds <= 0:
+        return ''
+    slowed = bool(slowed)
+    if remaining_seconds <= 90:
+        if slowed:
+            body = 'Under a minute at this pace.'
+        elif network_target:
+            body = 'Under a minute to the current target.'
+        else:
+            body = 'Under a minute left'
+    else:
+        minutes = max(2, int((remaining_seconds + 30) // 60))
+        if slowed:
+            body = f'About {minutes} minutes at this pace.'
+        elif network_target:
+            body = f'About {minutes} minutes to the current target.'
+        else:
+            body = f'About {minutes} minutes left'
+    if slowed:
+        return f'This stretch slowed down. {body}'
+    return body
+
+
+def estimate_node_remaining(samples, total):
+    """Return (seconds left, slowed) from the last few (time, current) samples.
+
+    A stretch is slowed when the newest interval is at most half the speed of
+    the earlier samples in that window. The estimate then follows the newer pace.
+    """
+    if type(total) is not int or total < 0 or len(samples) < 2:
+        return None, False
+    window = list(samples[-4:])
+    times, currents = [], []
+    for item in window:
+        if not isinstance(item, tuple) or len(item) != 2:
+            return None, False
+        stamp, current = item
+        if type(stamp) not in (int, float) or type(current) is not int:
+            return None, False
+        times.append(stamp)
+        currents.append(current)
+    if currents[-1] > total:
+        return None, False
+    if currents[-1] >= total:
+        return 0, False
+    span_time = times[-1] - times[0]
+    span_blocks = currents[-1] - currents[0]
+    if span_time <= 0 or span_blocks <= 0:
+        return None, False
+    rate = span_blocks / span_time
+    slowed = False
+    if len(window) >= 3:
+        earlier_time = times[-2] - times[0]
+        earlier_blocks = currents[-2] - currents[0]
+        last_time = times[-1] - times[-2]
+        last_blocks = currents[-1] - currents[-2]
+        if earlier_time <= 0 or earlier_blocks <= 0 or last_time <= 0 or last_blocks <= 0:
+            return None, False
+        earlier_rate = earlier_blocks / earlier_time
+        last_rate = last_blocks / last_time
+        if last_rate * 2 <= earlier_rate:
+            slowed = True
+            rate = last_rate
+    return (total - currents[-1]) / rate, slowed
+
+
+def _node_fraction(current, total):
+    if type(current) is not int or type(total) is not int or total <= 0 or current < 0 or current > total:
+        return '', None
+    return f'Block {current:,} of {total:,}', current / total
+
+
+def _node_endpoint(url):
+    if not url:
+        return '127.0.0.1:9944'
+    parts = urlsplit(url)
+    if not parts.hostname:
+        return '127.0.0.1:9944'
+    return f'{parts.hostname}:{parts.port or 80}'
+
+
+def describe_node_activity(observation):
+    """Turn one node observation into the words and fraction the window draws."""
+    if not isinstance(observation, dict):
+        observation = {}
+    source = observation.get('source')
+    endpoint = observation.get('endpoint') or '127.0.0.1:9944'
+    if source == 'rpc':
+        return _describe_node_rpc(observation, endpoint)
+    if source == 'file':
+        return _describe_node_file(observation, endpoint)
+    return {
+        'title': 'Not running',
+        'fraction': '',
+        'progress': None,
+        'time_line': '',
+        'consequence': f'Nothing is listening on {endpoint}.',
+        'tone': 'stopped',
+    }
+
+
+def _describe_node_rpc(observation, endpoint):
+    height, target, peers = observation.get('height'), observation.get('target'), observation.get('peers')
+    if type(height) is not int or type(target) is not int or type(peers) is not int or peers < 0:
+        return describe_node_activity({'source': 'none', 'endpoint': endpoint})
+    if target > height or observation.get('syncing') is True:
+        fraction, progress = _node_fraction(height, target) if target > height else ('', None)
+        return {
+            'title': 'Catching up with the network',
+            'fraction': fraction,
+            'progress': progress,
+            'time_line': format_node_eta(observation.get('remaining_seconds'), observation.get('slowed') is True, True),
+            'consequence': 'The node is connected and still catching up.',
+            'tone': 'working',
+        }
+    if peers >= 1:
+        peer_word = 'peer' if peers == 1 else 'peers'
+        return {
+            'title': 'Caught up',
+            'fraction': '',
+            'progress': 1.0,
+            'time_line': '',
+            'consequence': f'Ready. Height {height:,}, {peers} {peer_word}.',
+            'tone': 'caught_up',
+        }
+    return {
+        'title': 'Waiting for peers',
+        'fraction': '',
+        'progress': None,
+        'time_line': '',
+        'consequence': 'The node is up and has not found a peer yet.',
+        'tone': 'working',
+    }
+
+
+def _describe_node_file(observation, endpoint):
+    phase = observation.get('phase')
+    title = NODE_ACTIVITY_PHASES.get(phase)
+    if title is None:
+        return describe_node_activity({'source': 'none', 'endpoint': endpoint})
+    fraction, progress = ('', None)
+    current, total = observation.get('current'), observation.get('total')
+    if phase in NODE_ACTIVITY_FRACTIONS:
+        fraction, progress = _node_fraction(current, total)
+    if observation.get('pid_alive') is not True:
+        detail = title[0].lower() + title[1:]
+        if fraction:
+            consequence = f'The node stopped during {detail} at block {current:,} of {total:,}.'
+        else:
+            consequence = f'The node stopped during {detail}.'
+        return {
+            'title': 'Not running',
+            'fraction': fraction,
+            'progress': progress,
+            'time_line': '',
+            'consequence': consequence,
+            'tone': 'stopped',
+        }
+    if observation.get('quiet') is True:
+        minutes = observation.get('quiet_minutes')
+        if type(minutes) is not int or minutes < 2:
+            minutes = 2
+        unit = 'minute' if minutes == 1 else 'minutes'
+        time_line = f'Still on this step. Last update was {minutes} {unit} ago.'
+    else:
+        time_line = format_node_eta(observation.get('remaining_seconds'), observation.get('slowed') is True, False)
+    if phase == 'ready':
+        consequence = 'The node is not accepting connections yet.'
+    else:
+        consequence = 'The node is not accepting connections until this finishes.'
+    return {
+        'title': title,
+        'fraction': fraction,
+        'progress': progress,
+        'time_line': time_line,
+        'consequence': consequence,
+        'tone': 'working',
+    }
+
+
+def read_node_activity(path):
+    """Read one local progress file. Unknown or oversized contents are ignored."""
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError:
+        return None
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > 4096:
+            return None
+        raw = os.read(descriptor, 4096)
+    finally:
+        os.close(descriptor)
+    try:
+        value = json.loads(raw.decode('utf-8'))
+    except (UnicodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(value, dict):
+        return None
+    phase = value.get('phase')
+    if type(phase) is not str or phase not in NODE_ACTIVITY_PHASES:
+        return None
+    current, total = value.get('current'), value.get('total')
+    if current is None and total is None:
+        parsed_current, parsed_total = None, None
+    elif type(current) is int and type(total) is int and 0 <= current <= total < 2**64:
+        parsed_current, parsed_total = current, total
+    else:
+        return None
+    updated = value.get('updated_at_ms')
+    pid = value.get('pid')
+    if type(updated) is not int or not 0 <= updated < 2**64:
+        return None
+    if type(pid) is not int or not 1 <= pid <= 2**32 - 1:
+        return None
+    return {'phase': phase, 'current': parsed_current, 'total': parsed_total, 'updated_at_ms': updated, 'pid': pid}
+
+
+def read_node_rpc(url):
+    """Ask only health and consensus status, with a one-second timeout."""
+    parts = urlsplit(url)
+    if (parts.scheme != 'http' or parts.hostname not in ('127.0.0.1', 'localhost', '::1')
+            or parts.path not in ('', '/') or parts.query or parts.fragment or parts.username):
+        raise ValueError('RPC must use loopback HTTP')
+    connection = http.client.HTTPConnection(parts.hostname, parts.port or 80, timeout=1)
+
+    def call(method):
+        connection.request(
+            'POST', '/',
+            json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': method, 'params': []}),
+            {'Content-Type': 'application/json'})
+        raw = connection.getresponse().read(65536)
+        if len(raw) >= 65536:
+            raise ValueError('RPC response exceeded bound')
+        payload = json.loads(raw)
+        if not isinstance(payload, dict) or payload.get('error') or 'result' not in payload:
+            raise ValueError('RPC failed')
+        return payload['result']
+
+    try:
+        health = call('system_health')
+        status = call('hegemon_consensusStatus')
+    finally:
+        connection.close()
+    if (not isinstance(health, dict) or type(health.get('isSyncing')) is not bool
+            or type(health.get('peers')) is not int or health['peers'] < 0):
+        raise ValueError('Invalid node health response')
+    if not isinstance(status, dict):
+        raise ValueError('Invalid consensus status')
+    height, target = status.get('height'), status.get('sync_target_height')
+    syncing, peers = status.get('syncing'), status.get('peers')
+    if (type(height) is not int or type(target) is not int or type(syncing) is not bool or type(peers) is not int
+            or height < 0 or target < 0 or peers < 0 or height >= 2**64 or target >= 2**64):
+        raise ValueError('Invalid consensus status')
+    return {'height': height, 'target': target, 'syncing': syncing, 'peers': peers}
+
+
+def node_pid_alive(pid):
+    if type(pid) is not int or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+class NodeActivityMonitor:
+    """Poll the node off the window thread and keep the latest card text."""
+
+    def __init__(self, rpc, activity_path, read_rpc=None, read_file=None, pid_alive=None, clock=None):
+        self.rpc = rpc
+        self.activity_path = activity_path
+        self.read_rpc = read_rpc or read_node_rpc
+        self.read_file = read_file or read_node_activity
+        self.pid_alive = pid_alive or node_pid_alive
+        self.clock = clock or time.time
+        self.endpoint = _node_endpoint(rpc)
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._samples = []
+        self._sample_key = None
+        self._view = {
+            'title': 'Checking the local node',
+            'fraction': '',
+            'progress': None,
+            'time_line': '',
+            'consequence': 'Looking for the local node.',
+            'tone': 'working',
+        }
+
+    def snapshot(self):
+        with self._lock:
+            return dict(self._view)
+
+    def start(self):
+        threading.Thread(target=self._loop, name='node-activity', daemon=True).start()
+
+    def stop(self):
+        self._stop.set()
+
+    def _loop(self):
+        while not self._stop.is_set():
+            try:
+                self.poll_once()
+            except Exception:
+                self._store(describe_node_activity({'source': 'none', 'endpoint': self.endpoint}))
+            self._stop.wait(1.0)
+
+    def _store(self, view):
+        with self._lock:
+            self._view = view
+
+    def _note(self, key, now, current):
+        if key != self._sample_key:
+            self._samples = []
+            self._sample_key = key
+        if type(current) is not int:
+            return
+        if self._samples and current < self._samples[-1][1]:
+            self._samples = []
+        if not self._samples or self._samples[-1][1] != current:
+            self._samples.append((now, current))
+        if len(self._samples) > 4:
+            del self._samples[:-4]
+
+    def poll_once(self):
+        now = self.clock()
+        now_ms = int(now * 1000)
+        status = None
+        if self.rpc:
+            try:
+                status = self.read_rpc(self.rpc)
+            except Exception:
+                status = None
+        if status is not None:
+            self._note(('rpc', status['target'], status['syncing']), now, status['height'])
+            total = status['target'] if status['target'] > status['height'] else None
+            remaining, slowed = estimate_node_remaining(self._samples, total)
+            self._store(describe_node_activity({
+                'source': 'rpc', 'endpoint': self.endpoint, 'height': status['height'],
+                'target': status['target'], 'syncing': status['syncing'], 'peers': status['peers'],
+                'remaining_seconds': remaining, 'slowed': slowed,
+            }))
+            return
+        record = None
+        if self.activity_path is not None:
+            try:
+                record = self.read_file(self.activity_path)
+            except Exception:
+                record = None
+        if record is None:
+            self._samples = []
+            self._sample_key = None
+            self._store(describe_node_activity({'source': 'none', 'endpoint': self.endpoint}))
+            return
+        alive = self.pid_alive(record['pid'])
+        age = now_ms - record['updated_at_ms']
+        quiet = alive and age >= NODE_ACTIVITY_QUIET_MS
+        if alive and not quiet and record['current'] is not None:
+            self._note(('file', record['phase'], record['total']), now, record['current'])
+            remaining, slowed = estimate_node_remaining(self._samples, record['total'])
+        else:
+            if not alive:
+                self._samples = []
+                self._sample_key = None
+            remaining, slowed = None, False
+        self._store(describe_node_activity({
+            'source': 'file', 'endpoint': self.endpoint, 'phase': record['phase'],
+            'current': record['current'], 'total': record['total'], 'pid_alive': alive,
+            'quiet': quiet, 'quiet_minutes': max(2, age // 60000) if quiet else None,
+            'remaining_seconds': remaining, 'slowed': slowed,
+        }))
+
+
+class CompanionWindow:
+    """Local window for the pairing token and, in wallet-status mode, the passphrase."""
+
+    def __init__(self, *, token, wallet_path=None, keyring=None, prompt=None, activity=None, monitor=None):
+        self.token = token
+        self.wallet_path = wallet_path
+        self.keyring = keyring
+        self.prompt = prompt
+        self.activity = activity
+        self.monitor = monitor
+
+    def run(self):
+        try:
+            import tkinter as tk
+            from tkinter import font as tkfont
+        except ModuleNotFoundError as error:
+            raise SystemExit('The companion window needs Python tkinter. Install the python3-tk package and start again.') from error
+        root = tk.Tk()
+        root.title('Hegemon companion')
+        root.configure(bg='#0E1C36')
+        root.minsize(480, 560)
+        families = set(tkfont.families(root))
+        body = next((name for name in ('Space Grotesk', 'Inter') if name in families), 'TkDefaultFont')
+        mono = next((name for name in ('JetBrains Mono', 'DejaVu Sans Mono') if name in families), 'TkFixedFont')
+        pad = {'padx': 24, 'pady': 8}
+        frame = tk.Frame(root, bg='#0E1C36')
+        frame.pack(fill='both', expand=True)
+        node_title = node_fraction = node_time = node_consequence = node_dot = node_bar = None
+        shimmer = {'step': 0}
+        if self.monitor is not None:
+            card = tk.Frame(frame, bg='#F4F7FB')
+            card.pack(fill='x', padx=24, pady=(24, 8))
+            inner = tk.Frame(card, bg='#F4F7FB')
+            inner.pack(fill='x', padx=16, pady=16)
+            header = tk.Frame(inner, bg='#F4F7FB')
+            header.pack(fill='x')
+            node_dot = tk.Canvas(header, width=12, height=12, bg='#F4F7FB', highlightthickness=0)
+            node_dot.pack(side='left', padx=(0, 8))
+            node_title = tk.Label(header, text='Checking the local node', bg='#F4F7FB', fg='#0E1C36', font=(body, 16), anchor='w')
+            node_title.pack(side='left', fill='x', expand=True)
+            node_fraction = tk.Label(inner, text='', bg='#F4F7FB', fg='#0E1C36', font=(mono, 12), anchor='w')
+            node_fraction.pack(fill='x', pady=(8, 0))
+            node_bar = tk.Canvas(inner, height=8, bg='#E1E6EE', highlightthickness=0)
+            node_bar.pack(fill='x', pady=(8, 0))
+            node_time = tk.Label(inner, text='', bg='#F4F7FB', fg='#0E1C36', font=(body, 12), anchor='w', justify='left', wraplength=400)
+            node_time.pack(fill='x', pady=(8, 0))
+            node_consequence = tk.Label(inner, text='', bg='#F4F7FB', fg='#0E1C36', font=(body, 12), anchor='w', justify='left', wraplength=400)
+            node_consequence.pack(fill='x', pady=(4, 0))
+            self.monitor.start()
+        tk.Label(frame, text='Pairing token', bg='#0E1C36', fg='#F4F7FB', font=(body, 12)).pack(anchor='w', **pad)
+        token_row = tk.Frame(frame, bg='#0E1C36')
+        token_row.pack(fill='x', padx=24)
+        token_value = tk.StringVar(value=self.token)
+        token_entry = tk.Entry(token_row, textvariable=token_value, readonlybackground='#F4F7FB', fg='#0E1C36', font=(mono, 12), state='readonly', relief='flat')
+        token_entry.pack(side='left', fill='x', expand=True, ipady=6)
+        copy_button = tk.Button(token_row, text='Copy token', bg='#1BE7FF', fg='#0E1C36', activebackground='#1BE7FF', font=(body, 12), relief='flat')
+        copy_button.pack(side='left', padx=(8, 0))
+
+        def copy_token():
+            root.clipboard_clear()
+            root.clipboard_append(self.token)
+            root.update_idletasks()
+            copy_button.configure(text='Copied')
+            root.after(2000, lambda: copy_button.configure(text='Copy token'))
+
+        copy_button.configure(command=copy_token)
+        passphrase = tk.StringVar()
+        remember = tk.BooleanVar(value=False)
+        unlock_button = None
+        if self.wallet_path is not None:
+            tk.Label(frame, text='Wallet passphrase', bg='#0E1C36', fg='#F4F7FB', font=(body, 12)).pack(anchor='w', **pad)
+            tk.Entry(frame, textvariable=passphrase, show='*', bg='#F4F7FB', fg='#0E1C36', font=(body, 14), relief='flat').pack(fill='x', padx=24, ipady=6)
+            tk.Checkbutton(frame, text='Remember on this computer', variable=remember, bg='#0E1C36', fg='#F4F7FB', selectcolor='#0E1C36', activebackground='#0E1C36', activeforeground='#1BE7FF', font=(body, 12)).pack(anchor='w', padx=24, pady=8)
+            if self.keyring is not None:
+                try:
+                    saved = self.keyring.load(self.wallet_path)
+                except KeyringUnavailable as error:
+                    if self.prompt is not None:
+                        self.prompt.report(str(error))
+                else:
+                    if saved:
+                        passphrase.set(saved)
+                        remember.set(True)
+            unlock_button = tk.Button(frame, text='Unlock', bg='#1BE7FF', fg='#0E1C36', activebackground='#1BE7FF', font=(body, 14), relief='flat', state='disabled')
+            unlock_button.pack(anchor='w', padx=24, pady=8)
+
+            def approve():
+                if self.prompt is None or not self.prompt.submit(passphrase.get(), remember.get()):
+                    status.configure(text='The page has not asked to read the wallet yet.', fg='#FF4E4E')
+
+            unlock_button.configure(command=approve)
+        status = tk.Label(frame, text='Companion is listening on this computer.', bg='#0E1C36', fg='#F4F7FB', font=(body, 12), wraplength=400, justify='left')
+        status.pack(anchor='w', padx=24, pady=16)
+
+        def paint_node(view):
+            if node_title is None:
+                return
+            tone = view.get('tone')
+            color = '#FF4E4E' if tone == 'stopped' else '#1BE7FF'
+            node_dot.delete('all')
+            node_dot.create_oval(1, 1, 11, 11, fill=color, outline=color)
+            node_title.configure(text=view.get('title') or '')
+            node_fraction.configure(text=view.get('fraction') or '')
+            node_time.configure(text=view.get('time_line') or '')
+            node_consequence.configure(text=view.get('consequence') or '')
+            node_bar.delete('all')
+            width = max(node_bar.winfo_width(), 1)
+            progress = view.get('progress')
+            if tone == 'stopped' and progress is None:
+                return
+            if progress is None:
+                shimmer['step'] = (shimmer['step'] + 1) % 8
+                span = max(width // 3, 24)
+                origin = int((width + span) * shimmer['step'] / 8) - span
+                node_bar.create_rectangle(origin, 0, origin + span, 8, fill='#F4F7FB', outline='')
+                return
+            try:
+                fraction = max(0.0, min(1.0, float(progress)))
+            except (TypeError, ValueError):
+                return
+            fill = int(width * fraction)
+            if fill > 0:
+                node_bar.create_rectangle(0, 0, fill, 8, fill=color, outline='')
+
+        def tick():
+            snapshot = self.activity.snapshot() if self.activity is not None else {'phase': 'idle'}
+            notice = self.prompt.read_notice() if self.prompt is not None else ''
+            text = describe_companion_status(snapshot, notice)
+            status.configure(text=text, fg='#FF4E4E' if notice else '#F4F7FB')
+            if self.monitor is not None:
+                paint_node(self.monitor.snapshot())
+            if unlock_button is not None:
+                unlock_button.configure(state='normal' if self.prompt is not None and self.prompt.waiting() else 'disabled')
+            root.after(400, tick)
+
+        tick()
+        root.protocol('WM_DELETE_WINDOW', root.quit)
+        root.mainloop()
+        if self.monitor is not None:
+            self.monitor.stop()
+        if self.prompt is not None:
+            self.prompt.decline()
+        root.destroy()
+
+
+def wallet_progress_event(line):
+    """Return a display event for one private-spend progress line, or None.
+
+    Note rows, passphrase prompts and any other transcript text are ignored.
+    """
+    line = line.strip()
+    if line == 'Unlocking encrypted wallet…':
+        return ('unlock', None, None)
+    patterns = (
+        ('history', r'Checking wallet history: ([0-9]+)/([0-9]+)$'),
+        ('saved', r'Saved wallet is already at block ([0-9]+)\.$'),
+        ('resume', r'Resuming from saved block ([0-9]+) of ([0-9]+)\.$'),
+        ('history', r'wallet-progress stage=unlock current=([0-9]+) target=([0-9]+) notes=[0-9]+ elapsed_ms=[0-9]+$'),
+        ('sync', r'Syncing blocks: ([0-9]+)/([0-9]+); new notes [0-9]+$'),
+        ('sync', r'wallet-progress stage=sync current=([0-9]+) target=([0-9]+) notes=[0-9]+ elapsed_ms=[0-9]+$'),
+    )
+    done = re.fullmatch(r'(?:Sync complete at block ([0-9]+)|wallet-progress stage=done current=([0-9]+) target=([0-9]+) notes=[0-9]+ elapsed_ms=[0-9]+)', line)
+    if done:
+        height = next(group for group in done.groups() if group is not None)
+        if done.group(2) is not None and done.group(2) != done.group(3):
+            return None
+        value = int(height)
+        if value >= 2**64:
+            return None
+        return ('sync', value, value)
+    for kind, pattern in patterns:
+        match = re.fullmatch(pattern, line)
+        if not match:
+            continue
+        current = int(match.group(1))
+        target = current if kind == 'saved' else int(match.group(2))
+        if current > target or target >= 2**64:
+            return None
+        return (kind, current, target)
+    return None
+
+
+class WalletActivity:
+    """Unlock phase and block heights. Safe to read while a wallet sync holds the session lock."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.phase = 'idle'
+        self.current = None
+        self.target = None
+        self.resumed = False
+        self.progress_kind = None
+        self._pending = bytearray()
+
+    def set_phase(self, phase):
+        with self._lock:
+            self.phase = phase
+            if phase != 'syncing':
+                self.current = None
+                self.target = None
+                self.resumed = False
+                self.progress_kind = None
+
+    def snapshot(self):
+        with self._lock:
+            body = {'phase': self.phase}
+            if self.phase == 'syncing' and self.current is not None and self.target is not None:
+                body['current_height'] = str(self.current)
+                body['target_height'] = str(self.target)
+                body['kind'] = 'history' if self.progress_kind == 'history' else 'blocks'
+                if self.resumed:
+                    body['resumed'] = True
+            return body
+
+    def add_output(self, data):
+        if not data:
+            return
+        self._pending.extend(data)
+        if len(self._pending) > 8192:
+            del self._pending[:-1024]
+        while b'\n' in self._pending:
+            raw, _, rest = self._pending.partition(b'\n')
+            self._pending = bytearray(rest)
+            event = wallet_progress_event(raw.decode('utf-8', 'replace'))
+            if event is None:
+                continue
+            kind, current, target = event
+            with self._lock:
+                self.phase = 'syncing'
+                if kind == 'history':
+                    self.progress_kind = 'history'
+                elif kind in ('sync', 'resume', 'saved'):
+                    self.progress_kind = 'blocks'
+                    if kind in ('resume', 'saved'):
+                        self.resumed = True
+                if current is not None:
+                    self.current = current
+                    self.target = target
+            if current is None:
+                print('Unlocking the encrypted wallet.', file=sys.stderr, flush=True)
+            elif kind == 'history':
+                print(f'Checking saved notes: {current} of {target}.', file=sys.stderr, flush=True)
+            elif kind == 'saved':
+                print(f'Saved wallet is already at block {current}. No new blocks to scan.', file=sys.stderr, flush=True)
+            elif kind == 'resume':
+                print(f'Resuming from the saved wallet at block {current} of {target}. Only new blocks are scanned.', file=sys.stderr, flush=True)
+            else:
+                print(f'Syncing the wallet: block {current} of {target}.', file=sys.stderr, flush=True)
 
 
 def private_wallet_file(path):
@@ -101,7 +866,7 @@ def read_hosted_node(rpc):
 class HostedWalletSession:
     """One wallet, totals only. The passphrase stays in this process and is wiped on close."""
 
-    def __init__(self, *, rpc, wallet_path, manifest, genesis, binary, scratch, read_node=None):
+    def __init__(self, *, rpc, wallet_path, manifest, genesis, binary, scratch, read_node=None, prompt=None, keyring=None):
         self.rpc = rpc
         self.wallet_path = wallet_path
         self.manifest = manifest
@@ -109,7 +874,10 @@ class HostedWalletSession:
         self.binary = binary
         self.scratch = scratch
         self.read_node = read_node or (lambda: read_hosted_node(rpc))
+        self.prompt = prompt
+        self.keyring = keyring
         self._lock = threading.Lock()
+        self.activity = WalletActivity()
         self._phrase = None
         self._cached = None
         self._cached_at = 0.0
@@ -126,7 +894,7 @@ class HostedWalletSession:
 
     def _run(self, secret):
         argv = ['--wallet', self.wallet_path, '--manifest', self.manifest, '--genesis', self.genesis, '--rpc', self.rpc, 'status']
-        text, _metrics = wallet(self.binary, argv, [(PASS, bytes(secret))], Path(self.scratch), 'hegemon-hosted-balance')
+        text, _metrics = wallet(self.binary, argv, [(PASS, bytes(secret))], Path(self.scratch), 'hegemon-hosted-balance', on_output=self.activity.add_output)
         log = Path(self.scratch) / 'hegemon-hosted-balance.log'
         try:
             return text
@@ -143,22 +911,75 @@ class HostedWalletSession:
         self._cached_at = time.monotonic()
         return dict(view)
 
+    def _status_view(self, secret):
+        """Run status, then stamp the node tip. One extra status if still more than two blocks behind."""
+        text = self._run(secret)
+        node = self.read_node()
+        height = int(node['height'])
+        view = hosted_balance_view(text, height)
+        if height - int(view['synced_height']) > 2:
+            text = self._run(secret)
+            node = self.read_node()
+            height = int(node['height'])
+            view = hosted_balance_view(text, height)
+        return view
+
     def unlock(self):
         with self._lock:
-            if confirm_unlock() != 'UNLOCK':
-                raise ValueError('wallet unlock declined locally')
-            phrase = read_passphrase()
-            if not isinstance(phrase, str) or phrase == '':
-                raise ValueError('passphrase required')
-            secret = bytearray(phrase.encode())
-            del phrase
+            self.activity.set_phase('awaiting_approval')
+            if self.prompt is not None:
+                print('The browser is waiting. Click Unlock in the companion window. The passphrase stays on this computer.', flush=True)
+            else:
+                print('The browser is waiting. Type UNLOCK in this terminal, then the wallet passphrase. Sync progress appears here and on the page.', flush=True)
             try:
-                node = self.read_node()
-                view = hosted_balance_view(self._run(secret), int(node['height']))
-            except Exception:
-                secret[:] = b'\0' * len(secret)
+                remember = False
+                if self.prompt is not None:
+                    decision = self.prompt.ask()
+                    if not decision or decision[0] != 'ok':
+                        raise ValueError('wallet unlock declined locally')
+                    phrase = decision[1]
+                    remember = decision[2]
+                else:
+                    if confirm_unlock() != 'UNLOCK':
+                        raise ValueError('wallet unlock declined locally')
+                    self.activity.set_phase('awaiting_passphrase')
+                    phrase = read_passphrase()
+                if not isinstance(phrase, str) or phrase == '':
+                    raise ValueError('passphrase required')
+                secret = bytearray(phrase.encode())
+                del phrase
+                self.activity.set_phase('syncing')
+                print('Passphrase accepted. Syncing the wallet with the local node. This can take several minutes.', flush=True)
+                try:
+                    view = self._status_view(secret)
+                except Exception:
+                    secret[:] = b'\0' * len(secret)
+                    raise
+                if self.keyring is not None:
+                    try:
+                        if remember:
+                            self.keyring.save(self.wallet_path, secret.decode())
+                        else:
+                            self.keyring.delete(self.wallet_path)
+                    except KeyringUnavailable as error:
+                        if self.prompt is not None:
+                            self.prompt.report(str(error))
+                        print(str(error), flush=True)
+                print('Wallet read finished. Return to the browser to see available HGN. Creating a listing does not lock those funds.', flush=True)
+                return self._remember(secret, view)
+            except ValueError as error:
+                if str(error) == 'wallet unlock declined locally':
+                    print('Wallet read was not approved.', flush=True)
+                elif str(error) == 'passphrase required':
+                    print('A passphrase is required. Nothing was read.', flush=True)
+                else:
+                    print('Wallet read failed. The browser will show the error.', flush=True)
                 raise
-            return self._remember(secret, view)
+            except Exception:
+                print('Wallet read failed. The browser will show the error.', flush=True)
+                raise
+            finally:
+                self.activity.set_phase('idle')
 
     def balance(self):
         with self._lock:
@@ -166,14 +987,23 @@ class HostedWalletSession:
                 raise PermissionError('wallet_locked')
             node = self.read_node()
             height = int(node['height'])
-            fresh = (self._cached is not None and time.monotonic() - self._cached_at <= 60
-                     and height - int(self._cached['synced_height']) <= 2)
-            if fresh:
+            saved = int(self._cached['synced_height']) if self._cached is not None else None
+            caught_up = saved == height
+            fresh = saved is not None and time.monotonic() - self._cached_at <= 60 and 0 <= height - saved <= 2
+            if caught_up or fresh:
+                if caught_up:
+                    print(f'Using the saved wallet read at block {height}. The chain has not moved, so this did not scan again.', flush=True)
                 view = dict(self._cached)
                 view['observed_height'] = str(height)
                 view['observed_at'] = str(int(time.time() * 1000))
                 return view
-            view = hosted_balance_view(self._run(self._phrase), height)
+            self.activity.set_phase('syncing')
+            try:
+                if saved is not None:
+                    print(f'The chain moved. Resuming the saved wallet from block {saved} through {height}.', flush=True)
+                view = self._status_view(self._phrase)
+            finally:
+                self.activity.set_phase('idle')
             self._cached = view
             self._cached_at = time.monotonic()
             return dict(view)
@@ -261,6 +1091,8 @@ def main():
     p.add_argument('--hegemon-handoff-dir',type=Path,help='private directory for encrypted refund handoffs')
     p.add_argument('--hegemon-preimage-backup',type=Path,help='optional private exported browser backup for local claims')
     p.add_argument('--token-file',type=Path,required=True,help='0600 file inside a user-owned 0700 directory')
+    p.add_argument('--gui',action='store_true',help='open a local window to copy the pairing token and approve the wallet passphrase')
+    p.add_argument('--hegemon-node-path',type=Path,help='node base directory containing node-activity.json; default ~/.hegemon-node-v0.11')
     p.add_argument('--origin',default=None)
     p.add_argument('--port',type=int,default=8788)
     args=p.parse_args();os.umask(0o077)
@@ -289,7 +1121,7 @@ def main():
         if hashlib.sha256(args.hegemon_manifest.read_bytes()).hexdigest()!=release['network_manifest_sha256']:
             p.error('pinned v0.11 manifest does not match the release')
         private_wallet_file(args.hegemon_wallet)
-        if not os.isatty(0):p.error('Hegemon wallet status requires an interactive local terminal')
+        if not os.isatty(0) and not args.gui:p.error('Hegemon wallet status requires an interactive local terminal')
     else:
         args.origin=args.origin or 'http://127.0.0.1:8787'
         origin=urlsplit(args.origin)
@@ -336,8 +1168,10 @@ def main():
         btc.call('getwalletinfo',wallet=args.bitcoin_wallet)
     scratch=tempfile.TemporaryDirectory(prefix='hegemon-local-companion-')
     session=None
+    prompt=GuiApproval() if args.gui and args.hosted_wallet_status else None
+    keyring=DesktopKeyring() if prompt is not None else None
     if args.hosted_wallet_status:
-        session=HostedWalletSession(rpc=args.hegemon_rpc,wallet_path=args.hegemon_wallet,manifest=args.hegemon_manifest,genesis=args.hegemon_genesis,binary=args.private_spend,scratch=scratch.name)
+        session=HostedWalletSession(rpc=args.hegemon_rpc,wallet_path=args.hegemon_wallet,manifest=args.hegemon_manifest,genesis=args.hegemon_genesis,binary=args.private_spend,scratch=scratch.name,prompt=prompt,keyring=keyring)
     cardano=None
     if args.cardano_socket:
         if not stat.S_ISSOCK(args.cardano_socket.stat().st_mode):raise ValueError('Cardano socket must be a local Unix socket')
@@ -391,6 +1225,8 @@ def main():
                     node=probe(args.hegemon_rpc)
                     return self.reply(200,{'network':node['network'],'height':str(node['height']),'syncing':node['syncing'],
                                            'peers':node['peers'],'wallet_rpc_ready':node['basic_wallet_checks_passed']})
+                if self.path=='/hegemon/wallet-activity' and args.hosted_wallet_status:
+                    return self.reply(200,session.activity.snapshot())
                 if self.path=='/hegemon/balance' and args.hosted_wallet_status:
                     try:return self.reply(200,session.balance())
                     except PermissionError:return self.reply(409,{'error':'wallet_locked'})
@@ -517,12 +1353,23 @@ def main():
             except Exception:
                 self.reply(502,{'error':'local operation failed; check wallet status before retrying'})
     global active_server
-    server=HTTPServer(('127.0.0.1',args.port),Handler)
+    Server=ThreadingHTTPServer if args.hosted_wallet_status else HTTPServer
+    server=Server(('127.0.0.1',args.port),Handler)
+    if args.hosted_wallet_status:server.daemon_threads=True
     active_server=server
     def terminate(_signum,_frame):raise KeyboardInterrupt
     signal.signal(signal.SIGTERM,terminate)
-    print(f'Local companion listening on 127.0.0.1:{args.port}; token file: {args.token_file}; hosted node status: {args.hosted_node_status}; hosted wallet status: {args.hosted_wallet_status}; Hegemon actions: {args.enable_hegemon_actions}; Hegemon public: {args.hegemon_public}',flush=True)
-    try:server.serve_forever()
+    print(f'Local companion listening on 127.0.0.1:{args.port}; token file: {args.token_file}; hosted node status: {args.hosted_node_status}; hosted wallet status: {args.hosted_wallet_status}; Hegemon actions: {args.enable_hegemon_actions}; Hegemon public: {args.hegemon_public}; gui: {args.gui}',flush=True)
+    try:
+        if args.gui:
+            threading.Thread(target=server.serve_forever,name='companion-http',daemon=True).start()
+            activity_path=(args.hegemon_node_path if args.hegemon_node_path is not None else Path.home()/'.hegemon-node-v0.11')/'node-activity.json'
+            monitor=NodeActivityMonitor(args.hegemon_rpc,activity_path)
+            CompanionWindow(token=token,wallet_path=args.hegemon_wallet if args.hosted_wallet_status else None,keyring=keyring,prompt=prompt,activity=session.activity if session is not None else None,monitor=monitor).run()
+            monitor.stop()
+            server.shutdown()
+        else:
+            server.serve_forever()
     except KeyboardInterrupt:pass
     finally:
         active_server=None

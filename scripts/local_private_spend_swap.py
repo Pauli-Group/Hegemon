@@ -33,7 +33,7 @@ def stop(proc):
         os.killpg(proc.pid, signal.SIGKILL); proc.wait()
 
 
-def wallet(binary, args, secrets, directory, label, expected=True, timeout=600):
+def wallet(binary, args, secrets, directory, label, expected=True, timeout=600, on_output=None):
     """PTY secrets with echo disabled; wait4 records the actual child high-water RSS."""
     master, slave = pty.openpty()
     attrs = termios.tcgetattr(slave); attrs[3] &= ~termios.ECHO
@@ -45,10 +45,14 @@ def wallet(binary, args, secrets, directory, label, expected=True, timeout=600):
     proc = subprocess.Popen([str(binary), *map(str,args)], stdin=slave, stdout=slave,
                             stderr=slave, preexec_fn=ctty, env=env)
     os.close(slave); output = bytearray(); sent = 0; start = time.monotonic()
+    def take(data):
+        if not data: return
+        output.extend(data)
+        if on_output is not None: on_output(data)
     try:
         while True:
             if select.select([master], [], [], .1)[0]:
-                try: output.extend(os.read(master, 65536))
+                try: take(os.read(master, 65536))
                 except OSError: pass
             if sent < len(secrets) and secrets[sent][0] in output:
                 os.write(master, secrets[sent][1] + b'\n'); sent += 1
@@ -59,7 +63,7 @@ def wallet(binary, args, secrets, directory, label, expected=True, timeout=600):
                     try:
                         data = os.read(master,65536)
                         if not data: break
-                        output.extend(data)
+                        take(data)
                     except OSError: break
                 break
             require(time.monotonic()-start < timeout, f'wallet command exceeded {timeout} seconds')

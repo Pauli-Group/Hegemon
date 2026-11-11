@@ -4724,6 +4724,7 @@ mod launch_v8_verifier;
 mod mining;
 mod native_proof_binding;
 pub mod network_profile;
+mod node_activity;
 mod node_impl;
 mod nullifier_accumulator;
 mod poseidon2_v8_pending;

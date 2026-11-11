@@ -1959,12 +1959,24 @@ impl NativeNode {
         );
         fs::create_dir_all(&config.base_path)
             .with_context(|| format!("create native base path {}", config.base_path.display()))?;
+        super::node_activity::publish_node_activity(
+            &config.base_path,
+            super::node_activity::PHASE_OPENING_DATABASE,
+            None,
+            None,
+        );
         let db_open_started = Instant::now();
         let db = sled::open(&config.db_path)
             .with_context(|| format!("open native sled db {}", config.db_path.display()))?;
         info!(
             db_open_elapsed_ms = db_open_started.elapsed().as_millis(),
             "native sled database opened"
+        );
+        super::node_activity::publish_node_activity(
+            &config.base_path,
+            super::node_activity::PHASE_LOADING_ROWS,
+            None,
+            None,
         );
         validate_native_tree_namespace_before_open(&db)?;
         let meta_tree = db.open_tree("meta")?;
@@ -2193,6 +2205,12 @@ impl NativeNode {
             height = node.state.read().best.height,
             startup_elapsed_ms = startup_started.elapsed().as_millis(),
             "native Hegemon node startup verification and reload completed"
+        );
+        super::node_activity::publish_node_activity(
+            &node.config.base_path,
+            super::node_activity::PHASE_READY,
+            None,
+            None,
         );
         Ok(node)
     }
@@ -5009,6 +5027,12 @@ impl NativeNode {
         // This is the proof-verification pass. It always starts from genesis;
         // no durable checkpoint or record is trusted as an acceptance cache.
         let scratch_started = Instant::now();
+        super::node_activity::publish_node_activity_fraction(
+            &self.config.base_path,
+            super::node_activity::PHASE_RECHECKING_PROOFS,
+            0,
+            replay_blocks,
+        );
         for (index, meta) in chain.iter().enumerate().skip(1) {
             #[cfg(test)]
             self.startup_v8_scratch_block_replay_invocations
@@ -5022,6 +5046,14 @@ impl NativeNode {
                     elapsed_ms = scratch_started.elapsed().as_millis(),
                     "native V8 canonical scratch proof replay progress"
                 );
+                if let Ok(current) = u64::try_from(index) {
+                    super::node_activity::publish_node_activity_fraction(
+                        &self.config.base_path,
+                        super::node_activity::PHASE_RECHECKING_PROOFS,
+                        current,
+                        replay_blocks,
+                    );
+                }
             }
         }
         info!(
@@ -5058,6 +5090,14 @@ impl NativeNode {
         // the scratch pass and is verified again before durable application.
         let durable_started = Instant::now();
         let missing_blocks = chain.len().saturating_sub(durable_height.saturating_add(1));
+        if missing_blocks > 0 {
+            super::node_activity::publish_node_activity_fraction(
+                &self.config.base_path,
+                super::node_activity::PHASE_SAVING_VERIFIED_STATE,
+                0,
+                missing_blocks,
+            );
+        }
         for (index, meta) in chain
             .iter()
             .skip(durable_height.saturating_add(1))
@@ -5073,6 +5113,14 @@ impl NativeNode {
                     elapsed_ms = durable_started.elapsed().as_millis(),
                     "native V8 durable canonical catch-up progress"
                 );
+                if let Ok(current) = u64::try_from(applied) {
+                    super::node_activity::publish_node_activity_fraction(
+                        &self.config.base_path,
+                        super::node_activity::PHASE_SAVING_VERIFIED_STATE,
+                        current,
+                        missing_blocks,
+                    );
+                }
             }
         }
         if !durable
@@ -9017,6 +9065,12 @@ impl NativeNode {
                 blocks = replay_blocks,
                 "native startup legacy state reconstruction started"
             );
+            super::node_activity::publish_node_activity_fraction(
+                &self.config.base_path,
+                super::node_activity::PHASE_REBUILDING_STATE,
+                0,
+                replay_blocks,
+            );
         }
         let genesis = chain
             .first()
@@ -9040,6 +9094,14 @@ impl NativeNode {
                     elapsed_ms = reconstruction_started.elapsed().as_millis(),
                     "native startup legacy state reconstruction progress"
                 );
+                if let Ok(current) = u64::try_from(index) {
+                    super::node_activity::publish_node_activity_fraction(
+                        &self.config.base_path,
+                        super::node_activity::PHASE_REBUILDING_STATE,
+                        current,
+                        replay_blocks,
+                    );
+                }
             }
         }
         if mode == NativeChainReplayMode::StartupReconstruction {
@@ -11698,6 +11760,12 @@ impl NativeNode {
         self.reconcile_poseidon2_v8_canonical_history(chain)?;
         self.validate_loaded_state_matches_replay(&replayed_state)?;
         info!("native canonical history verified; validating canonical indexes");
+        super::node_activity::publish_node_activity(
+            &self.config.base_path,
+            super::node_activity::PHASE_CHECKING_INDEXES,
+            None,
+            None,
+        );
         let canonical_index_plan = plan_canonical_index_rebuild(
             chain,
             &self.da_ciphertext_tree,

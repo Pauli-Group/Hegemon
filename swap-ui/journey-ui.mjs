@@ -35,7 +35,7 @@ export function initJourney({legacyForm, msg, hegemonWallet = null}) {
   let savedMode;
   try { savedMode = sessionStorage.getItem(modeKey); } catch { /* Storage is optional. */ }
   let mode = ['guided', 'advanced'].includes(savedMode) ? savedMode : hosted ? 'guided' : 'advanced';
-  let route = 'home', history = [], step = 0, guidedStep = 'terms', posting = false, completedDraft = false, selected = null, hgnSnapshot = null;
+  let route = 'home', history = [], step = 0, guidedStep = 'terms', posting = false, stepping = false, completedDraft = false, selected = null, hgnSnapshot = null, hgnActivity = null, hgnWatchEpoch = 0;
   const wallet = hegemonWallet || {paired: () => false, unlock: async () => { throw Error('Connect the local companion started with --hosted-wallet-status.'); }, balance: async () => { throw Error('Connect the local companion started with --hosted-wallet-status.'); }};
 
   for (const side of ['give', 'receive']) {
@@ -210,6 +210,7 @@ export function initJourney({legacyForm, msg, hegemonWallet = null}) {
   }
 
   function showAvailable(snapshot) {
+    if (hgnActivity) return hgnActivity;
     if (!snapshot) return wallet.paired() ? 'Unlock the wallet in the companion terminal to read available HGN.' : 'Connect the local companion started with --hosted-wallet-status.';
     if (snapshot.watch_only !== false) return 'This wallet is watch-only and cannot fund an offer.';
     if (snapshot.available_atoms === '0') return 'Available: 0 HGN (0 atoms)';
@@ -224,7 +225,9 @@ export function initJourney({legacyForm, msg, hegemonWallet = null}) {
     panel.hidden = !giveHgn;
     if (!giveHgn) { $('journey-next').disabled = posting; return; }
     $('journey-hgn-available').textContent = showAvailable(hgnSnapshot);
-    $('journey-hgn-unlock').disabled = posting;
+    const unlockButton = $('journey-hgn-unlock');
+    unlockButton.disabled = posting || stepping || hgnActivity !== null;
+    if (!hgnActivity) unlockButton.textContent = hgnSnapshot ? 'Read balance again' : 'Unlock Hegemon wallet';
     let covered = false;
     if (hgnSnapshot && $('journey-give-amount').value.trim()) {
       try {
@@ -233,7 +236,7 @@ export function initJourney({legacyForm, msg, hegemonWallet = null}) {
         $('journey-hgn-shortfall').textContent = '';
       } catch (error) { $('journey-hgn-shortfall').textContent = error.message; }
     } else $('journey-hgn-shortfall').textContent = '';
-    $('journey-next').disabled = !covered || posting;
+    $('journey-next').disabled = !covered || posting || stepping;
   }
 
   for (const side of ['give', 'receive']) {
@@ -253,7 +256,7 @@ export function initJourney({legacyForm, msg, hegemonWallet = null}) {
     const type = $(`journey-${side}-type`).value;
     return {type, id: validateAssetId(type, $(`journey-${side}-id`).value), amount: toBaseUnits(type, $(`journey-${side}-amount`).value)};
   }
-  function validateStep() {
+  async function validateStep() {
     const name = STEPS[step][0];
     if (name.endsWith('-asset')) {
       const side = name.split('-')[0];
@@ -263,7 +266,13 @@ export function initJourney({legacyForm, msg, hegemonWallet = null}) {
       const amount = toBaseUnits($(`journey-${side}-type`).value, $(`journey-${side}-amount`).value);
       if (hosted && name === 'give-amount' && $(`journey-${side}-type`).value === 'hegemon:hgn') {
         if (!hgnSnapshot) throw Error(wallet.paired() ? 'Unlock the Hegemon wallet in the companion terminal before continuing.' : 'Connect the local companion started with --hosted-wallet-status.');
-        assertHegemonGiveSnapshot(amount, hgnSnapshot);
+        try { assertHegemonGiveSnapshot(amount, hgnSnapshot); }
+        catch (error) {
+          if (!/snapshot is stale/.test(error.message)) throw error;
+          status('journey-create-status', 'Checking the Hegemon wallet on this computer…');
+          hgnSnapshot = await wallet.balance();
+          assertHegemonGiveSnapshot(amount, hgnSnapshot);
+        }
       }
     } else if (name === 'visibility' && !currentChoice('journey-visibility')) throw Error('Choose who can see the offer.');
     else if (name === 'lifetime' && !['3600', '86400', '604000'].includes($('journey-lifetime').value)) throw Error('Choose an offer lifetime.');
@@ -298,29 +307,65 @@ export function initJourney({legacyForm, msg, hegemonWallet = null}) {
     }
   }
 
-  function nextStep() {
-    if (posting || step === STEPS.length - 1) return;
+  async function nextStep() {
+    if (posting || stepping || step === STEPS.length - 1) return;
+    stepping = true;
+    $('journey-next').disabled = true;
+    $('journey-hgn-unlock').disabled = true;
     try {
-      validateStep();
+      await validateStep();
       status('journey-create-status', '');
       step++;
       renderStep();
       focusHeading('journey-create-title');
     } catch (error) { status('journey-create-status', error.message, true); }
+    finally { stepping = false; renderHgnFunds(); }
   }
 
   form.addEventListener('submit', event => { event.preventDefault(); nextStep(); });
   $('journey-hgn-unlock').addEventListener('click', async () => {
     const button = $('journey-hgn-unlock');
-    if (button.disabled) return;
+    if (button.disabled || hgnActivity) return;
+    const epoch = ++hgnWatchEpoch;
+    const reread = hgnSnapshot !== null;
+    hgnActivity = reread
+      ? 'Reading the saved Hegemon balance again on this computer.'
+      : 'Type UNLOCK in the companion terminal. This page waits here until the wallet read finishes.';
+    button.textContent = 'Reading wallet…';
     button.disabled = true;
-    status('journey-create-status', 'Approve UNLOCK in the companion terminal, then enter the wallet passphrase there. It is not sent to this page.');
+    status('journey-create-status', hgnActivity);
+    renderHgnFunds();
+    const stopWatch = wallet.watch?.(text => {
+      if (epoch !== hgnWatchEpoch || !text) return;
+      hgnActivity = text;
+      status('journey-create-status', text);
+      renderHgnFunds();
+    });
+    let outcome = null;
     try {
       if (!wallet.paired()) throw Error('Connect the local companion started with --hosted-wallet-status.');
-      hgnSnapshot = await wallet.unlock();
-      status('journey-create-status', 'Wallet unlocked on this computer. Creating a listing does not lock funds.');
-    } catch (error) { status('journey-create-status', error.message, true); }
-    finally { renderHgnFunds(); }
+      if (!reread) hgnSnapshot = await wallet.unlock();
+      else {
+        try { hgnSnapshot = await wallet.balance(); }
+        catch (error) {
+          if (!/Unlock the Hegemon wallet/.test(error.message)) throw error;
+          hgnActivity = 'Type UNLOCK in the companion terminal. This page waits here until the wallet read finishes.';
+          status('journey-create-status', hgnActivity);
+          renderHgnFunds();
+          hgnSnapshot = await wallet.unlock();
+        }
+      }
+      outcome = 'ok';
+    } catch (error) { outcome = error; }
+    finally {
+      hgnWatchEpoch++;
+      stopWatch?.();
+      hgnActivity = null;
+      button.textContent = 'Unlock Hegemon wallet';
+      if (outcome === 'ok') status('journey-create-status', 'Wallet read finished on this computer. Creating a listing does not lock funds.');
+      else if (outcome) status('journey-create-status', outcome.message, true);
+      renderHgnFunds();
+    }
   });
 
   $('journey-publish').addEventListener('click', async () => {
@@ -458,5 +503,5 @@ export function initJourney({legacyForm, msg, hegemonWallet = null}) {
     window.scrollTo({top: 0, behavior: 'instant'});
   });
   render();
-  return {showSection(id) { if (mode === 'guided') navigate('tool:' + id); }, showNode() { if (mode === 'guided') navigate('node'); }, clearHegemonFunds() { hgnSnapshot = null; renderHgnFunds(); }};
+  return {showSection(id) { if (mode === 'guided') navigate('tool:' + id); }, showNode() { if (mode === 'guided') navigate('node'); }, clearHegemonFunds() { hgnWatchEpoch++; hgnSnapshot = null; hgnActivity = null; renderHgnFunds(); }};
 }

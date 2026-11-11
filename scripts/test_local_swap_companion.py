@@ -14,7 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 import local_swap_companion
-from local_swap_companion import HOSTED_ORIGIN, HostedWalletSession, cardano_wire_terms, hegemon_wire_terms, hosted_balance_view, private_token
+from local_swap_companion import HOSTED_ORIGIN, DesktopKeyring, GuiApproval, HostedWalletSession, NODE_ACTIVITY_FRACTIONS, NODE_ACTIVITY_PHASES, NodeActivityMonitor, WalletActivity, cardano_wire_terms, describe_companion_status, describe_node_activity, estimate_node_remaining, format_node_eta, hegemon_wire_terms, hosted_balance_view, private_token, read_node_activity, wallet_progress_event
 from probe_hegemon_testnet import MANIFEST, MANIFEST_FIELDS, RELEASE, RELATION, REQUIRED
 
 class LocalCompanionTest(unittest.TestCase):
@@ -174,12 +174,14 @@ class LocalCompanionTest(unittest.TestCase):
         self.assertEqual(view['observed_height'],'12')
         self.assertIs(view['watch_only'],False)
         calls=[]
-        def fake_wallet(_binary,_args,secrets,directory,label,expected=True,timeout=600):
+        chain={'height':10}
+        def fake_wallet(_binary,_args,secrets,directory,label,expected=True,timeout=600,on_output=None):
             calls.append(bytes(secrets[0][1]))
-            (Path(directory)/(label+'.log')).write_text(text)
-            return text,{}
+            body=text.replace('synced_height=10','synced_height=%s'%chain['height'])
+            (Path(directory)/(label+'.log')).write_text(body)
+            return body,{}
         with tempfile.TemporaryDirectory() as d:
-            session=HostedWalletSession(rpc='http://127.0.0.1:9',wallet_path=Path(d)/'wallet',manifest=Path(d)/'manifest',genesis='aa'*32,binary=Path(d)/'private-spend',scratch=d,read_node=lambda:{'height':10})
+            session=HostedWalletSession(rpc='http://127.0.0.1:9',wallet_path=Path(d)/'wallet',manifest=Path(d)/'manifest',genesis='aa'*32,binary=Path(d)/'private-spend',scratch=d,read_node=lambda:{'height':chain['height']})
             with patch('local_swap_companion.wallet',fake_wallet),patch('local_swap_companion.confirm_unlock',return_value='NO'),patch('local_swap_companion.read_passphrase',return_value='unit-test-passphrase'):
                 with self.assertRaises(ValueError):session.unlock()
             with patch('local_swap_companion.wallet',fake_wallet),patch('local_swap_companion.confirm_unlock',return_value='UNLOCK'),patch('local_swap_companion.read_passphrase',return_value='unit-test-passphrase'):
@@ -191,14 +193,53 @@ class LocalCompanionTest(unittest.TestCase):
                 self.assertEqual(len(calls),1)
                 session._cached_at-=61
                 session.balance()
+                self.assertEqual(len(calls),1,'an unchanged chain height reuses the saved read')
+                chain['height']=13
+                session.balance()
                 self.assertEqual(len(calls),2)
                 session._cached['synced_height']='7'
                 session._cached_at=time.monotonic()
+                chain['height']=10
                 session.balance()
                 self.assertEqual(len(calls),3)
                 self.assertFalse((Path(d)/'hegemon-hosted-balance.log').exists())
             session.close()
             with self.assertRaises(PermissionError):session.balance()
+
+    def test_status_stamps_the_tip_after_the_wallet_read_and_retries_a_large_gap_once(self):
+        caught='\n'.join(['balance synced_height=12 available_atoms=5000000 available_notes=1 reserved_atoms=0 reserved_notes=0 htlc_atoms=0 htlc_notes=0 watch_only=false immature_atoms=0'])
+        behind='\n'.join(['balance synced_height=10 available_atoms=5000000 available_notes=1 reserved_atoms=0 reserved_notes=0 htlc_atoms=0 htlc_notes=0 watch_only=false immature_atoms=0'])
+        chain={'height':10}
+        calls=[]
+        def catching_wallet(_binary,_args,secrets,directory,label,expected=True,timeout=600,on_output=None):
+            calls.append('catch')
+            chain['height']=12
+            return caught,{}
+        with tempfile.TemporaryDirectory() as d:
+            session=HostedWalletSession(rpc='http://127.0.0.1:9',wallet_path=Path(d)/'wallet',manifest=Path(d)/'manifest',genesis='aa'*32,binary=Path(d)/'private-spend',scratch=d,read_node=lambda:{'height':chain['height']})
+            with patch('local_swap_companion.wallet',catching_wallet),patch('local_swap_companion.confirm_unlock',return_value='UNLOCK'),patch('local_swap_companion.read_passphrase',return_value='unit-test-passphrase'):
+                unlocked=session.unlock()
+            self.assertEqual(calls,['catch'])
+            self.assertEqual(unlocked['synced_height'],'12')
+            self.assertEqual(unlocked['observed_height'],'12')
+            session._cached['synced_height']='14'
+            session._cached_at=time.monotonic()
+            chain['height']=10
+            def still_behind(_binary,_args,secrets,directory,label,expected=True,timeout=600,on_output=None):
+                calls.append(session.activity.snapshot()['phase'])
+                return behind,{}
+            with patch('local_swap_companion.wallet',still_behind):
+                refreshed=session.balance()
+            self.assertEqual(calls,['catch','syncing'])
+            self.assertEqual(refreshed['synced_height'],'10')
+            self.assertEqual(refreshed['observed_height'],'10')
+            self.assertEqual(session.activity.snapshot(),{'phase':'idle'})
+            chain['height']=15
+            with patch('local_swap_companion.wallet',still_behind):
+                lagged=session.balance()
+            self.assertEqual(calls,['catch','syncing','syncing','syncing'])
+            self.assertEqual(lagged['synced_height'],'10')
+            self.assertEqual(lagged['observed_height'],'15')
 
     def test_hosted_wallet_status_balance_omits_note_rows(self):
         secret='local-terminal-secret'
@@ -241,6 +282,8 @@ class LocalCompanionTest(unittest.TestCase):
                         results['locked']=(response.status,response.read())
                     with call('/hegemon/unlock','POST',b'{}') as response:
                         results['unlock']=(response.status,response.read())
+                    with call('/hegemon/wallet-activity') as response:
+                        results['activity']=(response.status,response.read())
                     with call('/hegemon/balance') as response:
                         results['balance']=(response.status,response.read())
                     with call('/hegemon/balance') as response:
@@ -275,5 +318,215 @@ class LocalCompanionTest(unittest.TestCase):
             self.assertEqual(counter.read_text().count('ran'),1,'a fresh balance read must not run private-spend again')
             self.assertEqual(results['down'][0],503)
             self.assertEqual(json.loads(results['down'][1]),{'error':'hegemon_node_not_ready'})
+            self.assertEqual(results['activity'][0],200)
+            activity=json.loads(results['activity'][1])
+            self.assertEqual(activity,{'phase':'idle'})
+            self.assertNotIn(b'position=',results['activity'][1])
+            self.assertNotIn(secret.encode(),results['activity'][1])
+
+    def test_wallet_activity_reports_block_progress_and_drops_note_rows(self):
+        self.assertIsNone(wallet_progress_event('ordinary position=7 value=5'))
+        self.assertIsNone(wallet_progress_event('Encrypted wallet passphrase: local-terminal-secret'))
+        self.assertEqual(wallet_progress_event('Syncing blocks: 12000/15445; new notes 3'),('sync',12000,15445))
+        self.assertEqual(wallet_progress_event('Resuming from saved block 15440 of 15445.'),('resume',15440,15445))
+        self.assertEqual(wallet_progress_event('Saved wallet is already at block 15445.'),('saved',15445,15445))
+        self.assertEqual(wallet_progress_event('Checking wallet history: 4/9'),('history',4,9))
+        self.assertEqual(wallet_progress_event('wallet-progress stage=sync current=4 target=9 notes=1 elapsed_ms=20'),('sync',4,9))
+        self.assertEqual(wallet_progress_event('wallet-progress stage=unlock current=8724 target=36840 notes=0 elapsed_ms=20'),('history',8724,36840))
+        self.assertIsNone(wallet_progress_event('Syncing blocks: 9/4; new notes 0'))
+        activity=WalletActivity()
+        activity.add_output(b'ordinary position=7 value=5\nResuming from saved block 15440 of 15445.\nSyncing blocks: 100/15445; new notes 2\npartial')
+        self.assertEqual(activity.snapshot(),{'phase':'syncing','current_height':'100','target_height':'15445','resumed':True,'kind':'blocks'})
+        notes=WalletActivity()
+        notes.add_output(b'wallet-progress stage=unlock current=8724 target=36840 notes=0 elapsed_ms=20\n')
+        self.assertEqual(notes.snapshot(),{'phase':'syncing','current_height':'8724','target_height':'36840','kind':'history'})
+        sentence=describe_companion_status(notes.snapshot())
+        self.assertEqual(sentence,'Checking saved notes: 8724 of 36840.')
+        self.assertNotIn('block',sentence)
+        encoded=json.dumps(activity.snapshot())
+        self.assertNotIn('position',encoded)
+        self.assertNotIn('notes',encoded)
+
+    def test_desktop_keyring_roundtrip_keeps_the_passphrase_off_the_command_and_off_disk(self):
+        phrase='saved-passphrase'
+        with tempfile.TemporaryDirectory() as d:
+            wallet=Path(d)/'wallet'
+            wallet.write_bytes(b'not-a-real-wallet')
+            memory={}
+            def run(argv,input=None,capture_output=True,timeout=10):
+                self.assertEqual(argv[0],'secret-tool')
+                self.assertNotIn(phrase,' '.join(argv))
+                self.assertNotIn('>',argv)
+                key=tuple(argv[argv.index('service'):])
+                if argv[1]=='store':
+                    memory[key]=input
+                    return subprocess.CompletedProcess(argv,0,b'',b'')
+                if argv[1]=='lookup':
+                    stored=memory.get(key)
+                    return subprocess.CompletedProcess(argv,0 if stored else 1,stored or b'',b'')
+                if argv[1]=='clear':
+                    memory.pop(key,None)
+                    return subprocess.CompletedProcess(argv,0,b'',b'')
+                self.fail(argv)
+            ring=DesktopKeyring(run)
+            self.assertIsNone(ring.load(wallet))
+            ring.save(wallet,phrase)
+            self.assertEqual(ring.load(wallet),phrase)
+            self.assertEqual(memory[next(iter(memory))],phrase.encode()+b'\n')
+            self.assertEqual(list(Path(d).iterdir()),[wallet])
+            ring.delete(wallet)
+            self.assertIsNone(ring.load(wallet))
+            with self.assertRaises(ValueError):
+                ring.save(wallet,'has\nnewline')
+            def missing(argv,input=None,capture_output=True,timeout=10):
+                raise FileNotFoundError(argv[0])
+            with self.assertRaises(local_swap_companion.KeyringUnavailable) as caught:
+                DesktopKeyring(missing).save(wallet,phrase)
+            self.assertNotIn(phrase,str(caught.exception))
+            self.assertEqual(list(Path(d).iterdir()),[wallet])
+
+    def test_gui_approval_unlocks_without_putting_the_passphrase_on_the_activity_read(self):
+        phrase='window-only-passphrase'
+        text='balance synced_height=10 available_atoms=5000000 available_notes=1 reserved_atoms=0 reserved_notes=0 htlc_atoms=0 htlc_notes=0 watch_only=false immature_atoms=0\n'
+        saved=[]
+        class Ring:
+            def save(self,path,secret):saved.append(secret)
+            def delete(self,path):saved.append('deleted')
+            def load(self,path):return None
+        def fake_wallet(_binary,_args,secrets,directory,label,expected=True,timeout=600,on_output=None):
+            self.assertEqual(bytes(secrets[0][1]),phrase.encode())
+            return text,{}
+        self.assertEqual(describe_companion_status({'phase':'syncing','current_height':'15440','target_height':'15445','resumed':True}),'Resuming from the saved wallet: block 15440 of 15445.')
+        with tempfile.TemporaryDirectory() as d:
+            prompt=GuiApproval()
+            session=HostedWalletSession(rpc='http://127.0.0.1:9',wallet_path=Path(d)/'wallet',manifest=Path(d)/'manifest',genesis='aa'*32,binary=Path(d)/'private-spend',scratch=d,read_node=lambda:{'height':10},prompt=prompt,keyring=Ring())
+            def approve():
+                while not prompt.waiting():time.sleep(0.01)
+                self.assertTrue(prompt.submit(phrase,True))
+            threading.Thread(target=approve,daemon=True).start()
+            with patch('local_swap_companion.wallet',fake_wallet),patch('local_swap_companion.confirm_unlock',side_effect=AssertionError('terminal prompt used')),patch('local_swap_companion.read_passphrase',side_effect=AssertionError('terminal prompt used')):
+                view=session.unlock()
+            self.assertEqual(saved,[phrase])
+            self.assertNotIn(phrase,json.dumps(view))
+            self.assertNotIn(phrase,json.dumps(session.activity.snapshot()))
+            self.assertEqual(session.activity.snapshot(),{'phase':'idle'})
+            prompt=GuiApproval()
+            session.prompt=prompt
+            def decline():
+                while not prompt.waiting():time.sleep(0.01)
+                self.assertTrue(prompt.decline())
+            threading.Thread(target=decline,daemon=True).start()
+            with patch('local_swap_companion.confirm_unlock',side_effect=AssertionError('terminal prompt used')):
+                with self.assertRaisesRegex(ValueError,'wallet unlock declined locally'):
+                    session.unlock()
+            self.assertNotIn(phrase,json.dumps(session.activity.snapshot()))
+
+class NodeActivityTest(unittest.TestCase):
+    def test_each_startup_phase_names_the_step_and_its_fraction(self):
+        for phase, title in NODE_ACTIVITY_PHASES.items():
+            fractional = phase in NODE_ACTIVITY_FRACTIONS
+            view = describe_node_activity({
+                'source': 'file', 'phase': phase, 'pid_alive': True,
+                'current': 14200 if fractional else None,
+                'total': 15818 if fractional else None,
+                'remaining_seconds': 360, 'slowed': False,
+            })
+            self.assertEqual(view['title'], title)
+            self.assertEqual(view['tone'], 'working')
+            self.assertIn('not accepting connections', view['consequence'])
+            if fractional:
+                self.assertEqual(view['fraction'], 'Block 14,200 of 15,818')
+                self.assertAlmostEqual(view['progress'], 14200 / 15818)
+                self.assertEqual(view['time_line'], 'About 6 minutes left')
+            else:
+                self.assertEqual(view['fraction'], '')
+                self.assertIsNone(view['progress'])
+        ready = describe_node_activity({'source': 'file', 'phase': 'ready', 'pid_alive': True})
+        self.assertEqual(ready['consequence'], 'The node is not accepting connections yet.')
+
+    def test_eta_rounds_above_ninety_seconds_and_marks_a_slower_stretch(self):
+        self.assertEqual(format_node_eta(60, False, False), 'Under a minute left')
+        self.assertEqual(format_node_eta(90, False, True), 'Under a minute to the current target.')
+        self.assertEqual(format_node_eta(91, False, False), 'About 2 minutes left')
+        self.assertEqual(format_node_eta(360, False, True), 'About 6 minutes to the current target.')
+        remaining, slowed = estimate_node_remaining([(0, 0), (10, 1000), (110, 1100)], 2100)
+        self.assertTrue(slowed)
+        self.assertEqual(remaining, 1000)
+        self.assertEqual(format_node_eta(remaining, slowed, False), 'This stretch slowed down. About 17 minutes at this pace.')
+        steady, steady_slow = estimate_node_remaining([(0, 0), (10, 100)], 200)
+        self.assertFalse(steady_slow)
+        self.assertEqual(steady, 10)
+
+    def test_dead_pid_and_quiet_pid_are_different(self):
+        dead = describe_node_activity({
+            'source': 'file', 'phase': 'rechecking_proofs', 'pid_alive': False,
+            'current': 14200, 'total': 15818,
+        })
+        self.assertEqual(dead['title'], 'Not running')
+        self.assertEqual(dead['tone'], 'stopped')
+        self.assertEqual(dead['consequence'], 'The node stopped during rechecking private proofs at block 14,200 of 15,818.')
+        quiet = describe_node_activity({
+            'source': 'file', 'phase': 'rechecking_proofs', 'pid_alive': True, 'quiet': True,
+            'quiet_minutes': 3, 'current': 14200, 'total': 15818, 'remaining_seconds': 10,
+        })
+        self.assertEqual(quiet['title'], 'Rechecking private proofs')
+        self.assertEqual(quiet['tone'], 'working')
+        self.assertEqual(quiet['time_line'], 'Still on this step. Last update was 3 minutes ago.')
+
+    def test_caught_up_service_and_closed_port(self):
+        caught = describe_node_activity({'source': 'rpc', 'height': 16427, 'target': 16427, 'syncing': False, 'peers': 15})
+        self.assertEqual(caught['title'], 'Caught up')
+        self.assertEqual(caught['tone'], 'caught_up')
+        self.assertEqual(caught['progress'], 1.0)
+        self.assertEqual(caught['consequence'], 'Ready. Height 16,427, 15 peers.')
+        one = describe_node_activity({'source': 'rpc', 'height': 5, 'target': 5, 'syncing': False, 'peers': 1})
+        self.assertEqual(one['consequence'], 'Ready. Height 5, 1 peer.')
+        closed = describe_node_activity({'source': 'none', 'endpoint': '127.0.0.1:9944'})
+        self.assertEqual(closed['title'], 'Not running')
+        self.assertEqual(closed['consequence'], 'Nothing is listening on 127.0.0.1:9944.')
+
+    def test_activity_file_ignores_symlink_and_bad_records(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / 'node-activity.json'
+            body = {'phase': 'loading_rows', 'current': None, 'total': None, 'updated_at_ms': 10, 'pid': 4, 'note': 'ignored'}
+            path.write_text(json.dumps(body))
+            self.assertEqual(read_node_activity(path)['phase'], 'loading_rows')
+            path.write_text(json.dumps({'phase': 'nope', 'current': None, 'total': None, 'updated_at_ms': 10, 'pid': 4}))
+            self.assertIsNone(read_node_activity(path))
+            path.write_text(json.dumps({'phase': 'rechecking_proofs', 'current': 20, 'total': 10, 'updated_at_ms': 10, 'pid': 4}))
+            self.assertIsNone(read_node_activity(path))
+            path.write_bytes(b'{' + b'x' * 5000)
+            self.assertIsNone(read_node_activity(path))
+            path.write_text(json.dumps(body))
+            link = root / 'link.json'
+            link.symlink_to(path)
+            self.assertIsNone(read_node_activity(link))
+
+    def test_monitor_prefers_rpc_and_reports_a_dead_or_quiet_file(self):
+        caught = NodeActivityMonitor(
+            'http://127.0.0.1:9944', Path('/unused'),
+            read_rpc=lambda url: {'height': 16427, 'target': 16427, 'syncing': False, 'peers': 1},
+            read_file=lambda path: self.fail('file read while RPC answered'),
+            clock=lambda: 1_000_000)
+        caught.poll_once()
+        self.assertEqual(caught.snapshot()['consequence'], 'Ready. Height 16,427, 1 peer.')
+
+        dead_record = {'phase': 'rechecking_proofs', 'current': 14200, 'total': 15818, 'updated_at_ms': 1_000_000_000, 'pid': 99}
+        dead = NodeActivityMonitor(
+            'http://127.0.0.1:9944', Path('/unused'),
+            read_rpc=lambda url: (_ for _ in ()).throw(OSError('closed')),
+            read_file=lambda path: dead_record, pid_alive=lambda pid: False, clock=lambda: 1_000_000)
+        dead.poll_once()
+        self.assertEqual(dead.snapshot()['consequence'], 'The node stopped during rechecking private proofs at block 14,200 of 15,818.')
+
+        quiet_record = dict(dead_record, updated_at_ms=1_000_000_000 - 180_000)
+        quiet = NodeActivityMonitor(
+            'http://127.0.0.1:9944', Path('/unused'),
+            read_rpc=lambda url: (_ for _ in ()).throw(OSError('closed')),
+            read_file=lambda path: quiet_record, pid_alive=lambda pid: pid == 99, clock=lambda: 1_000_000)
+        quiet.poll_once()
+        self.assertEqual(quiet.snapshot()['title'], 'Rechecking private proofs')
+        self.assertEqual(quiet.snapshot()['time_line'], 'Still on this step. Last update was 3 minutes ago.')
 
 if __name__=='__main__':unittest.main()

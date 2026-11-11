@@ -503,6 +503,25 @@ function explainHegemonCompanion(error){
  if(error.message==='hegemon_node_not_ready')return Error('The Hegemon node is still syncing or is not on the public tip. HGN offers stay closed until it is ready.');
  return error;
 }
+function describeWalletActivity(activity){
+ if(!activity||typeof activity!=='object')return '';
+ if(activity.phase==='awaiting_approval')return 'Type UNLOCK in the companion terminal. This page waits here until the wallet read finishes.';
+ if(activity.phase==='awaiting_passphrase')return 'Enter the wallet passphrase in the companion terminal. It is not sent to this page. This page waits here until the wallet read finishes.';
+ if(activity.phase!=='syncing')return '';
+ const current=activity.current_height,target=activity.target_height,height=/^(0|[1-9][0-9]{0,19})$/;
+ if(typeof current==='string'&&typeof target==='string'&&height.test(current)&&height.test(target)){
+  if(activity.kind==='history')return 'Checking saved notes: '+current+' of '+target+'. This page updates when the read finishes.';
+  const verb=activity.resumed===true?'Resuming from the saved wallet: block ':'Syncing the wallet: block ';
+  const tail=activity.resumed===true?'. Only new blocks are scanned. This page updates when the read finishes.':'. This can take several minutes. This page updates when the read finishes.';
+  return verb+current+' of '+target+tail;
+ }
+ return 'Passphrase accepted. Syncing the wallet with the local node. This can take several minutes. This page updates when the read finishes.';
+}
+function watchWalletActivity(onActivity){
+ let stop=false;
+ (async()=>{while(!stop){try{onActivity(describeWalletActivity(await companion('/hegemon/wallet-activity',companionToken,undefined,5000)));}catch{onActivity('');}await new Promise(resolve=>setTimeout(resolve,1000));}})();
+ return ()=>{stop=true;};
+}
 async function hostedHegemonBalance(path,body){
  if(!companionToken||!companionCapabilities.includes('hegemon-public-balance'))throw Error('Connect the local companion started with --hosted-wallet-status before offering HGN.');
  try{const result=await companion(path,companionToken,body,1800000);return path==='/hegemon/unlock'?result.balance:result;}
@@ -621,6 +640,7 @@ journey=initJourney({legacyForm:$('offer-form'),msg,hegemonWallet:{
  paired:()=>companionCapabilities.includes('hegemon-public-balance'),
  unlock:()=>hostedHegemonBalance('/hegemon/unlock',{}),
  balance:()=>hostedHegemonBalance('/hegemon/balance'),
+ watch:watchWalletActivity,
 }});
 refresh();loadSelected();
 

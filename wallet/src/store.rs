@@ -6712,6 +6712,24 @@ impl WalletStore {
         let context = token.context();
         token.authorize(context, token.activation_height(), 1)?;
         let (stablecoin_root, note_root) = context.source_genesis_roots()?;
+        let already_saved = self.with_state(|state| {
+            let pinned = state.private_spend_relation_digest.as_deref()
+                == Some(transaction_circuit::private_spend::relation_digest().as_slice());
+            let same_launch = state
+                .native_launch_context
+                .as_ref()
+                .is_some_and(|stored| stored.require_match(context).is_ok());
+            Ok(pinned
+                && same_launch
+                && state.poseidon2_v8.launch_genesis_unchanged(
+                    context.genesis_hash(),
+                    stablecoin_root,
+                    note_root,
+                ))
+        })?;
+        if already_saved {
+            return Ok(());
+        }
         self.with_poseidon2_v8_mut_and_block(None, Some((context, true)), |mirror, _| {
             token.authorize(context, token.activation_height(), 1)?;
             mirror.ensure_launch_genesis(context.genesis_hash(), stablecoin_root, note_root)

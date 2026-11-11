@@ -65,7 +65,7 @@ export function renderHosted(html){
  out=once(out,/(<header><p class="eyebrow">)[^<]*(<\/p>)/,'$1'+escapeText(HOSTED_EYEBROW)+'$2','header eyebrow');
  out=once(out,/(<aside role="note">)[\s\S]*?(<\/aside>)/,'$1'+escapeText(HOSTED_NOTE)+'$2','note');
  out=once(out,/(<p id="vault-description">)[^<]*(<\/p>)/,'$1'+escapeText(HOSTED_VAULT)+'$2','vault description');
- out=once(out,/(<p id="companion-copy">)[^<]*(<\/p>)/,'$1'+escapeText('Start the local companion on this computer, then enter its pairing code. If your browser asks to access this computer, allow it. Node status does not read a wallet. Offering HGN requires the wallet-status companion and a terminal unlock. The code stays in this page’s memory. Creating a listing does not lock funds.')+'$2','companion description');
+ out=once(out,/(<p id="companion-copy">)[^<]*(<\/p>)/,'$1'+escapeText('Start the local companion on this computer, then enter its pairing code. If your browser asks to access this computer, allow it. Node status does not read a wallet. Offering HGN requires the wallet-status companion and a terminal unlock. The terminal and this page show progress while that wallet syncs. The code stays in this page’s memory. Creating a listing does not lock funds.')+'$2','companion description');
  out=once(out,/<div id="hosted-node-instructions" hidden>/,'<div id="hosted-node-instructions">','hosted node instructions');
  const reveal=id=>{out=once(out,new RegExp('<section id="'+id+'"([^>]*?) hidden>'),'<section id="'+id+'"$1>','reveal '+id);};
  const conceal=(pattern,what)=>{out=once(out,pattern,m=>/\shidden[\s>]/.test(m)?m:m.slice(0,-1)+' hidden>',what);};

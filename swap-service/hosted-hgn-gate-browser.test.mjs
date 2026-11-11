@@ -141,6 +141,62 @@ test('hosted HGN offers require a local wallet snapshot and other assets do not'
     const offer = await (await fetch(base + '/offers/' + id)).json();
     assert.equal(offer.give.amount, '100000');
     assert.equal(offer.give.chain, 'hegemon');
+
+    const stale = await browser.newContext();
+    await stale.route(base + '/**', route => {
+      const path = new URL(route.request().url()).pathname;
+      if (path === '/') return route.fulfill({status: 200, body: html, headers: {'content-type': 'text/html; charset=utf-8', 'content-security-policy': HOSTED_CSP}});
+      return route.continue();
+    });
+    await stale.grantPermissions(['local-network-access'], {origin: base});
+    const staleToken = '44'.repeat(32);
+    let balanceReads = 0, unlockPosts = 0;
+    await stale.route('http://127.0.0.1:8788/**', route => {
+      if (route.request().headers().authorization !== 'Bearer ' + staleToken) return route.fulfill({status: 403, contentType: 'application/json', body: '{"error":"forbidden"}'});
+      const path = new URL(route.request().url()).pathname, method = route.request().method();
+      if (path === '/hegemon/unlock' && method === 'POST') unlockPosts++;
+      if (path === '/hegemon/balance' && method === 'GET') balanceReads++;
+      const fresh = snapshot('5000000'), old = snapshot('5000000', {observed_at: String(Date.now() - 120000)});
+      const body = path === '/health' ? {status: 'ok', capabilities: ['hegemon-public-status', 'hegemon-public-balance']}
+        : path === '/hegemon/status' ? {network: 'v0.11 pre-mainnet', height: '14255', syncing: false, peers: 8, wallet_rpc_ready: true}
+        : path === '/hegemon/wallet-activity' ? {phase: 'idle'}
+        : path === '/hegemon/unlock' ? {unlocked: true, balance: old}
+        : path === '/hegemon/balance' ? fresh : null;
+      if (!body) return route.fulfill({status: 404, contentType: 'application/json', body: '{"error":"not found"}'});
+      return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify(body)});
+    });
+    async function reachStaleAmount(page) {
+      await page.goto(base);
+      await page.locator('#companion-indicator').click();
+      await page.locator('#companion-token').fill(staleToken);
+      await page.locator('#connect-companion').click();
+      await page.locator('#companion-status').getByText(/does not lock funds/).waitFor();
+      await page.locator('#journey-back').click();
+      await page.getByRole('button', {name: /Create an offer/}).click();
+      await page.locator('#journey-give-type').selectOption('hegemon:hgn');
+      await page.locator('#journey-next').click();
+      await page.locator('#journey-give-amount').fill('0.001');
+      await page.locator('#journey-hgn-unlock').click();
+      await page.locator('#journey-hgn-shortfall').getByText(/stale/).waitFor();
+      assert.equal(await page.locator('#journey-hgn-unlock').innerText(), 'Read balance again');
+    }
+    const rereadPage = await stale.newPage();
+    await reachStaleAmount(rereadPage);
+    const unlocksAfterFirst = unlockPosts, readsAfterFirst = balanceReads;
+    assert.equal(unlocksAfterFirst, 1);
+    assert.equal(readsAfterFirst, 0);
+    await rereadPage.locator('#journey-hgn-unlock').click();
+    await rereadPage.waitForFunction(() => !document.getElementById('journey-next').disabled && document.getElementById('journey-hgn-shortfall').textContent === '');
+    assert.equal(unlockPosts, 1);
+    assert.equal(balanceReads, 1);
+
+    const continuePage = await stale.newPage();
+    await reachStaleAmount(continuePage);
+    const unlocksBeforeContinue = unlockPosts, readsBeforeContinue = balanceReads;
+    await continuePage.locator('#journey-next').evaluate(button => { button.disabled = false; button.click(); });
+    await continuePage.getByRole('heading', {name: 'What would you like in return?'}).waitFor();
+    assert.equal(unlockPosts, unlocksBeforeContinue);
+    assert.equal(balanceReads, readsBeforeContinue + 1);
   } finally {
     await browser?.close();
     server.kill('SIGTERM');

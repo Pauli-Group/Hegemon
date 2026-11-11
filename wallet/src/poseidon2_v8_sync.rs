@@ -614,6 +614,28 @@ impl Poseidon2V8WalletState {
         self.validate()
     }
 
+    /// True when this mirror is already the pinned launch genesis. Callers can
+    /// then keep the saved scan instead of cloning and rechecking it.
+    pub(crate) fn launch_genesis_unchanged(
+        &self,
+        genesis_hash: [u8; 32],
+        stablecoin_root: Poseidon2V8Digest,
+        note_root: Poseidon2V8Digest,
+    ) -> bool {
+        if note_root != empty_note_root() || genesis_hash == [0; 32] {
+            return false;
+        }
+        if self.genesis_hash != Some(genesis_hash) {
+            return false;
+        }
+        let original_stable = self
+            .blocks
+            .first()
+            .map(|block| block.stablecoin_root_before)
+            .unwrap_or(self.stablecoin_root);
+        self.root_log.first() == Some(&note_root) && original_stable == Some(stablecoin_root)
+    }
+
     #[cfg(test)]
     pub(crate) fn ensure_genesis_for_test(
         &mut self,

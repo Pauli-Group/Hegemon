@@ -620,6 +620,13 @@ async fn sync(
     let end = node.latest_block().await?.height;
     let start = s.poseidon2_v8_tip()?.height;
     let started = std::time::Instant::now();
+    if std::io::stderr().is_terminal() {
+        if start >= end {
+            eprintln!("Saved wallet is already at block {end}.");
+        } else {
+            eprintln!("Resuming from saved block {start} of {end}.");
+        }
+    }
     print_wallet_progress("sync", start, end, 0, 0);
     let mut reported = started;
     let mut recovered = 0usize;
