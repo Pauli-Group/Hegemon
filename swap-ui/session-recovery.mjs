@@ -34,7 +34,9 @@ function envelopeShape(value){
 
 /** Validate the data needed to reconnect or manually recover. All token and amount values remain exact strings. */
 export async function validateSessionSnapshot(snapshot,session){
- if(!keys(snapshot,['version','offer','offerDigest','reservation','credential','channelKey','sessionExpires','terms','escrows','secretEnvelope','ownerBlob','takerBlob'])||snapshot.version!==1||typeof session!=='string'||!HEX64.test(session)||!['reservation','credential','channelKey','offerDigest'].every(name=>typeof snapshot[name]==='string'&&HEX64.test(snapshot[name]))||!Number.isSafeInteger(snapshot.sessionExpires)||snapshot.sessionExpires<1)fail('Invalid swap recovery data.');
+ const version=snapshot?.version,fields=['version','offer','offerDigest','reservation','credential','channelKey','sessionExpires','terms','escrows','secretEnvelope','ownerBlob','takerBlob',...(version===2?['transport']:[])];
+ if(!keys(snapshot,fields)||![1,2].includes(version)||typeof session!=='string'||!HEX64.test(session)||!['reservation','credential','channelKey','offerDigest'].every(name=>typeof snapshot[name]==='string'&&HEX64.test(snapshot[name]))||!Number.isSafeInteger(snapshot.sessionExpires)||snapshot.sessionExpires<1)fail('Invalid swap recovery data.');
+ if(version===2){const t=snapshot.transport;if(!keys(t,['next','previous'])||!Number.isSafeInteger(t.next)||t.next<1||t.next>257||!(t.previous===null||typeof t.previous==='string'&&HEX64.test(t.previous))||t.next===1&&t.previous!==null)fail('Invalid saved packet history.');}
  if(!keys(snapshot.offer,['id','visibility','give','receive','expires','ownerPublicKey'])||await deriveSessionId(snapshot.offer.id,snapshot.reservation)!==session||await sessionOfferDigest(snapshot.offer)!==snapshot.offerDigest)fail('The saved offer or session does not match.');
  for(const name of ['ownerBlob','takerBlob'])if(snapshot[name]!==null&&(typeof snapshot[name]!=='string'||snapshot[name].length>20000))fail('Invalid saved participant statement.');
  if(!keys(snapshot.escrows,['long','short']))fail('Invalid saved escrow references.');
@@ -51,6 +53,15 @@ export async function validateSessionSnapshot(snapshot,session){
   if(snapshot.terms&&secret.hashlock!==snapshot.terms.hashlock)fail('The saved secret backup is for a different swap.');
  }
  return snapshot;
+}
+/** Preserve the backed-up packet-history high-water mark. A caller must still
+ * authenticate the complete signed history before advancing that mark. */
+export function validateTransportAdvance(previous,next){
+ if(previous.version!==next.version)fail('Recovery update changes the snapshot version.');
+ if(previous.version===2){
+  const a=previous.transport,b=next.transport;
+  if(b.next<a.next||b.next===a.next&&b.previous!==a.previous||a.previous!==null&&b.previous===null)fail('Recovery update rolls back the saved packet history.');
+ }
 }
 async function sameKey(privateKey,publicKey,session){
  try{
@@ -113,6 +124,7 @@ export async function updateSessionRecovery(envelope,passphrase,snapshot){
  try{
   await validateSessionSnapshot(snapshot,envelope.session);
   for(const name of ['offer','offerDigest','reservation','credential','channelKey','sessionExpires'])if(canonical(snapshot[name])!==canonical(previous.snapshot[name]))fail('Recovery update changes the session identity.');
+  validateTransportAdvance(previous.snapshot,snapshot);
   for(const name of ['terms','ownerBlob','takerBlob'])if(previous.snapshot[name]!==null&&canonical(snapshot[name])!==canonical(previous.snapshot[name]))fail('Recovery update changes saved swap terms or participants.');
   for(const name of ['long','short'])if(previous.snapshot.escrows[name]!==null&&canonical(snapshot.escrows[name])!==canonical(previous.snapshot.escrows[name]))fail('Recovery update changes a saved escrow reference.');
   if(previous.snapshot.secretEnvelope!==null&&canonical(snapshot.secretEnvelope)!==canonical(previous.snapshot.secretEnvelope))fail('Recovery update changes the saved secret backup.');

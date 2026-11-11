@@ -77,7 +77,7 @@ export async function sealParticipantFrame(key,ctx,blob,expected,now){
 export async function openParticipantFrame(key,ctx,ciphertext,expected,now){
  const blob=await open(key,ctx,'participant',ciphertext),participant=await verifyParticipant(blob,expected,now);
  if(participant.statement.session!==ctx.session||participant.statement.role!==ctx.role||participant.statement.channelDigest!==await channelFingerprint(ctx.session,key))fail('Participant does not bind this channel.');
- return participant;
+ return {...participant,blob};
 }
 
 /** Signed packets are verified against the sender's already wallet-certified protocol key before use. */

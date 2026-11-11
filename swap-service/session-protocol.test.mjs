@@ -46,7 +46,7 @@ test('two parties exchange wallet-bound swap terms and references without chat o
    if(loseResponse){loseResponse=false;throw Error('response lost after acceptance');}
    return result;
   }});
-  await assert.rejects(outbox.enqueue(sequence=>{assert.equal(sequence,1);return hand.handshake;}),/response lost/);
+  await assert.rejects(outbox.enqueue(({sequence,previous})=>{assert.equal(sequence,1);assert.equal(previous,null);return {ciphertext:hand.handshake,previousAfter:null};}),/response lost/);
   assert.equal((await outbox.retry()).duplicate,true,'retry after a lost response uses the saved ciphertext');
   const ownerReceived=(await call(path,{token:owner.ownerToken}))[1].packets[0];
   const openedHand=await openChannelHandshake({session:session.id,offer:owner.id,reservation:taker.reservationId,ownerPublicKey:inbox.publicKey,privateInboxKey:inbox.privateKey,handshake:ownerReceived.ciphertext});
@@ -82,10 +82,29 @@ test('two parties exchange wallet-bound swap terms and references without chat o
   const escrow=await signPacket(ownerKey.privateKey,{session:session.id,role:'owner',sequence:2,previous:acceptedProposal.digest,payload:{type:'escrow',termsDigest:checked.termsDigest,leg:'long',reference:{chain:'bitcoin',txid:'44'.repeat(32),vout:0}}});
   const escrowCtx={session:session.id,role:'owner',sequence:3},nextOwnerPacket={...ownerPacket,sequence:2,previous:acceptedProposal.digest};
   const encryptedEscrow=await sealPacketFrame(openedHand.key,escrowCtx,escrow,nextOwnerPacket);assert.equal((await send(owner.ownerToken,3,encryptedEscrow))[0],201);
-  assert.equal((await openPacketFrame(hand.key,escrowCtx,encryptedEscrow,nextOwnerPacket)).body.payload.reference.txid,'44'.repeat(32));
+  const openedEscrow=await openPacketFrame(hand.key,escrowCtx,encryptedEscrow,nextOwnerPacket);
+  assert.equal(openedEscrow.body.payload.reference.txid,'44'.repeat(32));
+  const cleanOffer={id:offer.id,visibility:offer.visibility,give:offer.give,receive:offer.receive,expires:offer.expires,ownerPublicKey:offer.ownerPublicKey};
+  const snapshot={version:2,offer:cleanOffer,offerDigest:digest,reservation:taker.reservationId,credential:owner.ownerToken,channelKey:openedHand.key,sessionExpires:session.expires,terms,escrows:{long:{chain:'bitcoin',txid:'44'.repeat(32),vout:0},short:null},secretEnvelope:null,ownerBlob,takerBlob,transport:{next:4,previous:openedEscrow.digest}};
+  const frames=(await call(path,{token:owner.ownerToken}))[1].packets;
+  const freshRows=new Map(),freshStorage={getItem:key=>freshRows.get(key)??null,setItem:(key,value)=>freshRows.set(key,value)};
+  const restored=sessionOutbox({session:session.id,role:'owner',storage:freshStorage,locks,send:async frame=>{
+   const [status,result]=await send(owner.ownerToken,frame.sequence,frame.ciphertext);assert.ok(status===201||status===200);return result;
+  }});
+  await assert.rejects(restored.restore({snapshot,publicKey:ownerKey.publicKey,frames:frames.filter(frame=>!(frame.sender==='owner'&&frame.sequence===3)),now}),/omitted or changed/);
+  const recovered=await restored.restore({snapshot,publicKey:ownerKey.publicKey,frames,now});
+  assert.equal(recovered.next,4);assert.equal(recovered.previous,openedEscrow.digest);assert.equal(recovered.packetSequence,2);
+  await restored.enqueue(async({sequence,previous})=>{
+   assert.equal(sequence,4);assert.equal(previous,openedEscrow.digest);
+   const packet=await signPacket(ownerKey.privateKey,{session:session.id,role:'owner',sequence:3,previous,payload:{type:'cancel',reason:'unavailable'}});
+   const expected={session:session.id,role:'owner',sequence:3,previous,publicKey:ownerKey.publicKey};
+   const ciphertext=await sealPacketFrame(openedHand.key,{session:session.id,role:'owner',sequence},packet,expected);
+   const result=await openPacketFrame(hand.key,{session:session.id,role:'owner',sequence},ciphertext,expected);
+   return {ciphertext,previousAfter:result.digest};
+  });
   db.raw.prepare('UPDATE offers SET expires=0,reservation_expires=0 WHERE id=?').run(owner.id);
   assert.equal((await call(`/swap-sessions/${session.id}`,{token:taker.reservationToken}))[0],200);
-  assert.equal((await call(path,{token:taker.reservationToken}))[1].packets.length,6);
+  assert.equal((await call(path,{token:taker.reservationToken}))[1].packets.length,7);
  }finally{db.raw.close();}
 });
 

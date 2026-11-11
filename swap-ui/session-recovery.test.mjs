@@ -57,3 +57,15 @@ test('recovery updates retain the agreed terms, secret and previously recorded e
  const wrong=structuredClone(funded);wrong.terms.legs.long.asset={...wrong.terms.legs.long.asset,amount:'1'};
  await assert.rejects(updateSessionRecovery(updated,pass,wrong),/terms do not match/);
 });
+
+test('version-2 backups pin a monotonic sent-packet high-water mark',async()=>{
+ const {session,snapshot}=await setup(),v2={...snapshot,version:2,transport:{next:1,previous:null}};
+ const created=await createSessionRecovery({session,role:'owner',snapshot:v2,passphrase:pass});
+ const sent={...v2,transport:{next:3,previous:'aa'.repeat(32)}};
+ const saved=await updateSessionRecovery(created.envelope,pass,sent);
+ assert.deepEqual((await openSessionRecovery(saved,pass)).snapshot.transport,sent.transport);
+ await assert.rejects(updateSessionRecovery(saved,pass,{...sent,transport:{next:2,previous:null}}),/rolls back/);
+ await assert.rejects(updateSessionRecovery(saved,pass,{...sent,transport:{next:3,previous:'bb'.repeat(32)}}),/rolls back/);
+ await assert.rejects(updateSessionRecovery(saved,pass,{...sent,version:1}),/Invalid swap recovery data/);
+ await assert.rejects(validateSessionSnapshot({...v2,transport:{next:1,previous:'aa'.repeat(32)}},session),/Invalid saved packet history/);
+});
