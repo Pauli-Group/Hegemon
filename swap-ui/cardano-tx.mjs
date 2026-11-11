@@ -195,7 +195,14 @@ function outputItem({address, value, datum}) {
   return map;
 }
 const outputSize = o => encode(outputItem(o)).length;
-const minFor = (params, address, value) => minUtxo(params, outputSize({address, value: {lovelace: (1n << 63n) - 1n, assets: value.assets}}));
+const minFor = (params, address, value, datum = undefined) => minUtxo(params, outputSize({address, value: {lovelace: (1n << 63n) - 1n, assets: value.assets}, datum}));
+
+/** Minimum ADA for this exact pinned escrow, including its inline datum.
+ * A maximum-width lovelace encoding keeps the estimate conservative. */
+export function minimumEscrowLovelace(terms, params) {
+  const t=parseTerms(terms),script=validateScript(),p=norm(params);
+  return minFor(p,script.address,t.value,datumBytes(t));
+}
 
 function bodyMap({inputs, outputs, fee, ttl, start, hash, collateral, signers, collateralReturn, totalCollateral}) {
   const body = new Map([[0, refList(inputs)], [1, outputs.map(outputItem)], [2, fee]]);
@@ -266,7 +273,7 @@ const signerCountFor = picked => Math.max(1, signerKeys(picked).length);
 export function buildFund({terms, walletUtxos, changeAddress, params, maxFee = MAX_FEE_LOVELACE}) {
   const t = parseTerms(terms), script = validateScript(), p = norm(params);
   const escrowOutput = {address: script.address, value: t.value, datum: datumBytes(t)};
-  const escrowMin = minFor(p, script.address, t.value);
+  const escrowMin = minFor(p, script.address, t.value, escrowOutput.datum);
   if (t.value.lovelace < escrowMin) throw Error(`Cardano escrow needs at least ${escrowMin} lovelace.`);
   let extra = 600_000n + minFor(p, changeAddress, emptyValue());
   for (let attempt = 0; attempt < 8; attempt++) {
@@ -448,7 +455,7 @@ export function checkFund(txBytes, expect) {
   const total = sumValues(inputs.map(u => u.value)), expected = addValue(addValue(total, terms.value, -1n), {lovelace: tx.fee, assets: {}}, -1n);
   if (!valueEquals(change.value, expected)) fail('change does not return everything not paid to the escrow and the fee');
   if (change.value.lovelace < minFor(params, changeAddress, change.value)) fail('change is below the minimum output');
-  if (escrow.value.lovelace < minFor(params, script.address, escrow.value)) fail('escrow is below the minimum output');
+  if (escrow.value.lovelace < minFor(params, script.address, escrow.value, datumBytes(terms))) fail('escrow is below the minimum output');
   feeCheck(tx, params, signerCountFor(inputs));
   return summarize(tx, 'fund', expect);
 }

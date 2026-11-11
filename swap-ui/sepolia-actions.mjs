@@ -36,11 +36,12 @@ async function contractState(request,head,terms,template,{funded}){
  if(terms.kind==='eth'&&BigInt(await request('eth_getBalance',[contract,head.number]))!==BigInt(terms.amount))throw Error('Escrow balance does not match.');
  return contract;
 }
-export async function deploySepoliaEscrow(provider,template,terms){
+export async function deploySepoliaEscrow(provider,template,terms,options={}){
  const tx=buildLocalEscrowDeployment(template,terms),from=addr(terms.refundee),{request,head}=await context(provider,from);requireTime(terms,head);
+ if(options.verify!==undefined){if(typeof options.verify!=='function')throw Error('The swap safety check is unavailable.');await options.verify({headTimestamp:Number(BigInt(head.timestamp))});}
  await beforeSend(provider,request,head,from);return send(request,tx);
 }
-export async function tokenSepoliaStep(provider,template,terms,step){
+export async function tokenSepoliaStep(provider,template,terms,step,options={}){
  if(!['0','1','2'].includes(terms.kind)||!['approve','fund','revoke'].includes(step)||(step==='revoke'&&terms.kind!=='2'))throw Error('Invalid token action.');
  const from=addr(terms.refundee),token=addr(terms.token),{request,head}=await context(provider,from),contract=addr(terms.contract);
  if(step==='revoke'){
@@ -49,14 +50,16 @@ export async function tokenSepoliaStep(provider,template,terms,step){
  const data=step==='fund'?'0xb60d4288':terms.kind==='2'?'0xa22cb465'+wordAddress(contract)+wordNumber(step==='revoke'?'0':'1'):'0x095ea7b3'+wordAddress(contract)+wordNumber(terms.kind==='0'?terms.amount:terms.tokenId);
  const tx={from,to:step==='fund'?contract:token,data,value:'0x0'},sim=await request('eth_call',[tx,head.number]);
  if(typeof sim!=='string'||!/^0x(?:[0-9a-f]{2})*$/i.test(sim)||(step==='approve'&&terms.kind==='0'&&sim!=='0x'&&(!/^0x[0-9a-f]{64}$/i.test(sim)||BigInt(sim)!==1n)))throw Error('Token action simulation failed.');
+ if(options.verify!==undefined){if(typeof options.verify!=='function')throw Error('The swap safety check is unavailable.');await options.verify({headTimestamp:Number(BigInt(head.timestamp))});}
  await beforeSend(provider,request,head,from);return {...await send(request,tx),step};
 }
-export async function refundSepoliaEscrow(provider,template,terms){
+export async function refundSepoliaEscrow(provider,template,terms,options={}){
  if(!['eth','0','1','2'].includes(terms.kind))throw Error('Invalid escrow type.');
  const from=addr(terms.refundee),{request,head}=await context(provider,from);
  if(BigInt(head.timestamp)<BigInt(terms.expiry))throw Error('The refund deadline has not passed.');
  const contract=await contractState(request,head,terms,template,{funded:true}),tx={from,to:contract,data:'0x590e1ae3',value:'0x0'};
  const simulation=await request('eth_call',[tx,head.number]);if(typeof simulation!=='string'||!/^0x(?:[0-9a-f]{2})*$/i.test(simulation))throw Error('Refund simulation failed.');
+ if(options.verify!==undefined){if(typeof options.verify!=='function')throw Error('The swap safety check is unavailable.');await options.verify({headTimestamp:Number(BigInt(head.timestamp))});}
  await beforeSend(provider,request,head,from);return {...await send(request,tx),step:'refund'};
 }
 /** Claim a Sepolia escrow with the preimage from an unlocked encrypted backup.

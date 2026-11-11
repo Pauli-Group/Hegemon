@@ -76,10 +76,11 @@ export async function verifiedWalletState(api, read, {role} = {}) {
 }
 
 /** Run one Cardano action end to end. Returns {state, txid, fee}. */
-export async function cardanoWalletAction({op, terms, preimage, api, read, verifyEscrow, verifyBeforeSubmit, journal, confirm, budget, cutoffSeconds, nowSeconds = () => Math.floor(Date.now() / 1000), verify = ed25519.verify}) {
+export async function cardanoWalletAction({op, terms, preimage, api, read, verifyEscrow, verifyBeforeSign, verifyBeforeSubmit, journal, confirm, budget, cutoffSeconds, nowSeconds = () => Math.floor(Date.now() / 1000), verify = ed25519.verify}) {
   if (!['fund', 'claim', 'refund'].includes(op)) throw new WalletError('Unknown Cardano operation.');
   if (typeof confirm !== 'function' || !journal?.begin || !journal.finish || !journal.uncertain || !journal.remove) throw new WalletError('Confirmation and the action journal are required before a wallet request.');
   if (verifyBeforeSubmit !== undefined && typeof verifyBeforeSubmit !== 'function') throw new WalletError('The swap safety check is unavailable.', 'swap-check');
+  if (verifyBeforeSign !== undefined && typeof verifyBeforeSign !== 'function') throw new WalletError('The swap safety check is unavailable.', 'swap-check');
   const t = parseTerms(terms), role = op === 'claim' ? t.claimant : op === 'refund' ? t.refundee : t.refundee;
   const params = parseParams(await read.params());
   let escrow;
@@ -114,6 +115,11 @@ export async function cardanoWalletAction({op, terms, preimage, api, read, verif
     const fresh = await read.params();
     if (!Number.isSafeInteger(fresh.slot) || fresh.slot < 0 || fresh.slot + 5 < nowSlot) throw new WalletError('Cardano chain view went backwards; try again.', 'stale-head');
     if (op === 'claim' && fresh.slot + params.claimMarginSlots >= expirySlot(t, params.systemStart)) throw new WalletError('Too close to the deadline to claim safely.', 'claim-cutoff');
+    claimOk();
+    if (verifyBeforeSign) {
+      try { await verifyBeforeSign({op, slot: fresh.slot}); }
+      catch (error) { throw new WalletError(error instanceof Error ? error.message : 'The swap safety check failed.', 'swap-check'); }
+    }
     claimOk();
   } catch (error) {
     await journal.remove(id);

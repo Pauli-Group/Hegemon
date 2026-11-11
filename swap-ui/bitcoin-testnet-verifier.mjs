@@ -30,7 +30,9 @@ export async function expectedBitcoinScript(terms){
  * needs the escrow confirmed and unspent and is due once the refund height passes. */
 export const BITCOIN_FLOOR_CONFIRMATIONS=2,BITCOIN_FLOOR_BLOCKS_TO_REFUND=6;
 export async function verifyBitcoinTestnetEscrow(terms,read,limits={}){
-  const needConfirmations=Math.max(BITCOIN_FLOOR_CONFIRMATIONS,limits.confirmations??0),needBlocks=Math.max(BITCOIN_FLOOR_BLOCKS_TO_REFUND,limits.minBlocksToExpiry??0);
+  const floor=limits.minBlocksFloor??BITCOIN_FLOOR_BLOCKS_TO_REFUND;
+  if(!Number.isSafeInteger(floor)||floor<0)throw Error('Invalid Bitcoin refund-distance floor.');
+  const needConfirmations=Math.max(BITCOIN_FLOOR_CONFIRMATIONS,limits.confirmations??0),needBlocks=Math.max(floor,limits.minBlocksToExpiry??0);
   if(!terms||typeof terms.txid!=='string'||!/^[0-9a-f]{64}$/.test(terms.txid)||!Number.isSafeInteger(terms.vout)||terms.vout<0||terms.vout>99999||!Number.isSafeInteger(terms.amount_sats)||terms.amount_sats<546||terms.amount_sats>2100000000000000)throw Error('Invalid Bitcoin escrow terms.');
   if(typeof read!=='function')throw Error('Bitcoin provider unavailable.');
   const expected=await expectedBitcoinScript(terms),snapshot=await read(terms.txid,terms.vout);

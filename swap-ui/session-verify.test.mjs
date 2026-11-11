@@ -12,6 +12,8 @@ import {toHex} from './cbor.mjs';
 import {SEPOLIA_GENESIS} from './sepolia-verifier.mjs';
 import {expectedEtherRuntime,expectedTokenRuntime} from './ethereum-escrow.mjs';
 import {sessionAssetTerms} from './session-assets.mjs';
+import {observeSessionLeg} from './session-observation.mjs';
+import {checkSessionRefund} from './session-refund.mjs';
 
 const config=JSON.parse(readFileSync(new URL('./chain-timing.json',import.meta.url),'utf8'));
 const ether=JSON.parse(readFileSync(new URL('./ether-escrow-template.json',import.meta.url),'utf8'));
@@ -40,12 +42,12 @@ async function fixture({certLifetime=7*86400,tokenAssets=false,reverse=false}={}
  const ethSide=reverse?'long':'short',cardSide=reverse?'short':'long';
  const fields=sessionAssetTerms(localTerms,ethSide,{contract}).operationTerms;
  const slot=now-1666656000,cardanoFields=sessionAssetTerms(localTerms,cardSide).operationTerms;
- const state={value:cardanoFields.lovelace,receiptStatus:'0x1',from:reverse?ownerEth.address:takerEth.address,ethAvailable:true};
+ const state={value:cardanoFields.lovelace,receiptStatus:'0x1',from:reverse?ownerEth.address:takerEth.address,ethAvailable:true,elapsed:0};
  const latest={number:'0x64',hash:'0x'+'aa'.repeat(32),timestamp:'0x'+now.toString(16)},confirmed={number:'0x63',hash:'0x'+'bb'.repeat(32),timestamp:'0x'+(now-12).toString(16)};
  const provider={async request({method,params=[]}){
   if(!state.ethAvailable)throw Error('Ethereum unavailable');
   if(method==='eth_chainId')return '0xaa36a7';
-  if(method==='eth_getBlockByNumber')return params[0]==='0x0'?{hash:SEPOLIA_GENESIS}:params[0]==='latest'?latest:confirmed;
+  if(method==='eth_getBlockByNumber')return params[0]==='0x0'?{hash:SEPOLIA_GENESIS}:params[0]==='latest'?{...latest,timestamp:'0x'+(now+state.elapsed).toString(16)}:{...confirmed,timestamp:'0x'+(now+state.elapsed-12).toString(16)};
   if(method==='eth_blockNumber')return '0x64';
   if(method==='eth_getTransactionReceipt')return {transactionHash:'0x'+ethTx,status:state.receiptStatus,contractAddress:contract};
   if(method==='eth_getTransactionByHash')return {hash:'0x'+ethTx,to:null,from:state.from};
@@ -54,7 +56,7 @@ async function fixture({certLifetime=7*86400,tokenAssets=false,reverse=false}={}
   if(method==='eth_getBalance')return '0x'+BigInt(ethAsset.amount).toString(16);
   throw Error('Unexpected request: '+method);
  }};
- const cardano={params:async()=>({network:'preview',magic:2,system_start:1666656000,slot}),escrow:async()=>({network:'preview',magic:2,system_start:1666656000,slot,confirmations:10,output:{tx_hash:cardanoTx,tx_index:0,address:PREVIEW_HTLC_ADDRESS,value:state.value,asset_list:tokenAssets?[{policy_id:'88'.repeat(28),asset_name:'ab',quantity:'17'}]:[],is_spent:false,inline_datum:{bytes:toHex(datumBytes(cardanoFields)),value:{constructor:0,fields:[{bytes:hashlock},{bytes:cardanoFields.claimant},{bytes:cardanoFields.refundee},{int:Number(cardanoFields.expiry_ms)}]}}}})};
+ const cardano={params:async()=>({network:'preview',magic:2,system_start:1666656000,slot:slot+state.elapsed}),escrow:async()=>({network:'preview',magic:2,system_start:1666656000,slot:slot+state.elapsed,confirmations:10,output:{tx_hash:cardanoTx,tx_index:0,address:PREVIEW_HTLC_ADDRESS,value:state.value,asset_list:tokenAssets?[{policy_id:'88'.repeat(28),asset_name:'ab',quantity:'17'}]:[],is_spent:false,inline_datum:{bytes:toHex(datumBytes(cardanoFields)),value:{constructor:0,fields:[{bytes:hashlock},{bytes:cardanoFields.claimant},{bytes:cardanoFields.refundee},{int:Number(cardanoFields.expiry_ms)}]}}}})};
  const cardRef={chain:'cardano',txid:cardanoTx,vout:0},ethRef={chain:'ethereum',txid:ethTx};
  return {state,args:{terms:localTerms,offer:localOffer,expectedOfferDigest:offerDigest,channelDigest,ownerBlob,takerBlob,session,reservation,sessionExpires,role:'initiator',references:reverse?{long:ethRef,short:cardRef}:{long:cardRef,short:ethRef},purpose:'claim_short',readers:{ethereum:{provider},cardano},config,now,nowClock:()=>now,templates:{ether,token:tokenTemplate}}};
 }
@@ -99,4 +101,34 @@ test('funding is refused if participant proofs expire before the refund recovery
  const {args}=await fixture({certLifetime:3600});
  await assert.rejects(verifySessionSnapshot({...args,purpose:'fund_first',references:{}}),/expire too soon/);
  assert.equal((await verifySessionSnapshot({...args,purpose:'claim_short'})).policy.ok,true,'a valid claim must not be blocked only because proof lifetime is short');
+});
+test('the responder can claim a verified long leg after the short deadline, but not with stale evidence',async()=>{
+ for(const reverse of [false,true]){
+  const {args,state}=await fixture({reverse});state.elapsed=43210;
+  const at=now+state.elapsed,claim={...args,role:'responder',purpose:'claim_long',now:at,nowClock:()=>at};
+  assert.ok((await verifySessionSnapshot(claim)).escrows.long);
+  await assert.rejects(verifySessionSnapshot({...claim,role:'initiator'}),/other participant/);
+  await assert.rejects(verifySessionSnapshot({...claim,nowClock:()=>at+config.policy.maxObservationAgeSeconds+1}),/not fresh enough/);
+  state.elapsed=86000;const late=now+state.elapsed;
+  assert.ok((await verifySessionSnapshot({...claim,now:late,nowClock:()=>late})).escrows.long,'a responder can use the remaining action window after the short deadline');
+ }
+});
+test('session observations use the saved escrow and reject a false claimed secret',async()=>{
+ const {args}=await fixture();
+ const snapshot={terms:args.terms,escrows:args.references},readers={...args.readers,ethereum:{...args.readers.ethereum,events:async address=>({chain_id:11155111,contract:address,deployed:true,spent:false,events:[]})},cardano:{...args.readers.cardano,spend:async outref=>({network:'preview',outref,spent:false})}};
+ assert.equal((await observeSessionLeg({snapshot,side:'long',readers,config})).state,'unspent');
+ assert.equal((await observeSessionLeg({snapshot,side:'short',readers,config})).state,'unspent');
+ readers.ethereum.events=async address=>({chain_id:11155111,contract:address,deployed:true,spent:true,events:[{kind:'claimed',data:'0x'+'11'.repeat(32),confirmations:10}]});
+ await assert.rejects(observeSessionLeg({snapshot,side:'short',readers,config}),/does not hash to the hashlock/);
+ await assert.rejects(observeSessionLeg({snapshot:{...snapshot,escrows:{...snapshot.escrows,short:snapshot.escrows.long}},side:'short',readers,config}),/wrong chain/);
+});
+test('a refund checks the saved chain independently of the relay and rejects early or altered escrows',async()=>{
+ for(const reverse of [false,true]){
+  const {args,state}=await fixture({reverse}),snapshot={terms:args.terms,escrows:args.references};
+  await assert.rejects(checkSessionRefund({snapshot,role:'owner',readers:args.readers,config}),/deadline has not passed/);
+  state.elapsed=86401;const result=await checkSessionRefund({snapshot,role:'owner',readers:args.readers,config});
+  assert.equal(result.side,'long');assert.equal(result.chain,reverse?'ethereum':'cardano');
+  if(!reverse){state.value='1';await assert.rejects(checkSessionRefund({snapshot,role:'owner',readers:args.readers,config}),/value does not match/);}
+  else{state.from=takerEth.address;await assert.rejects(checkSessionRefund({snapshot,role:'owner',readers:args.readers,config}),/agreed funder/);}
+ }
 });

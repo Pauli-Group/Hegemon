@@ -5,14 +5,22 @@ import {buildParticipant,participantText,serializeParticipant,verifyParticipant}
 import {channelFingerprint} from './session-channel.mjs';
 import {verifyProof} from './identity-proofs.mjs';
 import {validateSessionSnapshot} from './session-recovery.mjs';
+import {canonical} from './identity.mjs';
+import {toHex} from './cbor.mjs';
+
+export async function participantCode(blob){
+ let item;try{item=JSON.parse(blob);}catch{throw Error('Invalid participant statement.');}
+ if(!item||!item.statement)throw Error('Invalid participant statement.');
+ return toHex(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode('hegemon.swap.participant-code.v1\n'+canonical(item.statement))))).slice(0,16);
+}
 
 export async function participantDraft({session,role,snapshot,publicKey,now}){
  await validateSessionSnapshot(snapshot,session);
- if(snapshot.version!==2||!['owner','taker'].includes(role)||!Number.isSafeInteger(now)||typeof publicKey!=='string'||!/^04[0-9a-f]{128}$/.test(publicKey))throw Error('Invalid session participant request.');
+ if(![2,3].includes(snapshot.version)||!['owner','taker'].includes(role)||!Number.isSafeInteger(now)||typeof publicKey!=='string'||!/^04[0-9a-f]{128}$/.test(publicKey))throw Error('Invalid session participant request.');
  const existing=role==='owner'?snapshot.ownerBlob:snapshot.takerBlob;
  if(existing!==null)throw Error('This participant statement is already saved.');
  const assets={give:snapshot.offer.give,receive:snapshot.offer.receive};
- if(!['cardano','ethereum'].includes(assets.give.chain)||!['cardano','ethereum'].includes(assets.receive.chain))throw Error('Guided sessions currently support Cardano and Ethereum only.');
+ if(!['bitcoin','cardano','ethereum'].includes(assets.give.chain)||!['bitcoin','cardano','ethereum'].includes(assets.receive.chain))throw Error('A verified wallet proof is not available for this chain yet.');
  return {session,role,snapshot,publicKey,now,assets,channelDigest:await channelFingerprint(session,snapshot.channelKey)};
 }
 

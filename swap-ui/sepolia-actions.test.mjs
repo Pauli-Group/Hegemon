@@ -28,4 +28,10 @@ test('token funding and native refund check exact escrow and deadline',async()=>
  const bad=wallet({code:'0x'});await assert.rejects(tokenSepoliaStep(bad,tokenTemplate,terms,'fund'),/bytecode/);assert.equal(bad.sends.length,0);
  const ethCode=expectedEtherRuntime(ethTemplate,base),early=wallet({code:ethCode,timestamp:100});await assert.rejects(refundSepoliaEscrow(early,ethTemplate,base),/deadline/);assert.equal(early.sends.length,0);
  const mature=wallet({code:ethCode,timestamp:5000});await refundSepoliaEscrow(mature,ethTemplate,base);assert.equal(mature.sends[0].data,'0x590e1ae3');
+ const blocked=wallet({code:ethCode,timestamp:5000});await assert.rejects(refundSepoliaEscrow(blocked,ethTemplate,base,{verify:async()=>{throw Error('swap state changed');}}),/swap state changed/);assert.equal(blocked.sends.length,0);
+});
+test('a failed swap-level check blocks deployment and token funding before the wallet request',async()=>{
+ const deploy=wallet();await assert.rejects(deploySepoliaEscrow(deploy,ethTemplate,base,{verify:async()=>{throw Error('other leg changed');}}),/other leg changed/);assert.equal(deploy.sends.length,0);
+ const terms={...base,kind:'0',token,tokenId:'0'},fund=wallet({code:expectedTokenRuntime(tokenTemplate,terms)});
+ await assert.rejects(tokenSepoliaStep(fund,tokenTemplate,terms,'fund',{verify:async()=>{throw Error('policy changed');}}),/policy changed/);assert.equal(fund.sends.length,0);
 });

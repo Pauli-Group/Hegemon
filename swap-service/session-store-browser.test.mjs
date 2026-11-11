@@ -63,7 +63,8 @@ test('session state survives a reload, serializes changes and requires an up-to-
    const give={chain:'cardano',kind:'ada',id:'',amount:'5000000'},receive={chain:'ethereum',kind:'eth',id:'',amount:'100000000000000000'};
    const offer={id,visibility:'private',expires:1800003600,ownerPublicKey:'04'+'aa'.repeat(64),give,receive},secretEnvelope=await createRecovery(phrase);
    const terms={version:2,hashlock:secretEnvelope.hashlock,legs:{long:{asset:give,network:'preview',refundee:'11'.repeat(28),claimant:'22'.repeat(28),expiry:1800010000},short:{asset:receive,network:'sepolia',refundee:'0x'+'33'.repeat(20),claimant:'0x'+'44'.repeat(20),expiry:1800005000}}};
-   const snapshot={version:2,offer,offerDigest:await sessionOfferDigest(offer),reservation,credential:'33'.repeat(32),channelKey:'44'.repeat(32),sessionExpires:1800100000,terms,escrows:{long:null,short:null},secretEnvelope,ownerBlob:'owner',takerBlob:'taker',transport:{next:1,previous:null}};
+   const blank=()=>({fund:[],claim:[],refund:[]});
+   const snapshot={version:3,offer,offerDigest:await sessionOfferDigest(offer),reservation,credential:'33'.repeat(32),channelKey:'44'.repeat(32),sessionExpires:1800100000,terms,escrows:{long:null,short:null},secretEnvelope,ownerBlob:'owner',takerBlob:'taker',transport:{next:1,previous:null},actions:{long:blank(),short:blank()}};
    const recovery=await createSessionRecovery({session,role,snapshot,passphrase:phrase}),created=await addSession(recovery.envelope,phrase);
    const outbox={next:1,previous:null,pending:false};
    let noBackup=false;try{await sessionFundingPrerequisites({session,role,revision:created.revision,outbox,actions:[]});}catch{noBackup=true;}

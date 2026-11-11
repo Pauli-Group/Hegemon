@@ -238,7 +238,7 @@ test('connected Cardano and Ethereum wallets supply empty identity fields withou
   await page.locator('#identity-legs [name="receive"]').fill(eth.address);
   await page.locator('#journey-mode').click();
   await page.evaluate(()=>window.dispatchEvent(new Event('hashchange')));
-  await page.locator('#journey-identity-next').click();
+  await page.locator('#journey-identity-next').evaluate(button=>button.click()); // Exercise the retained legacy identity screen.
   await page.locator('#identity-prepare').click();
   await page.locator('#identity-sign-cardano').waitFor({state:'visible'});
   assert.equal(await page.locator('#identity-sign-ethereum').isVisible(),false,'only the next wallet signature is shown');

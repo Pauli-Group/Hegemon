@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {sessionAssetTerms} from './session-assets.mjs';
+import {bitcoinMessageWallet} from './test-wallets.mjs';
+import {observeSessionLeg} from './session-observation.mjs';
+import {TESTNET4_GENESIS} from './bitcoin-testnet-verifier.mjs';
+import {readFileSync} from 'node:fs';
 const hashlock='aa'.repeat(32),adaOwner='11'.repeat(28),adaTaker='22'.repeat(28),ethOwner='0x'+'33'.repeat(20),ethTaker='0x'+'44'.repeat(20),txid='55'.repeat(32);
 const base={version:2,hashlock,legs:{long:{asset:{chain:'cardano',kind:'ada',id:'',amount:'5000000'},network:'preview',refundee:adaOwner,claimant:adaTaker,expiry:1800010000},short:{asset:{chain:'ethereum',kind:'eth',id:'',amount:'100000000000000000'},network:'sepolia',refundee:ethTaker,claimant:ethOwner,expiry:1800005000}}};
 test('converts ADA and ETH terms to wallet fields without rounding',()=>{
@@ -22,4 +26,20 @@ test('refuses malformed or mismatched terms and references',()=>{
  assert.throws(()=>sessionAssetTerms(base,'long',{reference:{chain:'ethereum',txid}}),/different chain/);
  assert.throws(()=>sessionAssetTerms(base,'short',{contract:'0x'+'00'.repeat(20)}),/Invalid escrow/);
  assert.throws(()=>sessionAssetTerms({...base,hashlock:'bad'},'long'),/Invalid session terms/);
+});
+test('Bitcoin amounts, refund heights and funding outpoints are translated exactly',()=>{
+ const owner=bitcoinMessageWallet('01'.repeat(32)).publicKey,taker=bitcoinMessageWallet('02'.repeat(32)).publicKey;
+ const btc={...base,legs:{...base.legs,long:{asset:{chain:'bitcoin',kind:'btc',id:'',amount:'2100000000000000'},network:'testnet4',refundee:owner,claimant:taker,expiry:100_000}}};
+ assert.deepEqual(sessionAssetTerms(btc,'long',{reference:{chain:'bitcoin',txid,vout:7}}),{chain:'bitcoin',operationTerms:{amount_sats:'2100000000000000',hashlock,claimant_key:taker,refund_key:owner,refund_height:'100000',txid,vout:'7'}});
+ for(const amount of ['545','2100000000000001'])assert.throws(()=>sessionAssetTerms({...btc,legs:{...btc.legs,long:{...btc.legs.long,asset:{...btc.legs.long.asset,amount}}}},'long'),/Invalid Bitcoin/);
+ assert.throws(()=>sessionAssetTerms({...btc,legs:{...btc.legs,long:{...btc.legs.long,expiry:500000000}}},'long'),/Invalid Bitcoin/);
+});
+test('a Bitcoin session observes the exact saved testnet outpoint',async()=>{
+ const owner=bitcoinMessageWallet('01'.repeat(32)).publicKey,taker=bitcoinMessageWallet('02'.repeat(32)).publicKey;
+ const terms={...base,legs:{...base.legs,long:{asset:{chain:'bitcoin',kind:'btc',id:'',amount:'5000'},network:'testnet4',refundee:owner,claimant:taker,expiry:100_000}}};
+ const snapshot={terms,escrows:{long:{chain:'bitcoin',txid,vout:1},short:null}},config=JSON.parse(readFileSync(new URL('./chain-timing.json',import.meta.url),'utf8'));
+ const readers={bitcoin:{spend:async(id,vout)=>({genesis:TESTNET4_GENESIS,txid:id,vout,tip:99_000,spent:false})}};
+ assert.equal((await observeSessionLeg({snapshot,side:'long',readers,config})).state,'unspent');
+ readers.bitcoin.spend=async(id,vout)=>({genesis:'00'.repeat(32),txid:id,vout,tip:99_000,spent:false});
+ await assert.rejects(observeSessionLeg({snapshot,side:'long',readers,config}),/different output or network/);
 });

@@ -69,3 +69,22 @@ test('version-2 backups pin a monotonic sent-packet high-water mark',async()=>{
  await assert.rejects(updateSessionRecovery(saved,pass,{...sent,version:1}),/Invalid swap recovery data/);
  await assert.rejects(validateSessionSnapshot({...v2,transport:{next:1,previous:'aa'.repeat(32)}},session),/Invalid saved packet history/);
 });
+
+test('version-3 wallet attempts cannot be forgotten, replaced or retried while uncertain',async()=>{
+ const {session,snapshot}=await setup(),blank=()=>({fund:[],claim:[],refund:[]});
+ const secret=await createRecovery(pass),terms={version:2,hashlock:secret.hashlock,legs:{long:{asset:snapshot.offer.give,network:'testnet4',refundee:ownerBtc.publicKey,claimant:takerBtc.publicKey,expiry:150337},short:{asset:snapshot.offer.receive,network:'sepolia',refundee:takerEth.address,claimant:ownerEth.address,expiry:1800013951}}};
+ const v3={...snapshot,version:3,terms,secretEnvelope:secret,transport:{next:1,previous:null},actions:{long:blank(),short:blank()}};
+ const created=await createSessionRecovery({session,role:'owner',snapshot:v3,passphrase:pass});
+ const intent={id:'11'.repeat(16),state:'intent',txid:null},armed=structuredClone(v3);armed.actions.long.fund.push(intent);
+ const armedBackup=await updateSessionRecovery(created.envelope,pass,armed);
+ const unknown=structuredClone(armed);unknown.actions.long.fund[0].state='uncertain';
+ const unknownBackup=await updateSessionRecovery(armedBackup,pass,unknown);
+ const retry=structuredClone(unknown);retry.actions.long.fund.push({id:'22'.repeat(16),state:'intent',txid:null});
+ await assert.rejects(updateSessionRecovery(unknownBackup,pass,retry),/wallet action/);
+ await assert.rejects(updateSessionRecovery(unknownBackup,pass,v3),/wallet action/);
+ const declined=structuredClone(armed);declined.actions.long.fund[0].state='declined';
+ const declinedBackup=await updateSessionRecovery(armedBackup,pass,declined);
+ declined.actions.long.fund.push({id:'22'.repeat(16),state:'intent',txid:null});
+ const retryBackup=await updateSessionRecovery(declinedBackup,pass,declined);
+ assert.equal((await openSessionRecovery(retryBackup,pass)).snapshot.actions.long.fund.length,2);
+});

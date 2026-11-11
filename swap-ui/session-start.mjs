@@ -91,7 +91,8 @@ export async function sessionStarter({role,offer,reservation,credential,pinnedOf
    item=await channel(item);if(!item)return {stage:'waiting-for-other',session};
    if(passphrase===undefined)return {stage:'backup-required',session};
    const state=await outbox.inspect();if(state.pending||state.previous!==null||state.next!==(role==='owner'?1:2))fail('The session message order changed.');
-   const snapshot={version:2,offer:fixed,offerDigest,reservation,credential,channelKey:item.channelKey,sessionExpires:info.expires,terms:null,escrows:{long:null,short:null},secretEnvelope:null,ownerBlob:null,takerBlob:null,transport:{next:state.next,previous:null}};
+   const blank=()=>({fund:[],claim:[],refund:[]});
+   const snapshot={version:3,offer:fixed,offerDigest,reservation,credential,channelKey:item.channelKey,sessionExpires:info.expires,terms:null,escrows:{long:null,short:null},secretEnvelope:null,ownerBlob:null,takerBlob:null,transport:{next:state.next,previous:null},actions:{long:blank(),short:blank()}};
    const recovery=await createSessionRecovery({session,role,snapshot,passphrase});
    const record=await addSession(recovery.envelope,passphrase);
    storage.removeItem(key);

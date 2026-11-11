@@ -150,6 +150,11 @@ test('the claim cutoff and a stale chain head refuse before the wallet is asked'
 });
 
 test('a delayed approval, changed escrow or rejected final swap check never submits a Cardano action', async () => {
+  const beforeSign = world({owner: bob});
+  await refused(beforeSign.call('claim', {verifyBeforeSign: async () => { throw Error('The other leg changed.'); }}), 'swap-check');
+  assert.equal(beforeSign.events.includes('sign'), false, 'the claim secret must not reach the wallet after a failed swap check');
+  assert.equal(beforeSign.journal.records[0].state, 'removed');
+  assert.equal(beforeSign.submitted.length, 0);
   let clock = now;
   const delayed = world({owner: bob}), sign = delayed.wallet.signTx;
   delayed.wallet.signTx = async (...args) => { const witness = await sign(...args); clock = now + 20; return witness; };

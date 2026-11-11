@@ -8,6 +8,10 @@ export function sessionAssetTerms(terms,side,{reference=null,contract=''}={}){
  if(!['long','short'].includes(side))throw Error('Invalid swap leg.');
  const leg=terms.legs[side],asset=leg.asset;
  if(reference!==null){validateSessionReference(reference);if(reference.chain!==asset.chain)throw Error('The escrow reference names a different chain.');}
+ if(asset.chain==='bitcoin'){
+  if(asset.kind!=='btc'||BigInt(asset.amount)<546n||BigInt(asset.amount)>2100000000000000n||leg.expiry>=500000000)throw Error('Invalid Bitcoin testnet amount or refund height.');
+  return {chain:'bitcoin',operationTerms:{amount_sats:asset.amount,hashlock:terms.hashlock,claimant_key:leg.claimant,refund_key:leg.refundee,refund_height:String(leg.expiry),...(reference?{txid:reference.txid,vout:String(reference.vout)}:{})}};
+ }
  if(asset.chain==='cardano'){
   const expiryMs=leg.expiry*1000;
   if(!Number.isSafeInteger(expiryMs))throw Error('Cardano deadline is too large.');

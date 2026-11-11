@@ -3,7 +3,7 @@
  * non-extractable CryptoKey; the snapshot contains a channel credential and
  * an encrypted preimage envelope, so this database is private browser data. */
 import {canonical} from './identity.mjs';
-import {openSessionRecovery,validateSessionSnapshot,validateTransportAdvance} from './session-recovery.mjs';
+import {openSessionRecovery,validateSessionSnapshot,validateTransportAdvance,validateActionAdvance} from './session-recovery.mjs';
 import {fromHex,toHex} from './cbor.mjs';
 
 const DB='hegemon.swap.sessions.v1',STORE='sessions',HEX=/^[0-9a-f]{64}$/;
@@ -45,6 +45,7 @@ async function validateRecord(record,session,role){
 function same(a,b){return canonical(a)===canonical(b);}
 function monotonic(previous,next){
  validateTransportAdvance(previous,next);
+ validateActionAdvance(previous,next);
  for(const name of ['offer','offerDigest','reservation','credential','channelKey','sessionExpires'])if(!same(previous[name],next[name]))fail('The session identity cannot be changed.');
  for(const name of ['terms','ownerBlob','takerBlob','secretEnvelope'])if(previous[name]!==null&&!same(previous[name],next[name]))fail('Saved swap terms, identities and secret backups cannot be replaced.');
  for(const side of ['long','short'])if(previous.escrows[side]!==null&&!same(previous.escrows[side],next.escrows[side]))fail('A saved escrow reference cannot be replaced.');
@@ -60,6 +61,10 @@ export async function addSession(envelope,passphrase){
 export async function getSession(session,role){
  const id=identity(session,role);
  return locked(id,async db=>{const record=await request(db,'readonly',store=>store.get(id));return record?validateRecord(record,session,role):null;});
+}
+export async function sessionBackupCurrent(record){
+ if(!record||!record.snapshot||typeof record.backupDigest!=='string')return false;
+ return record.backupDigest===await digest(record.snapshot);
 }
 /** Require an exact revision and keep authenticated session data immutable.
  * Every update invalidates the backup acknowledgement until it is refreshed. */
@@ -103,16 +108,21 @@ export async function acknowledgeSessionBackup(session,role,expectedRevision){
  * action lock, revalidate the signed proposal and live chains, and write the
  * action journal before asking a wallet. Never use an empty replacement for an
  * unavailable journal. */
-export async function sessionFundingPrerequisites({session,role,revision,outbox,actions}){
+export async function sessionFundingPrerequisites({session,role,revision,outbox,actions,attemptId=null}){
  if(!Array.isArray(actions)||!outbox||!Number.isSafeInteger(outbox.next)||typeof outbox.pending!=='boolean')fail('The local action journal and outbox are required.');
  const record=await getSession(session,role);
  if(!record||record.revision!==revision)fail('This swap changed in another tab. Refresh before continuing.');
  const snapshot=record.snapshot;
- if(snapshot.version!==2||!record.backupAcknowledged||record.backupDigest!==await digest(snapshot))fail('Save and acknowledge the current swap recovery backup before funding.');
+ if(snapshot.version!==3||!record.backupAcknowledged||record.backupDigest!==await digest(snapshot))fail('Save and acknowledge the current swap recovery backup before funding.');
  if(outbox.pending||outbox.next!==snapshot.transport.next||outbox.previous!==snapshot.transport.previous)fail('Synchronize and back up the signed message history before funding.');
  if(!snapshot.terms||!snapshot.ownerBlob||!snapshot.takerBlob)fail('Both wallet-signed participants and agreed terms are required.');
  if(role==='owner'&&(!snapshot.secretEnvelope||snapshot.escrows.long!==null))fail('A saved secret backup and an unfunded first leg are required.');
  if(role==='taker'&&(!snapshot.escrows.long||snapshot.escrows.short!==null))fail('A first escrow and an unfunded second leg are required.');
+ const own=role==='owner'?'long':'short';
+ for(const side of ['long','short'])for(const operation of ['fund','claim','refund'])for(const attempt of snapshot.actions[side][operation]){
+  if(attempt.state==='uncertain'||attempt.state==='intent'&&attempt.id!==attemptId)fail('A wallet action needs review before funding.');
+  if(side===own&&operation==='fund'&&attempt.state==='submitted')fail('A funding action was already submitted. Check its outcome before retrying.');
+ }
  const ownChain=snapshot.terms.legs[role==='owner'?'long':'short'].asset.chain,chains=new Set([snapshot.terms.legs.long.asset.chain,snapshot.terms.legs.short.asset.chain]),hash=snapshot.terms.hashlock;
  for(const action of actions){
   if(!action||!chains.has(action.chain))continue;

@@ -67,5 +67,6 @@ export function sessionOutbox({session,role,send,storage=globalThis.localStorage
    return restored;
   });},
   inspect(){return lock(()=>{const state=read();return {next:state.next,previous:state.previous,pending:!!state.pending};});},
+  exists(){return lock(()=>storage.getItem(key)!==null);},
  });
 }

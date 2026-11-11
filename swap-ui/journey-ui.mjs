@@ -18,6 +18,7 @@ const CONTEXT = {
   identity: ['IDENTITY', 'Confirm who you are swapping with.', 'Compare identity codes through a separate trusted channel. Hegemon addresses cannot yet be signed here.'],
   chat: ['MESSAGES', 'Agree on the details.', 'Use the encrypted conversation to coordinate. Never send wallet keys or swap secrets in a message.'],
   guided: ['CONTINUE A SWAP', 'Review an existing native-asset swap.', 'You will need its agreed terms and the status from the local swap engine. This review does not yet support token or NFT swaps, and it does not advance the engine.'],
+  session: ['SWAP PROGRESS', 'Continue your swap.', 'Follow the next step below. Refresh this page to check for the other person’s progress.'],
   wallets: ['WALLETS', 'Connect a wallet.', 'Choose the wallet you need. Connecting does not approve or sign a transaction.'],
   node: ['HEGEMON NODE', 'Connect your node.', 'Check the Hegemon node on this computer. Offering HGN also needs the wallet-status companion and a terminal unlock. Creating a listing does not lock funds.'],
   checks: ['VERIFY AN ESCROW', 'Which chain would you like to check?', 'A single-chain check does not establish that the other side is funded or that the swap is safe.'],
@@ -56,7 +57,7 @@ export function initJourney({legacyForm, msg, hegemonWallet = null}) {
   try { savedMode = sessionStorage.getItem(modeKey); } catch { /* Storage is optional. */ }
   let mode = ['guided', 'advanced'].includes(savedMode) ? savedMode : hosted ? 'guided' : 'advanced';
   let route = 'home', history = [], step = 0, guidedStep = 'terms', posting = false, stepping = false, completedDraft = false, selected = null, hgnSnapshot = null, hgnActivity = null, hgnWatchEpoch = 0;
-  const savedRoutes = new Set(['offer', 'identity', 'chat']);
+  const savedRoutes = new Set(['offer', 'identity', 'chat', 'session']);
   function saveRoute() {
     if (!selected?.id) return;
     try { if (savedRoutes.has(route)) sessionStorage.setItem('hegemon.swap.route:' + selected.id, route); else sessionStorage.removeItem('hegemon.swap.route:' + selected.id); } catch { /* Navigation still works without storage. */ }
@@ -86,6 +87,9 @@ export function initJourney({legacyForm, msg, hegemonWallet = null}) {
   offerStatus.setAttribute('role', 'status');
   offerStatus.setAttribute('aria-live', 'polite');
   $('journey-context').append(offerStatus);
+  const sessionNext=document.createElement('button');sessionNext.id='journey-session-next';sessionNext.type='button';sessionNext.textContent='Continue the guided swap →';sessionNext.hidden=true;
+  $('journey-offer-next').append(sessionNext);
+  sessionNext.addEventListener('click',()=>navigate('session'));
 
   function renderOfferProgress() {
     offerStatus.hidden = !selected || !['offer', 'identity', 'chat'].includes(route);
@@ -124,6 +128,7 @@ export function initJourney({legacyForm, msg, hegemonWallet = null}) {
     if (routeName === 'identity') return $('identity');
     if (routeName === 'chat') return $('chat');
     if (routeName === 'guided') return $('guided-section');
+    if (routeName === 'session') return $('session-wizard');
     if (routeName === 'wallets') return byTitle('wallet-title');
     if (routeName === 'node') return byTitle('companion-title');
     if (routeName.startsWith('tool:')) return $(routeName.slice(5));
@@ -163,6 +168,7 @@ export function initJourney({legacyForm, msg, hegemonWallet = null}) {
     $('journey-context-actions').replaceChildren();
     const panel = panelFor(route);
     if (route === 'guided' && panel) { panel.hidden = false; panel.dataset.journeyGuidedStep = guidedStep; }
+    if (route === 'session' && panel) panel.hidden = false;
     activate(panel);
     renderOfferProgress();
 
@@ -170,6 +176,9 @@ export function initJourney({legacyForm, msg, hegemonWallet = null}) {
       const next = $('journey-offer-next');
       next.hidden = !selected?.available;
       $('journey-identity-next').textContent = selected?.participant ? 'Next: confirm identities →' : 'Check the maker’s identity →';
+      const sessionAvailable=!!selected?.eligible&&!!selected?.participant;
+      sessionNext.hidden=!sessionAvailable;
+      $('journey-identity-next').hidden=sessionAvailable;
       next.querySelector('p').textContent = selected?.participant
         ? 'Before moving funds, agree on the addresses and confirm the other person’s identity using a separate channel.'
         : 'Check the maker’s identity code through a separate trusted channel before relying on their addresses.';
@@ -201,6 +210,7 @@ export function initJourney({legacyForm, msg, hegemonWallet = null}) {
     route = next;
     saveRoute();
     render();
+    if(route==='session')document.dispatchEvent(new CustomEvent('journey:session-open',{detail:{id:selected?.id}}));
     if (route === 'create') focusHeading('journey-create-title');
     else if (!['home', 'created', 'open'].includes(route)) focusHeading('journey-context-title');
     window.scrollTo({top: 0, behavior: 'instant'});
@@ -557,6 +567,7 @@ export function initJourney({legacyForm, msg, hegemonWallet = null}) {
     route = history.pop() || 'home';
     saveRoute();
     render();
+    if(route==='session')document.dispatchEvent(new CustomEvent('journey:session-open',{detail:{id:selected?.id}}));
     window.scrollTo({top: 0, behavior: 'instant'});
   });
   $('journey-mode').addEventListener('click', () => {

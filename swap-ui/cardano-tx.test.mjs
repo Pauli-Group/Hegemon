@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {blake2b, ed25519, sha256} from './vendor/hash.mjs';
 import * as ct from './cardano-tx.mjs';
-import {decode, encode, fromHex, toHex} from './cbor.mjs';
+import {Tag, decode, encode, fromHex, toHex} from './cbor.mjs';
 
 const here = new URL('.', import.meta.url);
 const script = JSON.parse(fs.readFileSync(new URL('cardano-htlc-script.json', here), 'utf8'));
@@ -67,6 +67,20 @@ test('fund refuses too little ADA, missing tokens, sub-minimum escrow and a wron
   assert.throws(() => ct.buildFund({terms: baseTerms({lovelace: '100000'}), walletUtxos: [utxo(1, 50_000_000)], changeAddress: addrOf(alice), params}), /at least/);
   assert.throws(() => ct.addressInfo(new Uint8Array([0x61, ...new Uint8Array(28)])), /testnet/);
   assert.throws(() => ct.buildFund({terms: baseTerms({expiry_ms: '1700000000500'}), walletUtxos: [utxo(1, 50_000_000)], changeAddress: addrOf(alice), params}), /whole seconds/);
+});
+
+test('escrow minimum includes its inline datum, not just address and value', () => {
+  const terms=baseTerms(),scriptAddress=ct.validateScript().address,datum=ct.datumBytes(terms);
+  const value=(1n<<63n)-1n;
+  const withDatum=new Map([[0,scriptAddress],[1,value],[2,[1,new Tag(24,datum)]]]);
+  const withoutDatum=new Map([[0,scriptAddress],[1,value]]);
+  const expected=(160n+BigInt(encode(withDatum).length))*params.coinsPerUtxoByte;
+  const oldFloor=(160n+BigInt(encode(withoutDatum).length))*params.coinsPerUtxoByte;
+  assert.equal(ct.minimumEscrowLovelace(terms,params),expected);
+  assert.ok(expected>oldFloor,'the inline datum contributes to minimum ADA');
+  assert.throws(()=>ct.buildFund({terms:baseTerms({lovelace:String(oldFloor)}),walletUtxos:[utxo(1,50_000_000)],changeAddress:addrOf(alice),params}),/escrow needs at least/);
+  const built=ct.buildFund({terms:baseTerms({lovelace:String(expected)}),walletUtxos:[utxo(1,50_000_000)],changeAddress:addrOf(alice),params});
+  assert.doesNotThrow(()=>ct.checkFund(built.txBytes,built.expect));
 });
 
 const escrowRef = {txid: 'ee'.repeat(32), index: 0};

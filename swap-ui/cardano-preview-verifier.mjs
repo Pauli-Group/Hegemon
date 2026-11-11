@@ -26,7 +26,9 @@ export function parseCardanoAssets(text){
  * needs the escrow confirmed and unspent but is due after the deadline. */
 export const CARDANO_FLOOR_CONFIRMATIONS=2,CARDANO_FLOOR_REMAINING_SECONDS=600;
 export async function verifyCardanoPreviewEscrow(terms,read,limits={}){
-  const needConfirmations=Math.max(CARDANO_FLOOR_CONFIRMATIONS,limits.confirmations??0),needRemainingMs=1000*Math.max(CARDANO_FLOOR_REMAINING_SECONDS,limits.minClaimWindowSeconds??0);
+  const floor=limits.remainingFloorSeconds??CARDANO_FLOOR_REMAINING_SECONDS;
+  if(!Number.isSafeInteger(floor)||floor<1)throw Error('Invalid Cardano claim window floor.');
+  const needConfirmations=Math.max(CARDANO_FLOOR_CONFIRMATIONS,limits.confirmations??0),needRemainingMs=1000*Math.max(floor,limits.minClaimWindowSeconds??0);
   if(!terms||typeof terms.outref!=='string'||!/^[0-9a-f]{64}#(0|[1-9][0-9]{0,9})$/.test(terms.outref)||Number(terms.outref.split('#')[1])>0xffffffff||typeof terms.hashlock!=='string'||!/^[0-9a-f]{64}$/.test(terms.hashlock)||typeof terms.claimant!=='string'||!/^[0-9a-f]{56}$/.test(terms.claimant)||typeof terms.refundee!=='string'||!/^[0-9a-f]{56}$/.test(terms.refundee)||terms.claimant===terms.refundee||!Number.isSafeInteger(terms.expiry_ms)||terms.expiry_ms<=0||typeof terms.lovelace!=='string'||!/^[1-9][0-9]{0,18}$/.test(terms.lovelace)||BigInt(terms.lovelace)>=(1n<<63n))throw Error('Invalid Cardano escrow terms.');
   const expectedAssets=parseCardanoAssets(terms.assets);if(typeof read!=='function')throw Error('Cardano provider unavailable.');
   const s=await read(terms.outref),row=s?.output,[txid,index]=terms.outref.split('#');

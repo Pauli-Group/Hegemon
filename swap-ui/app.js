@@ -21,6 +21,8 @@ import {initObserver} from './observer-ui.mjs';
 import {initGuided} from './guided-ui.mjs';
 import {initJourney} from './journey-ui.mjs';
 import {assertHegemonGiveSnapshot,formatBaseUnits} from './offer-draft.mjs';
+import {immutableOffer,pinOffer} from './offer-pin.mjs';
+import {initSessionWizard} from './session-wizard.mjs';
 const types=[['ethereum:eth','Ethereum · ETH'],['ethereum:erc20','Ethereum · ERC-20'],['ethereum:erc721','Ethereum · ERC-721'],['ethereum:erc1155','Ethereum · ERC-1155'],['cardano:ada','Cardano · ADA'],['cardano:native','Cardano · native token'],['bitcoin:btc','Bitcoin · BTC'],['hegemon:hgn','Hegemon · HGN']];
 const $=id=>document.getElementById(id);
 let journey;
@@ -124,8 +126,8 @@ $('cardano-preview-form').addEventListener('submit',async event=>{event.preventD
 const verifyForm=$('verify-form');
 function toggleTokenFields(){const native=verifyForm.elements.kind.value==='eth';for(const name of ['token','tokenId']){verifyForm.elements[name].disabled=native;verifyForm.elements[name].required=!native;}}
 verifyForm.elements.kind.addEventListener('change',toggleTokenFields);toggleTokenFields();
-$('connect-ethereum').addEventListener('click',async()=>{
- try{const provider=window.ethereum;if(!provider||typeof provider.request!=='function')throw Error('No Ethereum browser wallet found.');
+async function connectEthereum(){
+  const provider=window.ethereum;if(!provider||typeof provider.request!=='function')throw Error('No Ethereum browser wallet found.');
   const accounts=await provider.request({method:'eth_requestAccounts'}),chain=await provider.request({method:'eth_chainId'});
   if(!Array.isArray(accounts)||!/^0x[0-9a-fA-F]{40}$/.test(accounts[0])||typeof chain!=='string')throw Error('Wallet returned an invalid account or network.');
   if(provider!==observedEthereumProvider && typeof provider.on==='function'){
@@ -134,8 +136,9 @@ $('connect-ethereum').addEventListener('click',async()=>{
   }
   activeEthereumProvider=provider;msg($('wallet-status'),'Ethereum connected: '+accounts[0]+' · chain '+chain+'. No transaction has been requested.');
   void identityUi.autofill().catch(()=>{});
- }catch(e){msg($('wallet-status'),e.message,true);}
-});
+  return provider;
+}
+$('connect-ethereum').addEventListener('click',async()=>{try{await connectEthereum();}catch(e){msg($('wallet-status'),e.message,true);}});
 $('verify-form').addEventListener('submit',async event=>{event.preventDefault();
  try{if(!activeEthereumProvider)throw Error('Connect an Ethereum wallet first.');
   const provider=activeEthereumProvider;
@@ -148,13 +151,14 @@ $('verify-form').addEventListener('submit',async event=>{event.preventDefault();
  }catch(e){msg($('verify-status'),e.message,true);}
 });
 let activeCardanoApi=null;
-$('connect-cardano').addEventListener('click',async()=>{
- try{const id=$('cardano-wallet').value,wallet=window.cardano?.[id];if(!wallet||typeof wallet.enable!=='function')throw Error('Select an available Cardano browser wallet.');
+async function connectCardano(id=$('cardano-wallet').value){
+  const wallet=window.cardano?.[id];if(!wallet||typeof wallet.enable!=='function')throw Error('Select an available Cardano browser wallet.');
   activeCardanoApi=null;const api=await wallet.enable(),network=await api.getNetworkId();if(network!==0&&network!==1)throw Error('Wallet returned an invalid network.');
   if(network===0){activeCardanoApi=api;void identityUi.autofill().catch(()=>{});}
   msg($('wallet-status'),'Cardano connected: '+String(wallet.name||id)+' · '+(network===1?'mainnet':'testnet')+'. No transaction has been requested.');
- }catch(e){msg($('wallet-status'),e.message,true);}
-});
+  return network===0?api:null;
+}
+$('connect-cardano').addEventListener('click',async()=>{try{await connectCardano();}catch(e){msg($('wallet-status'),e.message,true);}});
 let companionToken=null,companionCapabilities=[],companionState='disconnected',companionCheckBusy=false,companionCheckAgain=false;
 function companionIndicator(state,detail){
  companionState=state;$('companion-indicator').dataset.state=state;
@@ -403,14 +407,14 @@ async function loadSelected(){
  const version=++selectionVersion,[id,key]=location.hash.slice(1).split('.');if(!/^[0-9a-f]{64}$/.test(id)){$('selected').hidden=true;$('chat').hidden=true;$('public-pair').hidden=true;$('identity').hidden=true;return;}
  if(key&&/^[0-9a-f]{64}$/.test(key))localStorage.setItem('offer-message-key:'+id,key);
  try{const offer=await api('/offers/'+id);if(version!==selectionVersion||currentOffer()!==id)return;checkOwnerInbox(id,offer);$('selected').hidden=false;$('details').replaceChildren();
-  if(pairContext?.id!==id){pairContext={id,give:structuredClone(offer.give),receive:structuredClone(offer.receive)};pairLegs={give:null,receive:null};publicPairLegs={give:null,receive:null};$('public-pair-result').textContent='';msg($('public-pair-status'),'Capture both escrow terms from the checks above.');$('pair-result').textContent='';msg($('pair-status'),'Capture both escrow terms from the verification forms.');}
+  if(pairContext?.id!==id){pairContext={id,give:structuredClone(offer.give),receive:structuredClone(offer.receive),offer:immutableOffer(offer)};pairLegs={give:null,receive:null};publicPairLegs={give:null,receive:null};$('public-pair-result').textContent='';msg($('public-pair-status'),'Capture both escrow terms from the checks above.');$('pair-result').textContent='';msg($('pair-status'),'Capture both escrow terms from the verification forms.');}
   $('public-pair').hidden=!document.documentElement.hasAttribute('data-hosted-testnet');
   for(const line of ['Maker gives: '+describe(offer.give),'Maker wants: '+describe(offer.receive),'Expires: '+new Date(offer.expires*1000).toLocaleString(),offer.closed?'Closed':'Open']){const p=document.createElement('p');p.textContent=line;$('details').append(p);}
   $('reserve').disabled=offer.closed||!!offer.reservationId||offer.expires*1000<=Date.now();$('close').hidden=!credential(id)||offer.closed;msg($('detail-status'),'');updateChat(id);
-  const owner=!!credential(id),reserved=!!localStorage.getItem('offer-reservation:'+id)&&!!offer.reservationId;
-  document.dispatchEvent(new CustomEvent('journey:offer-selected',{detail:{id,owner,reserved,participant:owner||reserved,available:true,reservationId:offer.reservationId||null,reservationActive:!!offer.reservationId,closed:offer.closed,expired:offer.expires*1000<=Date.now()}}));
+  const owner=!!credential(id),reserved=!!localStorage.getItem('offer-reservation:'+id)&&!!offer.reservationId,savedSession=!!localStorage.getItem('hegemon.swap.session-index:'+id)&&!!participantToken(id),eligible=offer.give.chain!==offer.receive.chain&&[offer.give.chain,offer.receive.chain].every(chain=>['cardano','ethereum'].includes(chain));
+  document.dispatchEvent(new CustomEvent('journey:offer-selected',{detail:{id,owner,reserved,eligible,participant:owner||reserved||savedSession,available:true,reservationId:offer.reservationId||null,reservationActive:!!offer.reservationId,closed:offer.closed,expired:offer.expires*1000<=Date.now()}}));
   if(!participantToken(id))identityUi.render(id,offer,[]).catch(e=>msg($('identity-status'),e.message,true));
- }catch(e){if(version!==selectionVersion||currentOffer()!==id)return;chatRenderVersion++;pairContext=null;pairLegs={give:null,receive:null};publicPairLegs={give:null,receive:null};$('public-pair').hidden=true;$('identity').hidden=true;$('pair-result').textContent='';$('selected').hidden=false;msg($('details'),e.message,true);$('reserve').disabled=true;$('close').hidden=true;$('chat').hidden=true;document.dispatchEvent(new CustomEvent('journey:offer-selected',{detail:{id,owner:false,reserved:false,participant:false,available:false}}));}
+ }catch(e){if(version!==selectionVersion||currentOffer()!==id)return;chatRenderVersion++;pairContext=null;pairLegs={give:null,receive:null};publicPairLegs={give:null,receive:null};$('public-pair').hidden=true;$('identity').hidden=true;$('pair-result').textContent='';$('selected').hidden=false;msg($('details'),e.message,true);$('reserve').disabled=true;$('close').hidden=true;$('chat').hidden=true;const savedSession=!!localStorage.getItem('hegemon.swap.session-index:'+id)&&!!participantToken(id);document.dispatchEvent(new CustomEvent('journey:offer-selected',{detail:{id,owner:!!credential(id),reserved:false,eligible:savedSession,participant:savedSession,available:false}}));}
 }
 function capturedPairTerms(chain){
  const form={ethereum:$('verify-form'),bitcoin:$('bitcoin-form'),cardano:$('cardano-form'),hegemon:$('hegemon-form')}[chain];
@@ -551,8 +555,8 @@ let offerSubmitting=false;
 $('offer-form').addEventListener('submit',async event=>{event.preventDefault();if(offerSubmitting)return;offerSubmitting=true;const form=event.currentTarget,button=form.querySelector('button[type="submit"]'),data=new FormData(form);button.disabled=true;
  const read=side=>{const [chain,kind]=String(data.get(side+'-type')).split(':');return {chain,kind,id:String(data.get(side+'-id')).trim(),amount:String(data.get(side+'-amount')).trim()};};
  try{const give=read('give');if(document.documentElement.hasAttribute('data-hosted-testnet')&&give.chain==='hegemon'&&give.kind==='hgn')assertHegemonGiveSnapshot(give.amount,await hostedHegemonBalance('/hegemon/balance'));
-  const passphrase=String(data.get('backup-passphrase')||''),created=passphrase?await createInboxWithBackup(passphrase):{publicKey:await createInbox(),backup:null},ownerPublicKey=created.publicKey;$('inbox-backup').hidden=!created.backup;$('inbox-backup-text').value=created.backup?JSON.stringify(created.backup):'';const result=await api('/offers',{method:'POST',body:JSON.stringify({give:read('give'),receive:read('receive'),visibility:data.get('visibility'),expires:Math.floor(Date.now()/1000)+Number(data.get('lifetime')),ownerPublicKey})});
-  localStorage.setItem('offer-owner:'+result.id,result.ownerToken);localStorage.setItem('offer-inbox:'+result.id,ownerPublicKey);const key=newMessageKey();localStorage.setItem('offer-message-key:'+result.id,key);await refresh();await selectOffer(result.id);$('share-link').value=location.origin+'/#'+result.id+'.'+key;$('share').hidden=false;msg($('create-result'),'Offer created.');form.dispatchEvent(new CustomEvent('journey:created'));
+  const passphrase=String(data.get('backup-passphrase')||''),created=passphrase?await createInboxWithBackup(passphrase):{publicKey:await createInbox(),backup:null},ownerPublicKey=created.publicKey;$('inbox-backup').hidden=!created.backup;$('inbox-backup-text').value=created.backup?JSON.stringify(created.backup):'';const posted={give,receive:read('receive'),visibility:data.get('visibility'),expires:Math.floor(Date.now()/1000)+Number(data.get('lifetime')),ownerPublicKey};const result=await api('/offers',{method:'POST',body:JSON.stringify(posted)});
+  localStorage.setItem('offer-owner:'+result.id,result.ownerToken);localStorage.setItem('offer-inbox:'+result.id,ownerPublicKey);await pinOffer({id:result.id,...posted});const key=newMessageKey();localStorage.setItem('offer-message-key:'+result.id,key);await refresh();await selectOffer(result.id);$('share-link').value=location.origin+'/#'+result.id+'.'+key;$('share').hidden=false;msg($('create-result'),'Offer created.');form.dispatchEvent(new CustomEvent('journey:created'));
  }catch(e){msg($('create-result'),e.message,true);form.dispatchEvent(new CustomEvent('journey:failed',{detail:{message:e.message}}));}finally{offerSubmitting=false;button.disabled=false;}});
 $('copy-link').addEventListener('click',async()=>{try{await navigator.clipboard.writeText($('share-link').value);msg($('create-result'),'Link copied.');}catch{msg($('create-result'),'Select and copy the link above.');}});
 $('refresh').addEventListener('click',refresh);
@@ -562,7 +566,7 @@ async function sendPendingHandshake(id){const raw=localStorage.getItem('offer-ha
  if(!parsePublicSession(item.ciphertext))throw Error('Invalid pending conversation setup.');
  await api('/offers/'+id+'/messages',{method:'POST',headers:{authorization:'Bearer '+token},body:JSON.stringify({ciphertext:item.ciphertext,reservationId:item.reservation})});
  localStorage.setItem('offer-session:'+id,item.reservation);localStorage.removeItem('offer-handshake:'+id);await refreshChat();}
-$('reserve').addEventListener('click',async()=>{const id=currentOffer();try{const offer=await api('/offers/'+id),identityNote=await identityUi.checkOwnerBeforeReserve(id,offer),result=await api('/offers/'+id+'/reserve',{method:'POST'});localStorage.setItem('offer-reservation:'+id,result.reservationToken);msg($('detail-status'),'Reserved until '+new Date(result.expires*1000).toLocaleString()+'. No funds have been locked. '+identityNote);$('reserve').disabled=true;document.dispatchEvent(new CustomEvent('journey:reserved',{detail:{id,reservationId:result.reservationId}}));
+$('reserve').addEventListener('click',async()=>{const id=currentOffer();try{const offer=await api('/offers/'+id),identityNote=await identityUi.checkOwnerBeforeReserve(id,offer);if(offer.ownerPublicKey){if(pairContext?.id!==id||!pairContext.offer)throw Error('Review this offer before reserving it.');await pinOffer(pairContext.offer);await pinOffer(offer);}const result=await api('/offers/'+id+'/reserve',{method:'POST'});localStorage.setItem('offer-reservation:'+id,result.reservationToken);msg($('detail-status'),'Reserved until '+new Date(result.expires*1000).toLocaleString()+'. No funds have been locked. '+identityNote);$('reserve').disabled=true;document.dispatchEvent(new CustomEvent('journey:reserved',{detail:{id,reservationId:result.reservationId}}));
   if(offer.ownerPublicKey){const fragment=location.hash.slice(1).split('.')[1],key=/^[0-9a-f]{64}$/.test(fragment||'')?fragment:newMessageKey();localStorage.setItem('offer-message-key:'+id,key);localStorage.removeItem('offer-session:'+id);
    localStorage.setItem('offer-handshake:'+id,JSON.stringify({reservation:result.reservationId,ownerPublicKey:offer.ownerPublicKey,ciphertext:null}));updateChat(id);
    try{await sendPendingHandshake(id);}catch{await refreshChat();msg($('chat-status'),'Conversation setup was not confirmed. Use retry; the reservation remains active.',true);$('retry-handshake').hidden=false;}
@@ -656,6 +660,7 @@ document.addEventListener('visibilitychange',()=>{if(document.visibilityState===
 renderVault();
 window.addEventListener('storage',event=>{if(event.key===VAULT_KEY)renderVault();if(event.key===WATCH_KEY)refreshWatches();});
 window.addEventListener('hashchange',loadSelected);
+initSessionWizard({$,msg,api,currentOffer,ownerToken:credential,reservationToken:id=>localStorage.getItem('offer-reservation:'+id),viewedOffer:id=>pairContext?.id===id?pairContext.offer:null,inboxPrivateKey,getEthereum:()=>activeEthereumProvider,getCardano:()=>activeCardanoApi,connectEthereum,connectCardano,loadTiming,readers:{ethereum:{provider:sepoliaReader,events:(contract,from)=>readJson('/sepolia/escrow-events?'+new URLSearchParams({contract,from_block:String(from)}),'Sepolia service unavailable.')},cardano:{params:()=>cardanoRead.params(),utxos:refs=>cardanoRead.utxos(refs),escrow:outref=>readCardanoPreview(outref),spend:outref=>readJson('/cardano-preview/spend?'+new URLSearchParams({outref}),'Cardano preview service unavailable.')}}});
 journey=initJourney({legacyForm:$('offer-form'),msg,hegemonWallet:{
  paired:()=>companionCapabilities.includes('hegemon-public-balance'),
  unlock:()=>hostedHegemonBalance('/hegemon/unlock',{}),
