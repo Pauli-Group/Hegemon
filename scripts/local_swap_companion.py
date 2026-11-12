@@ -565,16 +565,85 @@ class NodeActivityMonitor:
         }))
 
 
-class CompanionWindow:
-    """Local window for the pairing token and, in wallet-status mode, the passphrase."""
+def format_hgn_atoms(value):
+    """Exact display, including a single atom; never round through a float."""
+    if not isinstance(value, str) or not re.fullmatch(r'\d{1,20}', value) or int(value) >= 2**64:
+        raise ValueError('invalid HGN amount')
+    whole, fraction = divmod(int(value), 100000000)
+    return f'{whole:,}.' + f'{fraction:08d}'.rstrip('0').ljust(2, '0')
 
-    def __init__(self, *, token, wallet_path=None, keyring=None, prompt=None, activity=None, monitor=None):
+
+class WalletSummary:
+    """Local GUI data only. Its lock is independent of lengthy wallet operations."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.clear()
+
+    def clear(self):
+        with self._lock:
+            self._balance = None
+            self._address = None
+            self._error = ''
+
+    def balance(self, view):
+        with self._lock:
+            self._balance = dict(view)
+            self._error = ''
+
+    def address(self, value):
+        with self._lock:
+            self._address = value
+
+    def error(self, message):
+        with self._lock:
+            self._error = message
+
+    def snapshot(self):
+        with self._lock:
+            return {'balance': dict(self._balance) if self._balance is not None else None,
+                    'address': self._address, 'error': self._error}
+
+
+def wallet_card_view(summary, activity, *, now_ms=None, node=None):
+    """Describe locked, refreshing and stale data without inventing a zero balance."""
+    balance = summary['balance']
+    phase = activity.get('phase', 'idle')
+    busy = phase != 'idle'
+    view = {'amount': '—', 'state': 'Locked', 'detail': 'Unlock below to view your balance and receiving address.',
+            'checked': 'Not checked yet', 'totals': '', 'address': summary['address'], 'warning': False}
+    if balance is not None:
+        now_ms = int(time.time() * 1000) if now_ms is None else now_ms
+        age = now_ms - int(balance['observed_at'])
+        lag = int(balance['observed_height']) - int(balance['synced_height'])
+        stale = not 0 <= age <= 60000 or not 0 <= lag <= 2 or node is not None and node.get('tone') != 'caught_up'
+        view.update(amount=format_hgn_atoms(balance['available_atoms']),
+                    state='Watch-only' if balance['watch_only'] else 'Last known' if stale else 'Up to date',
+                    detail='Watch-only wallet · cannot spend.' if balance['watch_only'] else 'Available to spend. Network fees still apply.',
+                    checked='Checked ' + datetime.datetime.fromtimestamp(int(balance['observed_at']) / 1000).astimezone().strftime('%H:%M:%S') + f" · Wallet block {int(balance['synced_height']):,}",
+                    totals='Reserved ' + format_hgn_atoms(balance['reserved_atoms']) + ' · HTLC ' + format_hgn_atoms(balance['htlc_atoms']) + ' · Immature ' + format_hgn_atoms(balance['immature_atoms']) + ' HGN',
+                    warning=stale or balance['watch_only'])
+        if stale:
+            view['detail'] = 'Last known balance. Refresh to check the current wallet state.'
+    if busy:
+        view.update(state='Unlock needed' if phase.startswith('awaiting_') else 'Refreshing',
+                    detail='Approve the wallet unlock below.' if phase.startswith('awaiting_') else 'Reading the wallet. The last known balance stays visible.')
+    if summary['error']:
+        view.update(state='Check needed', detail=summary['error'], warning=True)
+    return view
+
+
+class CompanionWindow:
+    """Local node and wallet summary, address copying and explicit wallet unlock."""
+
+    def __init__(self, *, token, wallet_path=None, keyring=None, prompt=None, activity=None, monitor=None, session=None):
         self.token = token
         self.wallet_path = wallet_path
         self.keyring = keyring
         self.prompt = prompt
         self.activity = activity
         self.monitor = monitor
+        self.session = session
 
     def run(self):
         try:
@@ -585,13 +654,42 @@ class CompanionWindow:
         root = tk.Tk()
         root.title('Hegemon companion')
         root.configure(bg='#0E1C36')
-        root.minsize(480, 560)
-        families = set(tkfont.families(root))
-        body = next((name for name in ('Space Grotesk', 'Inter') if name in families), 'TkDefaultFont')
-        mono = next((name for name in ('JetBrains Mono', 'DejaVu Sans Mono') if name in families), 'TkFixedFont')
+        root.minsize(520, 560)
+        root.geometry(f"560x{max(560, min(880, root.winfo_screenheight() - 80))}" if self.session is not None else '520x560')
+        families = {name.casefold(): name for name in tkfont.families(root)}
+        body = next((families[name] for name in ('space grotesk', 'inter', 'dejavu sans', 'liberation sans', 'helvetica') if name in families), tkfont.nametofont('TkDefaultFont').actual('family'))
+        mono = next((families[name] for name in ('jetbrains mono', 'dejavu sans mono', 'liberation mono', 'courier') if name in families), tkfont.nametofont('TkFixedFont').actual('family'))
         pad = {'padx': 24, 'pady': 8}
-        frame = tk.Frame(root, bg='#0E1C36')
-        frame.pack(fill='both', expand=True)
+        # Keep every control reachable on smaller laptop displays.
+        canvas = tk.Canvas(root, bg='#0E1C36', highlightthickness=0)
+        scrollbar = tk.Scrollbar(root, orient='vertical', command=canvas.yview, bg='#314760', troughcolor='#0E1C36', activebackground='#314760', borderwidth=0, width=10)
+        scrollbar.pack(side='right', fill='y')
+        canvas.pack(side='left', fill='both', expand=True)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        frame = tk.Frame(canvas, bg='#0E1C36')
+        content_window = canvas.create_window((0, 0), window=frame, anchor='nw')
+        frame.bind('<Configure>', lambda _event: canvas.configure(scrollregion=canvas.bbox('all')))
+        canvas.bind('<Configure>', lambda event: canvas.itemconfigure(content_window, width=event.width))
+        root.bind('<MouseWheel>', lambda event: canvas.yview_scroll(-1 if event.delta > 0 else 1, 'units'))
+        root.bind('<Button-4>', lambda _event: canvas.yview_scroll(-1, 'units'))
+        root.bind('<Button-5>', lambda _event: canvas.yview_scroll(1, 'units'))
+        jobs = threading.Event()
+
+        def refresh_wallet(decision=None, *, force=False):
+            if self.session is None or jobs.is_set():
+                return False
+            jobs.set()
+            def work():
+                try:
+                    self.session.refresh_display(decision=decision, force=force)
+                except Exception:
+                    # The session publishes a safe summary, never the wallet transcript.
+                    pass
+                finally:
+                    jobs.clear()
+            threading.Thread(target=work, name='companion-wallet-summary', daemon=True).start()
+            return True
+
         node_title = node_fraction = node_time = node_consequence = node_dot = node_bar = None
         shimmer = {'step': 0}
         if self.monitor is not None:
@@ -614,6 +712,46 @@ class CompanionWindow:
             node_consequence = tk.Label(inner, text='', bg='#F4F7FB', fg='#0E1C36', font=(body, 12), anchor='w', justify='left', wraplength=400)
             node_consequence.pack(fill='x', pady=(4, 0))
             self.monitor.start()
+        balance_amount = balance_state = balance_detail = balance_checked = balance_totals = address_value = address_button = refresh_button = None
+        copied_until = [0.0]
+        if self.session is not None:
+            wallet_card = tk.Frame(frame, bg='#162A45', highlightbackground='#314760', highlightthickness=1)
+            wallet_card.pack(fill='x', padx=24, pady=(16, 8))
+            wallet_inner = tk.Frame(wallet_card, bg='#162A45')
+            wallet_inner.pack(fill='x', padx=16, pady=16)
+            wallet_header = tk.Frame(wallet_inner, bg='#162A45')
+            wallet_header.pack(fill='x')
+            tk.Label(wallet_header, text='AVAILABLE BALANCE', bg='#162A45', fg='#E1E6EE', font=(body, 10, 'bold')).pack(side='left')
+            refresh_button = tk.Button(wallet_header, text='Refresh', command=lambda: refresh_wallet(force=True), bg='#162A45', fg='#1BE7FF', activebackground='#0E1C36', activeforeground='#1BE7FF', font=(body, 11), relief='flat', cursor='hand2')
+            refresh_button.pack(side='right')
+            amount_row = tk.Frame(wallet_inner, bg='#162A45')
+            amount_row.pack(fill='x', pady=(4, 0))
+            balance_amount = tk.Label(amount_row, text='—', bg='#162A45', fg='#F4F7FB', font=(body, 30, 'bold'), anchor='w')
+            balance_amount.pack(side='left')
+            tk.Label(amount_row, text='HGN', bg='#162A45', fg='#1BE7FF', font=(body, 14)).pack(side='left', padx=8, anchor='s', pady=8)
+            balance_state = tk.Label(wallet_inner, text='Locked', bg='#162A45', fg='#E1E6EE', font=(body, 11, 'bold'), anchor='w')
+            balance_state.pack(fill='x', pady=(6, 0))
+            balance_detail = tk.Label(wallet_inner, bg='#162A45', fg='#E1E6EE', font=(body, 11), anchor='w', justify='left', wraplength=400)
+            balance_detail.pack(fill='x', pady=(4, 0))
+            balance_checked = tk.Label(wallet_inner, bg='#162A45', fg='#E1E6EE', font=(body, 10), anchor='w')
+            balance_checked.pack(fill='x', pady=(6, 0))
+            balance_totals = tk.Label(wallet_inner, bg='#162A45', fg='#E1E6EE', font=(body, 10), anchor='w', justify='left', wraplength=400)
+            balance_totals.pack(fill='x', pady=(4, 12))
+            tk.Frame(wallet_inner, height=1, bg='#314760').pack(fill='x')
+            tk.Label(wallet_inner, text='RECEIVING ADDRESS', bg='#162A45', fg='#E1E6EE', font=(body, 10, 'bold'), anchor='w').pack(fill='x', pady=(12, 4))
+            address_value = tk.Label(wallet_inner, text='Available after unlock', bg='#162A45', fg='#E1E6EE', font=(mono, 10), anchor='w')
+            address_value.pack(fill='x', pady=(0, 8))
+            def copy_address():
+                address = self.session.display.snapshot()['address']
+                if address is None:
+                    return
+                root.clipboard_clear()
+                root.clipboard_append(address)
+                root.update_idletasks()
+                copied_until[0] = time.monotonic() + 2
+                address_button.configure(text='Address copied')
+            address_button = tk.Button(wallet_inner, text='Copy receiving address', command=copy_address, bg='#1BE7FF', fg='#0E1C36', activebackground='#1BE7FF', activeforeground='#0E1C36', font=(body, 12, 'bold'), relief='flat', cursor='hand2', state='disabled', pady=8)
+            address_button.pack(fill='x')
         tk.Label(frame, text='Pairing token', bg='#0E1C36', fg='#F4F7FB', font=(body, 12)).pack(anchor='w', **pad)
         token_row = tk.Frame(frame, bg='#0E1C36')
         token_row.pack(fill='x', padx=24)
@@ -652,7 +790,17 @@ class CompanionWindow:
             unlock_button.pack(anchor='w', padx=24, pady=8)
 
             def approve():
-                if self.prompt is None or not self.prompt.submit(passphrase.get(), remember.get()):
+                phrase = passphrase.get()
+                if not phrase:
+                    status.configure(text='Enter your wallet passphrase first.', fg='#F5A623')
+                    return
+                if self.prompt is not None and self.prompt.waiting():
+                    accepted = self.prompt.submit(phrase, remember.get())
+                else:
+                    accepted = refresh_wallet(('ok', phrase, remember.get()))
+                if accepted:
+                    passphrase.set('')
+                else:
                     status.configure(text='The page has not asked to read the wallet yet.', fg='#FF4E4E')
 
             unlock_button.configure(command=approve)
@@ -670,6 +818,13 @@ class CompanionWindow:
             node_fraction.configure(text=view.get('fraction') or '')
             node_time.configure(text=view.get('time_line') or '')
             node_consequence.configure(text=view.get('consequence') or '')
+            for widget, value, spacing in ((node_fraction, view.get('fraction'), 8), (node_time, view.get('time_line'), 8), (node_consequence, view.get('consequence'), 4)):
+                if value:
+                    if not widget.winfo_manager():
+                        order = {'before': node_bar} if widget is node_fraction else {'after': node_bar} if widget is node_time else {}
+                        widget.pack(fill='x', pady=(spacing, 0), **order)
+                else:
+                    widget.pack_forget()
             node_bar.delete('all')
             width = max(node_bar.winfo_width(), 1)
             progress = view.get('progress')
@@ -697,7 +852,22 @@ class CompanionWindow:
             if self.monitor is not None:
                 paint_node(self.monitor.snapshot())
             if unlock_button is not None:
-                unlock_button.configure(state='normal' if self.prompt is not None and self.prompt.waiting() else 'disabled')
+                waiting = self.prompt is not None and self.prompt.waiting()
+                unlock_button.configure(state='normal' if waiting or self.session is not None and not jobs.is_set() and snapshot['phase'] == 'idle' else 'disabled')
+            if self.session is not None:
+                summary = self.session.display.snapshot()
+                view = wallet_card_view(summary, snapshot, node=self.monitor.snapshot() if self.monitor is not None else None)
+                balance_amount.configure(text=view['amount'], font=(body, 30 if len(view['amount']) <= 14 else 22, 'bold'))
+                balance_state.configure(text=view['state'], fg='#F5A623' if view['warning'] else '#E1E6EE')
+                balance_detail.configure(text=view['detail'])
+                balance_checked.configure(text=view['checked'])
+                balance_totals.configure(text=view['totals'])
+                address = view['address']
+                address_value.configure(text=address[:20] + '...' + address[-12:] if address else 'Available after unlock')
+                address_button.configure(state='normal' if address else 'disabled', text='Address copied' if time.monotonic() < copied_until[0] else 'Copy receiving address')
+                refresh_button.configure(state='disabled' if jobs.is_set() or snapshot['phase'] != 'idle' or summary['balance'] is None else 'normal')
+                if summary['balance'] is not None and summary['address'] is None and not summary['error'] and snapshot['phase'] == 'idle':
+                    refresh_wallet()
             root.after(400, tick)
 
         tick()
@@ -906,6 +1076,8 @@ class HostedWalletSession:
         self._phrase = None
         self._cached = None
         self._cached_at = 0.0
+        self.display = WalletSummary()
+        self._display_job = threading.Lock()
 
     def _wipe(self):
         if self._phrase is not None:
@@ -916,6 +1088,7 @@ class HostedWalletSession:
         with self._lock:
             self._wipe()
             self._cached = None
+            self.display.clear()
 
     def _run(self, secret):
         argv = ['--wallet', self.wallet_path, '--manifest', self.manifest, '--genesis', self.genesis, '--rpc', self.rpc, 'status']
@@ -934,6 +1107,7 @@ class HostedWalletSession:
         self._phrase = secret
         self._cached = view
         self._cached_at = time.monotonic()
+        self.display.balance(view)
         return dict(view)
 
     def _status_view(self, secret):
@@ -949,17 +1123,19 @@ class HostedWalletSession:
             view = hosted_balance_view(text, height)
         return view
 
-    def unlock(self):
+    def unlock(self, *, decision=None):
         with self._lock:
             self.activity.set_phase('awaiting_approval')
-            if self.prompt is not None:
+            if decision is not None:
+                print('Reading the wallet from the companion window. The passphrase stays on this computer.', flush=True)
+            elif self.prompt is not None:
                 print('The browser is waiting. Click Unlock in the companion window. The passphrase stays on this computer.', flush=True)
             else:
                 print('The browser is waiting. Type UNLOCK in this terminal, then the wallet passphrase. Sync progress appears here and on the page.', flush=True)
             try:
                 remember = False
                 if self.prompt is not None:
-                    decision = self.prompt.ask()
+                    decision = self.prompt.ask() if decision is None else decision
                     if not decision or decision[0] != 'ok':
                         raise ValueError('wallet unlock declined locally')
                     phrase = decision[1]
@@ -990,7 +1166,7 @@ class HostedWalletSession:
                         if self.prompt is not None:
                             self.prompt.report(str(error))
                         print(str(error), flush=True)
-                print('Wallet read finished. Return to the browser to see available HGN. Creating a listing does not lock those funds.', flush=True)
+                print('Wallet read finished. Available HGN is shown in the companion and on the connected page. Creating a listing does not lock those funds.', flush=True)
                 return self._remember(secret, view)
             except ValueError as error:
                 if str(error) == 'wallet unlock declined locally':
@@ -1006,7 +1182,7 @@ class HostedWalletSession:
             finally:
                 self.activity.set_phase('idle')
 
-    def balance(self):
+    def balance(self, *, force=False):
         with self._lock:
             if self._phrase is None:
                 raise PermissionError('wallet_locked')
@@ -1015,23 +1191,49 @@ class HostedWalletSession:
             saved = int(self._cached['synced_height']) if self._cached is not None else None
             caught_up = saved == height
             fresh = saved is not None and time.monotonic() - self._cached_at <= 60 and 0 <= height - saved <= 2
-            if caught_up or fresh:
+            if not force and (caught_up or fresh):
                 if caught_up:
                     print(f'Using the saved wallet read at block {height}. The chain has not moved, so this did not scan again.', flush=True)
                 view = dict(self._cached)
                 view['observed_height'] = str(height)
                 view['observed_at'] = str(int(time.time() * 1000))
+                self.display.balance(view)
                 return view
             self.activity.set_phase('syncing')
             try:
                 if saved is not None:
-                    print(f'The chain moved. Resuming the saved wallet from block {saved} through {height}.', flush=True)
+                    print(f'Refreshing the saved wallet from block {saved} through {height}.' if force else f'The chain moved. Resuming the saved wallet from block {saved} through {height}.', flush=True)
                 view = self._status_view(self._phrase)
             finally:
                 self.activity.set_phase('idle')
             self._cached = view
             self._cached_at = time.monotonic()
+            self.display.balance(view)
             return dict(view)
+
+    def refresh_display(self, *, decision=None, force=False):
+        """Local GUI read on a worker thread; no signing, submission or new HTTP route."""
+        if not self._display_job.acquire(blocking=False):
+            return
+        try:
+            if self._lock.locked():
+                self.display.error('The wallet is busy. Wait for the current operation, then refresh.')
+                return
+            try:
+                if decision is not None:
+                    if self.prompt is None:
+                        raise PermissionError('local GUI unlock unavailable')
+                    self.unlock(decision=decision)
+                else:
+                    self.balance(force=force)
+                if self.display.snapshot()['address'] is None:
+                    self.swap_address(check_node=self.read_node)
+            except PermissionError:
+                self.display.error('Unlock below to refresh your wallet.')
+            except Exception:
+                self.display.error('Could not complete the wallet read. Check the local node and wallet, then refresh.')
+        finally:
+            self._display_job.release()
 
     def verify_swap_htlc(self, request, *, check_node=None, verify_action=None, read_block=None, observe_spend=False, verify_spend=None):
         """Verify a live private HTLC using the unlocked local wallet.
@@ -1138,6 +1340,7 @@ class HostedWalletSession:
             lines=[line.strip() for line in text.splitlines() if line.strip().startswith('shca1')]
             if len(lines)!=1 or len(lines[0])>3000:raise ValueError('Hegemon address unavailable')
             public_v8_address_keys(lines[0]);check_node()
+            self.display.address(lines[0])
             return {'address':lines[0]}
         finally:
             self._lock.release()
@@ -1721,7 +1924,7 @@ def main():
             threading.Thread(target=server.serve_forever,name='companion-http',daemon=True).start()
             activity_path=(args.hegemon_node_path if args.hegemon_node_path is not None else Path.home()/'.hegemon-node-v0.11')/'node-activity.json'
             monitor=NodeActivityMonitor(args.hegemon_rpc,activity_path)
-            CompanionWindow(token=token,wallet_path=args.hegemon_wallet if args.hosted_wallet_status or args.hosted_hegemon_swap else None,keyring=keyring,prompt=prompt,activity=session.activity if session is not None else None,monitor=monitor).run()
+            CompanionWindow(token=token,wallet_path=args.hegemon_wallet if args.hosted_wallet_status or args.hosted_hegemon_swap else None,keyring=keyring,prompt=prompt,activity=session.activity if session is not None else None,monitor=monitor,session=session).run()
             monitor.stop()
             server.shutdown()
         else:

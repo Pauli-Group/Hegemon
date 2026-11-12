@@ -23,6 +23,7 @@ SCRIPT_TEST_PATTERNS=(
   'test_check_hegemon_gateway.py'
   'test_probe_hegemon_testnet.py'
   'test_local_swap_companion.py'
+  'test_local_swap_companion_window.py'
   'test_swap_rehearsal.py'
   'test_unlock_swap_backup.py'
   'test_verify_public_btc_cases.py'

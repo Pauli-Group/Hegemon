@@ -634,6 +634,64 @@ class LocalCompanionTest(unittest.TestCase):
                     session.unlock()
             self.assertNotIn(phrase,json.dumps(session.activity.snapshot()))
 
+class WalletSummaryTest(unittest.TestCase):
+    def view(self, amount='1234567890'):
+        return {'available_atoms':amount,'reserved_atoms':'100','htlc_atoms':'200','immature_atoms':'300',
+                'synced_height':'10','observed_height':'10','observed_at':'100000','watch_only':False}
+
+    def test_exact_display_preserves_single_atoms_and_large_balances(self):
+        for atoms, expected in [('0','0.00'),('1','0.00000001'),('1234567890','12.3456789'),
+                                ('18446744073709551615','184,467,440,737.09551615')]:
+            self.assertEqual(local_swap_companion.format_hgn_atoms(atoms),expected)
+        for bad in ('-1','1.5',str(2**64),None):
+            with self.assertRaises(ValueError):local_swap_companion.format_hgn_atoms(bad)
+
+    def test_missing_stale_scanning_watch_only_and_real_zero_are_distinct(self):
+        summary=local_swap_companion.WalletSummary()
+        view=local_swap_companion.wallet_card_view(summary.snapshot(),{'phase':'idle'},now_ms=100000)
+        self.assertEqual((view['state'],view['amount']),('Locked','—'))
+        summary.balance(self.view('0'))
+        view=local_swap_companion.wallet_card_view(summary.snapshot(),{'phase':'idle'},now_ms=100000)
+        self.assertEqual((view['state'],view['amount']),('Up to date','0.00'))
+        view=local_swap_companion.wallet_card_view(summary.snapshot(),{'phase':'syncing'},now_ms=100001)
+        self.assertEqual(view['state'],'Refreshing')
+        for now,node in [(160001,None),(100000,{'tone':'stopped'}),(100000,{'tone':'working'})]:
+            view=local_swap_companion.wallet_card_view(summary.snapshot(),{'phase':'idle'},now_ms=now,node=node)
+            self.assertEqual(view['state'],'Last known');self.assertTrue(view['warning'])
+        value=self.view();value['watch_only']=True;summary.balance(value)
+        self.assertEqual(local_swap_companion.wallet_card_view(summary.snapshot(),{'phase':'idle'},now_ms=100000)['state'],'Watch-only')
+
+    def test_local_unlock_reads_balance_and_full_address_without_transaction_commands(self):
+        with tempfile.TemporaryDirectory() as directory:
+            session=HostedWalletSession(rpc='http://127.0.0.1:9',wallet_path=Path(directory)/'wallet',manifest=Path(directory)/'manifest',genesis='aa'*32,binary=Path(directory)/'binary',scratch=directory,read_node=lambda:{'height':10},prompt=GuiApproval())
+            calls=[];address='shca1'+'q'*2667
+            def run(_binary,argv,secrets,*args,**kwargs):
+                calls.append(argv)
+                if 'address' in argv:return address+'\n',{}
+                return 'balance synced_height=10 available_atoms=1234567890 available_notes=1 reserved_atoms=0 reserved_notes=0 htlc_atoms=0 htlc_notes=0 watch_only=false immature_atoms=0\n',{}
+            with patch('local_swap_companion.wallet',run),patch('local_swap_companion.public_v8_address_keys'):
+                session.refresh_display(decision=('ok','local-test-passphrase',False))
+            saved=session.display.snapshot()
+            self.assertEqual(saved['address'],address)
+            self.assertEqual(saved['balance']['available_atoms'],'1234567890')
+            self.assertEqual([argv[-3:] for argv in calls][1],['address','--index','0'])
+            self.assertEqual(len(calls),2)
+            self.assertNotIn('local-test-passphrase',json.dumps(saved))
+            completed=threading.Event()
+            with session._lock:
+                thread=threading.Thread(target=lambda:(session.display.snapshot(),completed.set()))
+                thread.start();self.assertTrue(completed.wait(1),'GUI snapshot must not wait for the wallet scan lock')
+            thread.join()
+            session.read_node=lambda:(_ for _ in ()).throw(LookupError('offline'))
+            session.refresh_display()
+            failed=session.display.snapshot()
+            self.assertEqual(failed['balance'],saved['balance'])
+            self.assertEqual(failed['address'],address)
+            self.assertTrue(failed['error'])
+            session.close()
+            self.assertEqual(session.display.snapshot(),{'balance':None,'address':None,'error':''})
+
+
 class NodeActivityTest(unittest.TestCase):
     def test_each_startup_phase_names_the_step_and_its_fraction(self):
         for phase, title in NODE_ACTIVITY_PHASES.items():

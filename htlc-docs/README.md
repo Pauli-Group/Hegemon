@@ -151,6 +151,14 @@ When the page needs your HGN address or balance, it asks you to unlock the local
 
 The initial wallet scan can take several minutes. **Checking saved notes** is progress through notes, not blocks. A **Caught up** node does not mean the wallet's note scan has finished. Wait for an available-balance result before continuing. The optional **Remember** setting uses the local desktop keyring.
 
+The window also shows an **Available balance** card with the exact HGN amount, a last-checked time, and separate reserved, HTLC and immature totals. Press **Refresh** to read the wallet again, including new reservations at the same block. You can unlock directly in the companion before opening the website. A failed or old read is labeled as last known or needing attention, rather than becoming a zero balance.
+
+Press **Copy receiving address** to copy your full receiving address. The preview is shortened to fit the window; the clipboard receives every character. This button becomes available after the wallet has unlocked and its address has been read.
+
+![Companion wallet card with exact HGN balance, refresh and copy-address controls. This capture uses sample data, not a funding destination.](images/17-companion-wallet.png)
+
+*The wallet amount, pairing token and shortened address in this window capture are demonstration data. Use the full address copied by your own companion.*
+
 One companion process serves one Hegemon wallet. To switch participants on the same computer, stop the companion and restart it with the other wallet file; the wizard checks the address against the saved swap terms.
 
 ## Create an offer: the maker
