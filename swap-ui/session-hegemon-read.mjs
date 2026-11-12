@@ -20,6 +20,7 @@ export function hegemonSessionReader({request,enabled}){
   const height=number(value.height);if(height<1||height>=2**48)throw Error('Invalid Hegemon chain height.');return {genesis:value.genesis,chain_id:value.chain_id,height};
  };
  return Object.freeze({
+  available:()=>enabled(),
   head,
   async address(){const value=await call('/hegemon/swap/address');checkSessionAddress('hegemon',value?.address);return value.address;},
   async select(amount,fee,exclude=[]){
@@ -66,6 +67,23 @@ export function hegemonSessionReader({request,enabled}){
    const created=number(s.created_height),reference=number(s.reference_height),depth=number(s.confirmations),latest=await head();
    if(created<1||reference<created||reference-created+1!==depth||depth<confirmations||latest.height<reference||latest.height<current.height||(refundReady?BigInt(latest.height)<timeout:timeout-BigInt(latest.height)<BigInt(minBlocksToExpiry)))throw Error('The Hegemon escrow observation is stale or inconsistent.');
    return {position:locked.toString(),commitment:s.commitment,actionId:s.action_id,createdHeight:created,referenceHeight:reference,confirmations:depth,height:latest.height,refundReady};
+  },
+  async noteStatus(terms,{confirmations,creationHeight}={}){
+   if(!terms||!HEX.test(terms.hashlock||'')||!/^[0-9a-f]{96}$/.test(terms.action_id||'')||!Number.isSafeInteger(confirmations)||confirmations<2||confirmations>100||!Number.isSafeInteger(creationHeight)||creationHeight<1||creationHeight>=2**48)throw Error('Invalid Hegemon note observation.');
+   checkSessionAddress('hegemon',terms.claim);checkSessionAddress('hegemon',terms.refund);
+   const locked=integer(terms.locked),timeout=integer(terms.timeout),amount=integer(terms.amount);
+   if(timeout>=1n<<48n||amount===0n||terms.claim===terms.refund)throw Error('Invalid Hegemon note terms.');
+   const first=await head(),result=await call('/hegemon/swap/note-status',{locked:locked.toString(),claim:terms.claim,refund:terms.refund,hashlock:terms.hashlock,timeout:timeout.toString(),amount:amount.toString(),min_confirmations:String(confirmations),min_remaining_blocks:'1',action_id:terms.action_id,refund_ready:false});
+   if(number(result?.lock_height)!==creationHeight)throw Error('The Hegemon lock block does not match.');
+   if(result?.state==='unspent')return {state:'unspent'};
+   if(!['claimed','refunded'].includes(result?.state)||!/^[0-9a-f]{96}$/.test(result.action_id||'')||!Number.isSafeInteger(result.confirmations)||result.confirmations<1)throw Error('Invalid Hegemon note observation.');
+   const block=number(result.block_height),latest=await head();
+   if(block<1||block>latest.height||latest.height<first.height||latest.height-block+1<result.confirmations)throw Error('The Hegemon note observation is stale.');
+   if(result.state==='refunded')return {state:'refunded',actionId:result.action_id,confirmations:result.confirmations,enough:result.confirmations>=confirmations};
+   if(!HEX.test(result.preimage||''))throw Error('Invalid Hegemon claim secret.');
+   const secret=fromHex(result.preimage);try{if(toHex(new Uint8Array(await crypto.subtle.digest('SHA-256',secret)))!==terms.hashlock)throw Error('Hegemon claim secret does not match.');}
+   finally{secret.fill(0);}
+   return {state:'claimed',actionId:result.action_id,preimage:result.preimage,confirmations:result.confirmations,enough:result.confirmations>=confirmations};
   },
   async observe(hashlock,startHeight,{confirmations=2}={}){
    if(!HEX.test(hashlock||'')||!Number.isSafeInteger(startHeight)||startHeight<1||startHeight>=2**48||!Number.isSafeInteger(confirmations)||confirmations<2||confirmations>100)throw Error('Invalid Hegemon claim observation.');

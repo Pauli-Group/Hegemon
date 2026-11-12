@@ -51,10 +51,20 @@ for(const scenario of ['confirmed-response','lost-response'])test(`Bitcoin fundi
    try{await broadcastBitcoinSessionFund({...opts,signedPsbt:'not a PSBT'});}catch{malformed=true;}
    try{done=await broadcastBitcoinSessionFund({...opts,signedPsbt});}catch{lost=true;}
    let duplicate=false;try{await broadcastBitcoinSessionFund({...opts,signedPsbt});}catch{duplicate=true;}
-   const saved=await getSession(session,role);return {blocked,malformed,lost,duplicate,broadcasts,prepared:prepared.txid,submitted:done?.reference.txid??null,state:saved.snapshot.actions.long.fund[0].state};
+   let saved=await getSession(session,role),recovered=null,wrongRejected=false,spentRejected=false;
+   if(lost){
+    await backup();const {recoverFundingReference}=await import('/session-reconcile.mjs'),{expectedBitcoinScript}=await import('/bitcoin-testnet-verifier.mjs'),{sessionAssetTerms}=await import('/session-assets.mjs');
+    const fields=sessionAssetTerms(saved.snapshot.terms,'long',{reference:{chain:'bitcoin',txid:prepared.txid,vout:0}}).operationTerms,script=await expectedBitcoinScript({...fields,refund_height:Number(fields.refund_height)});let spent=false;
+    readers.bitcoin.escrow=async(id,index)=>({genesis:fixture.btcGenesis,txid:id,vout:index,tip:Number(fields.refund_height)+1,confirmed:true,confirmations:2,block_height:Number(fields.refund_height),block_hash:'99'.repeat(32),spent,amount_sats:50000,script});
+    const recovery={session,role,attemptId:attempt.id,txid:prepared.txid,readers,config:timing,templates:{}};
+    try{await recoverFundingReference({...recovery,txid:'ee'.repeat(32)});}catch{wrongRejected=true;}
+    spent=true;try{await recoverFundingReference(recovery);}catch{spentRejected=true;}spent=false;
+    recovered=(await recoverFundingReference(recovery)).reference.txid;saved=await getSession(session,role);
+   }
+   return {blocked,malformed,lost,duplicate,broadcasts,prepared:prepared.txid,submitted:done?.reference.txid??null,state:saved.snapshot.actions.long.fund[0].state,recovered,wrongRejected,spentRejected};
   },{btcA:btcA.publicKey,btcB:btcB.publicKey,ethA:ethA.address,ethB:ethB.address,address,btcGenesis:TESTNET4_GENESIS,ethGenesis:SEPOLIA_GENESIS,scenario});
   assert.equal(result.blocked,true);assert.equal(result.malformed,true);assert.equal(result.duplicate,true);assert.equal(result.broadcasts,1);assert.equal(result.lost,scenario==='lost-response');
-  if(scenario==='lost-response'){assert.equal(result.submitted,null);assert.equal(result.state,'uncertain');}else{assert.equal(result.prepared,result.submitted);assert.equal(result.state,'submitted');}
+  if(scenario==='lost-response'){assert.equal(result.submitted,null);assert.equal(result.wrongRejected,true);assert.equal(result.spentRejected,true);assert.equal(result.recovered,result.prepared);assert.equal(result.state,'submitted');}else{assert.equal(result.prepared,result.submitted);assert.equal(result.state,'submitted');}
  }finally{await browser?.close();server.kill('SIGTERM');await Promise.race([once(server,'exit'),new Promise(r=>setTimeout(r,2000))]);await rm(dir,{recursive:true,force:true});}
 });
 

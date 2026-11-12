@@ -8,6 +8,11 @@ A person swapping native BTC, ETH, ADA or HGN on their testnets should see one n
 
 ## Progress
 
+- [x] (2026-11-12) Exercise all six native-coin pairings in both directions with separate simulated browser wallets and chain responses. These are not live-chain tests.
+- [x] (2026-11-12) Add local loopback-only Worker rehearsal support using a separate persistent D1 database, plus a narrowly allowed proxy for public testnet reads.
+- [x] (2026-11-12) Recover lost BTC, ADA and ETH funding references only after confirming the exact unspent chain escrow, including after expiry; keep unresolved wallet journal entries conservative. Browser tests cover those recovery checks.
+- [ ] Rehearse on actual public testnets, including Hegemon through the user's existing local node and companion, before publication. The cloud workspace cannot directly access that node.
+
 - [x] (2026-11-11 21:14Z) Inspect the existing offer journey, relay, identity, signed session protocol, chain observers and wallet transaction actions.
 - [x] (2026-11-11 21:21Z) Add evidence-based offer and engine-review actor labels, restore offer navigation on reload, and stop guided action prefill on an uncertain local action.
 - [x] (2026-11-11 21:29Z) Automatically fill empty wallet addresses, sequence the guided identity signatures, test Cardano–Ethereum signed proposals and add a durable encrypted-packet outbox with lost-response tests.
@@ -19,8 +24,9 @@ A person swapping native BTC, ETH, ADA or HGN on their testnets should see one n
 - [x] Add Bitcoin testnet terms, on-chain observation and PSBT handoff for funding, claims and refunds. A two-browser simulated BTC–ETH swap completed, and separate simulated tests cover a relay-independent refund and a refused claim when the other escrow changed.
 - [ ] Implement and test guided Bitcoin PSBT signing, recovery, funding, claims and refunds for each supported pairing.
 - [x] Add an opt-in local Hegemon swap companion mode, explicit local approvals, chain and wallet checks, private-note verification, canonical-action checks, bounded secret observation, available-note selection, and a wallet-side exact HTLC lookup. These are building blocks, not yet a complete wizard flow.
-- [x] Exercise Hegemon funding preparation and separate local submission in browser tests with mocked chain data, including lost proof and submission responses. Version-4 encrypted recovery retains append-only candidate and handoff references; the actual handoff file must also remain available on the user's machine. These actions are not yet wired into the wizard.
-- [ ] Implement and test Hegemon public-pre-mainnet coordination with the local companion, including private note verification, refund handoff, secret release, recovery and explicit local approval.
+- [x] Exercise Hegemon funding, claims and refunds with mocked chain data, including a lost submission response and relay-independent refund. Version-4 encrypted recovery retains append-only candidate and handoff references; the actual handoff file must also remain available on the user's machine.
+- [x] Wire Hegemon actions into the wizard and simulate Hegemon–Ethereum swaps in both funding orders. Verify the exact private note's canonical spend before presenting it as claimed or refunded; public secret disclosure alone is not enough.
+- [ ] Test Hegemon public-pre-mainnet coordination with the real local companion, including private note verification, refund handoff, secret release, recovery and explicit local approval.
 - [ ] Finish and test the refund and recovery paths, including loss of the relay and uncertain wallet submissions. Add a way to restore an encrypted backup in a fresh browser.
 - [ ] Keep unsupported token paths visibly blocked where they are not complete; the user currently needs native BTC, ETH, ADA and HGN only.
 - [ ] Connect the signed session protocol to a durable two-browser wizard without weakening its wallet, chain, deadline, secret-backup or uncertain-transaction protections.
@@ -38,7 +44,7 @@ The offer wizard and the standalone guided swap reviewer are separate. The latte
 
 ## Outcomes & Retrospective
 
-The local wizard connects signed session coordination to ADA/ETH funding, claims, refunds and backup restoration. Browser tests with simulated chains completed claims in both directions and refunds with the relay offline, with separate wallet approval for each transaction. A simulated BTC–ETH swap also completed with external PSBT signing; other Bitcoin combinations still need full-flow tests. Hegemon companion and wallet verification primitives, and a simulated funding preparation/submission module, are implemented, but the Hegemon funding, claim, refund and recovery wizard remains incomplete. These are simulations, not public-testnet tests. Interrupted-action reconciliation and final validation remain in progress. The user explicitly asked us to wait for all four chains before publishing; no work from this branch has been pushed or deployed.
+The local wizard connects signed session coordination to all four native testnet coins. Browser tests with simulated chains completed all six pairings in both funding orders; targeted checks also cover relay-offline refunds, lost responses and exact-escrow recovery. Hegemon funding, claiming, note-spend observation and refund handoffs are wired in. These are simulations, not public-testnet swap tests. A local Worker rehearsal has read real public Bitcoin, Ethereum and Cardano testnet data without sending transactions. Actual public-chain swaps and final publication remain outstanding. The user explicitly asked us to wait for all four chains before publishing; no work from this branch has been pushed or deployed.
 
 ## Context and Orientation
 

@@ -17,12 +17,15 @@ import {formatBaseUnits,toBaseUnits} from './offer-draft.mjs';
 import {fundSession} from './session-funding.mjs';
 import {prepareBitcoinSessionFund,bitcoinSessionFundDraft,broadcastBitcoinSessionFund} from './session-bitcoin-fund.mjs';
 import {prepareBitcoinSessionSpend,bitcoinSessionSpendDraft,broadcastBitcoinSessionSpend} from './session-bitcoin-spend.mjs';
-import {prepareFundingAttempt,prepareSpendAttempt,actionArmed,recoveryReviewKey} from './session-action.mjs';
+import {prepareHegemonSessionFund,submitHegemonSessionFund,observeHegemonSessionFunding,importHegemonSessionRefundHandoff} from './session-hegemon-funding.mjs';
+import {prepareHegemonSessionSpend,submitHegemonSessionSpend,observeHegemonSessionSpend} from './session-hegemon-spend.mjs';
+import {prepareFundingAttempt,prepareSpendAttempt,actionArmed,recoveryReviewKey,hegemonConsentKey,hasHegemonConsent,hegemonSubmitArmed} from './session-action.mjs';
 import {claimSession} from './session-claim.mjs';
 import {checkSessionRefund,refundSession} from './session-refund.mjs';
 import {observeSessionLeg} from './session-observation.mjs';
 import {encryptRecovery} from './recovery.mjs';
 import {restoreSwapBackup} from './session-restore.mjs';
+import {recoverFundingReference} from './session-reconcile.mjs';
 import {canonical} from './identity.mjs';
 import {fromHex,toHex} from './cbor.mjs';
 
@@ -108,6 +111,14 @@ export function initSessionWizard(d){
  }
  async function ownProof(record){
   const chains=new Set([record.snapshot.offer.give.chain,record.snapshot.offer.receive.chain]);
+  if(chains.has('hegemon')&&!hasHegemonConsent(record.session,record.role)){
+   const panel=screen('You','Review your Hegemon address','Your other wallet signs the swap details, including your Hegemon address. That signature cannot independently prove control of the Hegemon address. Compare your verification codes with the other person.');
+   panel.append(button('I understand',async()=>{localStorage.setItem(hegemonConsentKey(record.session,record.role),'accepted');await advance();}));return;
+  }
+  if(chains.has('hegemon')&&!d.readers.hegemon.available()){
+   const panel=screen('You','Connect your Hegemon companion','Start and connect the local companion for the Hegemon wallet on this computer. Your node and wallet stay on your computer.');
+   panel.append(button('Connection instructions',async()=>d.showCompanion(),true));return;
+  }
   if(chains.has('ethereum')&&!d.getEthereum()){
    const panel=screen('You','Connect your Ethereum wallet','Connect the wallet you will use for this swap. Connecting does not request a signature or move funds.');
    panel.append(button('Connect Ethereum wallet',async()=>{await d.connectEthereum();await advance();}));return;
@@ -128,15 +139,19 @@ export function initSessionWizard(d){
    if(chains.has('ethereum')){await assertSepoliaIdentity(provider);const accounts=await provider.request({method:'eth_accounts'});if(provider!==d.getEthereum()||!Array.isArray(accounts)||!/^0x[0-9a-fA-F]{40}$/.test(accounts[0]||''))throw Error('A connected Ethereum account is required.');addressesByChain.ethereum=accounts[0].toLowerCase();}
    if(chains.has('cardano')){const used=await cardano.getUsedAddresses(),unused=used.length?[]:await (cardano.getUnusedAddresses?.()??[]),address=[...used,...unused].map(fromHex).find(bytes=>bytes.length>=29&&[0,2,4,6].includes(bytes[0]>>4));if(cardano!==d.getCardano()||!address)throw Error('The Cardano wallet has no payment-key address.');addressesByChain.cardano=toHex(address.slice(1,29));}
    if(chains.has('bitcoin')){addressesByChain.bitcoin=localStorage.getItem(btcKey);checkSessionAddress('bitcoin',addressesByChain.bitcoin);}
+   if(chains.has('hegemon')){
+    try{addressesByChain.hegemon=await d.readers.hegemon.address();}
+    catch{const panel=screen('You','Unlock your Hegemon wallet','Approve the wallet unlock in your local companion. Your passphrase stays on this computer.');panel.append(button('Unlock Hegemon wallet',async()=>{await d.unlockHegemon();await advance();}));return;}
+   }
    const assets=record.snapshot.offer,addresses={give:addressesByChain[assets.give.chain],receive:addressesByChain[assets.receive.chain]};
    let prior=null;const raw=sessionStorage.getItem(draftKey);if(raw){try{prior=JSON.parse(raw);}catch{throw Error('The saved wallet proof is invalid.');}if(!prior||Object.keys(prior).sort().join(',')!=='addresses,issued,proofs'||!Number.isSafeInteger(prior.issued)||prior.issued>now()+300||!Array.isArray(prior.proofs)||prior.proofs.length>2||canonical(prior.addresses)!==canonical(addresses))throw Error('The saved wallet proof does not match the connected wallets.');}
-   const base=await participantDraft({session:record.session,role:record.role,snapshot:record.snapshot,publicKey:record.publicKey,now:prior?.issued??now()});
+   const base=await participantDraft({session:record.session,role:record.role,snapshot:record.snapshot,publicKey:record.publicKey,now:prior?.issued??now(),allowUnverifiedHegemon:hasHegemonConsent(record.session,record.role)});
    draft={...base,statement:participantStatement(base,addresses)};proofs=[];
    for(const proof of prior?.proofs??[])proofs=addSessionProof(draft.statement,draft.assets,proofs,proof);
   }
-  const side=['give','receive'].find(name=>!proofs.some(proof=>proof.chain===draft.assets[name].chain&&proof.signer===draft.statement.addresses[name]));
+  const side=['give','receive'].find(name=>draft.assets[name].chain!=='hegemon'&&!proofs.some(proof=>proof.chain===draft.assets[name].chain&&proof.signer===draft.statement.addresses[name]));
   if(!side){
-   const blob=await completeParticipant(draft,draft.statement,proofs,now()),field=record.role==='owner'?'ownerBlob':'takerBlob';
+   const blob=await completeParticipant(draft,draft.statement,proofs,now(),{allowUnverifiedHegemon:hasHegemonConsent(record.session,record.role)}),field=record.role==='owner'?'ownerBlob':'takerBlob';
    record=await updateSession(record.session,record.role,record.revision,{...record.snapshot,[field]:blob});draft=null;proofs=[];sessionStorage.removeItem(draftKey);
    await publishSessionParticipant({session:record.session,role:record.role,outbox:starter.outbox,readFrames:args=>readSessionFrames({...args,api:d.api}),now:now()});
    await advance();return;
@@ -168,7 +183,7 @@ export function initSessionWizard(d){
  }
  async function verifyTerms(record,purpose,references=record.snapshot.escrows){
   const config=await d.loadTiming(),pinned=await templates();
-  return verifySessionSnapshot({terms:record.snapshot.terms,offer:record.snapshot.offer,expectedOfferDigest:record.snapshot.offerDigest,channelDigest:await channelFingerprint(record.session,record.snapshot.channelKey),ownerBlob:record.snapshot.ownerBlob,takerBlob:record.snapshot.takerBlob,session:record.session,reservation:record.snapshot.reservation,sessionExpires:record.snapshot.sessionExpires,role:record.role==='owner'?'initiator':'responder',references,purpose,readers:d.readers,config,now:now(),templates:pinned});
+  return verifySessionSnapshot({terms:record.snapshot.terms,offer:record.snapshot.offer,expectedOfferDigest:record.snapshot.offerDigest,channelDigest:await channelFingerprint(record.session,record.snapshot.channelKey),ownerBlob:record.snapshot.ownerBlob,takerBlob:record.snapshot.takerBlob,session:record.session,reservation:record.snapshot.reservation,sessionExpires:record.snapshot.sessionExpires,role:record.role==='owner'?'initiator':'responder',references,purpose,readers:d.readers,config,now:now(),templates:pinned,allowUnverifiedHegemon:hasHegemonConsent(record.session,record.role)});
  }
  function confirmTransaction(summary){
   const panel=screen('You','Review the wallet transaction',(summary.lines||[]).join('\n'));
@@ -176,28 +191,58 @@ export function initSessionWizard(d){
   panel.append(approve,cancel);
   return new Promise(resolve=>{let done=false;const finish=value=>{if(done)return;done=true;approve.disabled=cancel.disabled=true;resolve(value);};approve.addEventListener('click',()=>finish(true));cancel.addEventListener('click',()=>finish(false));});
  }
+ async function recoverFunding(record,after){
+  const own=record.role==='owner'?'long':'short',leg=record.snapshot.terms?.legs[own],attempt=record.snapshot.actions[own].fund.at(-1);
+  if(!leg||!attempt)throw Error('No funding action is saved for this swap.');
+  if(leg.asset.chain==='hegemon'){
+   const item=record.snapshot.hegemon?.[own]?.fund,opts={session:record.session,role:record.role,attemptId:attempt.id,readers:d.readers,config:await d.loadTiming()};
+   if(!item){const panel=screen('You','Check your Hegemon wallet','The local wallet may have prepared an action without returning its details. Check the wallet and refund handoff files; do not submit another lock.');refreshButton(panel);return;}
+   if(item.blockHeight===null){const seen=await observeHegemonSessionFunding(opts);if(seen.state==='confirmed'){await after();return;}const panel=screen('Network','Checking the Hegemon lock','The wallet and network have not confirmed this lock. Refresh to check again; the page will not resubmit it.');refreshButton(panel);return;}
+   const panel=screen('You','Import the Hegemon refund handoff','Approve the saved handoff import in the local companion terminal. This prepares your wallet to refund the exact note.');panel.append(button('Import refund handoff',async()=>{await importHegemonSessionRefundHandoff(opts);await after();}));return;
+  }
+  const panel=screen('You','Find your locked funds','A response from your wallet may have been lost. Copy the funding transaction ID from your wallet. The page will check the exact escrow on the testnet before using it.');
+  const label=el('label','Funding transaction ID'),input=el('input');input.autocomplete='off';input.value=attempt.txid||'';label.append(input);panel.append(label,button('Check transaction',async()=>{await recoverFundingReference({session:record.session,role:record.role,attemptId:attempt.id,txid:input.value,readers:d.readers,config:await d.loadTiming(),templates:await templates()});await after();}));
+ }
  async function fund(record){
   const own=record.role==='owner'?'long':'short',asset=record.snapshot.terms.legs[own].asset,chain=asset.chain;
-  if(!((chain==='bitcoin'&&asset.kind==='btc')||(chain==='ethereum'&&asset.kind==='eth')||(chain==='cardano'&&['ada','native'].includes(asset.kind)))){const panel=screen('Not yet available','Token funding is not ready','This guided funding step cannot fund this asset yet. Do not fund an escrow from this screen.');refreshButton(panel);return;}
+  if(!((chain==='hegemon'&&asset.kind==='hgn')||(chain==='bitcoin'&&asset.kind==='btc')||(chain==='ethereum'&&asset.kind==='eth')||(chain==='cardano'&&['ada','native'].includes(asset.kind)))){const panel=screen('Not yet available','Token funding is not ready','This guided funding step cannot fund this asset yet. Do not fund an escrow from this screen.');refreshButton(panel);return;}
   const attempt=record.snapshot.actions[own].fund.at(-1);
   if(!attempt||attempt.state==='declined'){
    const panel=screen('You','Prepare your funding action',termsSummary(record.snapshot.terms)+' The page will save a recovery record before opening your wallet.');
    panel.append(button('Prepare funding',async()=>{await verifyTerms(record,record.role==='owner'?'fund_first':'fund_second');await prepareFundingAttempt({session:record.session,role:record.role,outbox:starter.outbox});await advance();}));return;
   }
+  if(chain==='hegemon'&&['prepared','uncertain'].includes(attempt.state)){
+   const item=record.snapshot.hegemon?.[own]?.fund,opts={session:record.session,role:record.role,attemptId:attempt.id,outbox:starter.outbox,readFrames:args=>readSessionFrames({...args,api:d.api}),readers:d.readers,config:await d.loadTiming(),templates:await templates()};
+   if(!item){const panel=screen('You','Check the Hegemon wallet','A wallet action may have finished without a response. Check the local wallet and refund handoff files before doing anything else.');refreshButton(panel);return;}
+   if(item.actionId===null&&attempt.state==='prepared'&&hegemonSubmitArmed(record.session,record.role,attempt.id)){
+    const panel=screen('You','Submit the Hegemon lock','The lock is prepared. Back up the encrypted refund handoff on your computer and keep its passphrase. Approve submission in the local companion terminal.');
+    panel.append(button('Submit lock',async()=>{await submitHegemonSessionFund(opts);await advance();}));return;
+   }
+   if(item.blockHeight===null){
+    const observed=await observeHegemonSessionFunding(opts);if(observed.state==='confirmed'){await advance();return;}
+    const panel=screen('Network','Waiting for the Hegemon lock','Refresh after the network confirms the lock. If submission was uncertain, check your local wallet; the page will not send it again.');refreshButton(panel);return;
+   }
+   const panel=screen('You','Protect your Hegemon refund','Import the saved refund handoff into your local wallet. Approve the import and enter its passphrase in the companion terminal.');
+   panel.append(button('Import refund handoff',async()=>{await importHegemonSessionRefundHandoff(opts);await advance();}));return;
+  }
   if(chain==='bitcoin'&&attempt.state==='prepared'){
    const opts={session:record.session,role:record.role,attemptId:attempt.id,outbox:starter.outbox,readFrames:args=>readSessionFrames({...args,api:d.api}),readers:d.readers,config:await d.loadTiming(),templates:await templates()};
-   let handoff;try{handoff=await bitcoinSessionFundDraft(opts);}catch(error){const panel=screen('You','Check the Bitcoin funding action',error.message);refreshButton(panel);return;}
+   let handoff;try{handoff=await bitcoinSessionFundDraft(opts);}catch{await recoverFunding(record,advance);return;}
    const panel=screen('You','Sign the Bitcoin transaction','Copy this unsigned transaction to your testnet wallet, review it there, and paste the signed PSBT below. The page will check it again before broadcasting.');
    const summary=el('p',handoff.lines.join('\n')),outLabel=el('label','Unsigned Bitcoin PSBT'),out=el('textarea');out.value=handoff.psbt;out.readOnly=true;out.rows=5;outLabel.append(out);
    const inLabel=el('label','Signed Bitcoin PSBT'),input=el('textarea');input.rows=5;inLabel.append(input);panel.append(summary,outLabel,inLabel,button('Check and broadcast',async()=>{const signedPsbt=input.value.trim();input.value='';const result=await broadcastBitcoinSessionFund({...opts,signedPsbt});msg(status,'Bitcoin funding submitted. Save the updated recovery backup and wait for confirmations.');await advance();}));return;
   }
   if(attempt.state!=='intent'||!actionArmed(record.session,record.role,attempt.id)){
-   const panel=screen('You','Check the previous wallet action','This funding attempt may already have reached your wallet. Check the wallet and action journal before trying again.');refreshButton(panel);return;
+   await recoverFunding(record,advance);return;
   }
   if(chain==='bitcoin'){
    const panel=screen('You','Prepare your Bitcoin transaction','Enter the testnet4 address that holds your bitcoin and a fee rate. Your wallet will sign a checked PSBT in the next step.');
    const addressLabel=el('label','Bitcoin testnet4 address'),address=el('input');address.autocomplete='off';addressLabel.append(address);
    const rateLabel=el('label','Fee rate (sat/vB)'),rate=el('input');rate.type='number';rate.min='1';rate.max='200';rate.value='2';rateLabel.append(rate);panel.append(addressLabel,rateLabel,button('Prepare Bitcoin PSBT',async()=>{await prepareBitcoinSessionFund({session:record.session,role:record.role,attemptId:attempt.id,outbox:starter.outbox,readFrames:args=>readSessionFrames({...args,api:d.api}),readers:d.readers,config:await d.loadTiming(),templates:await templates(),address:address.value.trim(),feeRate:Number(rate.value)});await advance();}));return;
+  }
+  if(chain==='hegemon'){
+   const panel=screen('You','Prepare your Hegemon lock','Approve proof generation in your local companion terminal. Keep one separate HGN note for a possible refund fee. This step does not submit the lock.');
+   panel.append(button('Prepare Hegemon lock',async()=>{await prepareHegemonSessionFund({session:record.session,role:record.role,attemptId:attempt.id,outbox:starter.outbox,readFrames:args=>readSessionFrames({...args,api:d.api}),readers:d.readers,config:await d.loadTiming(),templates:await templates()});await advance();}));return;
   }
   if(chain==='ethereum'&&!d.getEthereum()){const panel=screen('You','Connect your Ethereum wallet','Connect the wallet that will fund this side.');panel.append(button('Connect Ethereum wallet',async()=>{await d.connectEthereum();await advance();}));return;}
   if(chain==='cardano'&&!d.getCardano()){
@@ -225,28 +270,44 @@ export function initSessionWizard(d){
   const addressLabel=el('label','Bitcoin testnet4 destination'),address=el('input');address.autocomplete='off';addressLabel.append(address);
   const rateLabel=el('label','Fee rate (sat/vB)'),rate=el('input');rate.type='number';rate.min='1';rate.max='200';rate.value='2';rateLabel.append(rate);panel.append(addressLabel,rateLabel,button('Prepare Bitcoin PSBT',async()=>{await prepareBitcoinSessionSpend({...opts,address:address.value.trim(),feeRate:Number(rate.value)});await after();}));
  }
+ async function hegemonSpend(record,operation,attempt,config,after){
+  const side=operation==='refund'?(record.role==='owner'?'long':'short'):(record.role==='owner'?'short':'long'),item=record.snapshot.hegemon?.[side]?.[operation],opts={session:record.session,role:record.role,operation,attemptId:attempt.id,outbox:starter.outbox,readFrames:args=>readSessionFrames({...args,api:d.api}),readers:d.readers,config,templates:await templates()};
+  if(['prepared','uncertain'].includes(attempt.state)){
+   if(!item){const panel=screen('You','Check the Hegemon wallet','This action may have finished without a response. Check the local wallet before trying again.');refreshButton(panel);return;}
+   if(attempt.state==='prepared'&&item.actionId===null&&hegemonSubmitArmed(record.session,record.role,attempt.id)){const panel=screen('You',`Submit your Hegemon ${operation}`,'Approve submission in the local companion terminal.');panel.append(button(`Submit ${operation}`,async()=>{await submitHegemonSessionSpend(opts);await after();}));return;}
+   const result=await observeHegemonSessionSpend(opts);if(result.state==='confirmed'){await after();return;}
+   const panel=screen('Network',`Waiting for your Hegemon ${operation}`,'Refresh after the network confirms the transaction. The page will not send it again.');refreshButton(panel);return;
+  }
+  if(attempt.state!=='intent'||!actionArmed(record.session,record.role,attempt.id)){const panel=screen('You','Check the Hegemon wallet','This action may already have reached your wallet. Check your wallet before trying again.');refreshButton(panel);return;}
+  const panel=screen('You',`Prepare your Hegemon ${operation}`,'Approve proof generation in the local companion terminal. This step does not submit a transaction.');
+  panel.append(button(`Prepare Hegemon ${operation}`,async()=>{await prepareHegemonSessionSpend(opts);await after();}));
+ }
  async function showRefund(){
   inRefund=true;const index=readIndex(viewId);if(!index)throw Error('The saved swap is unavailable.');
   const session=await deriveSessionId(viewId,index.reservation);
   if(!starter||starter.session!==session||starter.role!==index.role)starter=await makeStarter(viewId,index);
   const record=await getSession(session,index.role);if(!record)throw Error('The saved swap is unavailable.');
   const role=record.role,side=role==='owner'?'long':'short',leg=record.snapshot.terms?.legs[side],ref=record.snapshot.escrows[side];
-  if(!leg||!ref)throw Error('No saved escrow is available to refund.');
+  if(!leg)throw Error('No saved escrow is available to refund.');
   if(!record.backupAcknowledged||!await sessionBackupCurrent(record)){await showBackup(record,showRefund);return;}
   if(reviewRestoredWallets(record,showRefund))return;
-  const config=await d.loadTiming(),seen=leg.asset.chain==='hegemon'?null:await observeSessionLeg({snapshot:record.snapshot,side,readers:d.readers,config});
+  if(!ref){await recoverFunding(record,showRefund);return;}
+  const currentRefund=record.snapshot.actions[side].refund.at(-1);
+  if(leg.asset.chain==='hegemon'&&currentRefund?.state==='submitted'){screen('Complete','Refund confirmed','Your Hegemon refund was confirmed.');return;}
+  if(leg.asset.chain==='hegemon'&&currentRefund&&['prepared','uncertain'].includes(currentRefund.state)){await hegemonSpend(record,'refund',currentRefund,await d.loadTiming(),showRefund);return;}
+  const config=await d.loadTiming(),seen=await observeSessionLeg({snapshot:record.snapshot,side,readers:d.readers,config});
   if(seen?.state==='claimed'){const panel=screen('Complete','Your escrow was claimed','The other person claimed this escrow. It is no longer available for a refund.');if(!seen.enough)refreshButton(panel);return;}
   if(seen?.state==='refunded'){const panel=screen(seen.enough?'Complete':'Network',seen.enough?'Refund confirmed':'Waiting for refund confirmations',seen.enough?'Your refund was confirmed.':'Your refund was seen on chain. Refresh after more confirmations.');if(!seen.enough)refreshButton(panel);return;}
   if(seen?.state==='pending'){const panel=screen('Network','Checking the escrow spend','The chain service has not indexed the spend yet. Refresh to check again.');refreshButton(panel);return;}
   try{await checkSessionRefund({snapshot:record.snapshot,role,readers:d.readers,config});}
   catch(error){const deadline=['bitcoin','hegemon'].includes(leg.asset.chain)?`block ${leg.expiry}`:new Date(leg.expiry*1000).toLocaleString();const panel=screen('Network or time','Refund not ready',`${error.message} Refund deadline: ${deadline}. Refresh to check again.`);refreshButton(panel);return;}
-  if(leg.asset.chain==='hegemon'){const panel=screen('Not yet available','Hegemon refund coordination is not ready','The local wallet verified this refund note, but this wizard cannot yet prepare the refund.');refreshButton(panel);return;}
   const attempt=record.snapshot.actions[side].refund.at(-1);
   if(!attempt||attempt.state==='declined'){
    const panel=screen('You','Prepare your refund','The deadline has passed. Prepare a recovery record before requesting a refund from your wallet.');
    panel.append(button('Prepare refund',async()=>{await checkSessionRefund({snapshot:record.snapshot,role,readers:d.readers,config});await prepareSpendAttempt({session,role,operation:'refund',outbox:starter.outbox});await showRefund();}));return;
   }
   if(attempt.state==='submitted'){const panel=screen('Network','Waiting for your refund','Your refund was submitted. Refresh to check for confirmation.');refreshButton(panel);return;}
+  if(leg.asset.chain==='hegemon'){await hegemonSpend(record,'refund',attempt,config,showRefund);return;}
   if(leg.asset.chain==='bitcoin'&&['intent','prepared'].includes(attempt.state)){await bitcoinSpend(record,'refund',attempt,config,showRefund);return;}
   if(attempt.state!=='intent'||!actionArmed(session,role,attempt.id)){const panel=screen('You','Check the previous refund','This refund may already have reached your wallet. Check the wallet and action journal before retrying.');refreshButton(panel);return;}
   if(leg.asset.chain==='ethereum'&&!d.getEthereum()){const panel=screen('You','Connect your Ethereum wallet','Connect the wallet that funded this escrow.');panel.append(button('Connect Ethereum wallet',async()=>{await d.connectEthereum();await showRefund();}));return;}
@@ -259,6 +320,13 @@ export function initSessionWizard(d){
  }
  async function claim(record){
   const role=record.role,side=role==='owner'?'short':'long',chain=record.snapshot.terms.legs[side].asset.chain,config=await d.loadTiming();
+  const hgnAttempt=chain==='hegemon'?record.snapshot.actions[side].claim.at(-1):null;
+  if(hgnAttempt?.state==='submitted'){
+   const other=await observeSessionLeg({snapshot:record.snapshot,side:role==='owner'?'long':'short',readers:d.readers,config});
+   if(other.state==='claimed'&&other.enough){screen('Complete','Swap complete','Both sides have been claimed and confirmed.');return;}
+   const panel=screen(other.state==='pending'?'Network':'The other person','Your claim is confirmed','Refresh to check whether the other person has claimed your escrow.');refreshButton(panel);return;
+  }
+  if(hgnAttempt&&['prepared','uncertain'].includes(hgnAttempt.state)){await hegemonSpend(record,'claim',hgnAttempt,config,advance);return;}
   const seen=await observeSessionLeg({snapshot:record.snapshot,side,readers:d.readers,config});
   if(seen.state==='claimed'){
    if(!seen.enough){const panel=screen('Network','Waiting for claim confirmations','Your claim was seen on chain. Refresh after more confirmations.');refreshButton(panel);return;}
@@ -291,6 +359,7 @@ export function initSessionWizard(d){
    panel.append(button('Prepare claim',async()=>{await verifyTerms(record,role==='owner'?'claim_short':'claim_long');await prepareSpendAttempt({session:record.session,role,operation:'claim',outbox:starter.outbox});await advance();}));return;
   }
   if(chain==='bitcoin'&&['intent','prepared'].includes(attempt.state)){await bitcoinSpend(record,'claim',attempt,config,advance);return;}
+  if(chain==='hegemon'){await hegemonSpend(record,'claim',attempt,config,advance);return;}
   if(attempt.state!=='intent'||!actionArmed(record.session,role,attempt.id)){
    const panel=screen('You','Check the previous wallet action','This claim may already have reached your wallet. Check your wallet and the action journal before trying again.');refreshButton(panel);return;
   }
@@ -326,7 +395,7 @@ export function initSessionWizard(d){
    }
    panel.append(button('Prepare terms',async()=>{
     const passphrase=phrase.value;phrase.value='';await loadPinnedScript();
-    const planned=await planSessionTerms({session,role,snapshot:record.snapshot,readers:d.readers,config:await d.loadTiming(),passphrase,cardanoDeposit:deposit?toBaseUnits('cardano:ada',deposit.value):undefined,now:now()});
+    const planned=await planSessionTerms({session,role,snapshot:record.snapshot,readers:d.readers,config:await d.loadTiming(),passphrase,cardanoDeposit:deposit?toBaseUnits('cardano:ada',deposit.value):undefined,now:now(),allowUnverifiedHegemon:hasHegemonConsent(session,role)});
     await updateSession(session,role,record.revision,{...record.snapshot,terms:planned.terms,secretEnvelope:planned.secretEnvelope});await advance();
    }));return;
   }
@@ -335,7 +404,7 @@ export function initSessionWizard(d){
    if(!peers.length||peers[0].body.payload.type!=='proposal'||canonical(peers[0].body.payload.terms)!==canonical(terms))throw Error('The maker’s signed proposal no longer matches the saved terms.');
    if(outbox.next===3){
     const panel=screen('You','Review and accept the terms',termsSummary(terms));
-    panel.append(button('Accept these terms',async()=>{await verifyTerms(record,'review');await publishSessionAgreement({session,role,outbox:starter.outbox,readFrames,now:now()});await advance();}));return;
+    panel.append(button('Accept these terms',async()=>{await verifyTerms(record,'review');await publishSessionAgreement({session,role,outbox:starter.outbox,readFrames,now:now(),allowUnverifiedHegemon:hasHegemonConsent(session,role)});await advance();}));return;
    }
    if(peers.length<2){const panel=screen('The other person','Waiting for the first lock','The maker has not yet supplied a verified first escrow. Refresh after they lock their side.');refreshButton(panel);return;}
    const notice=peers[1].body.payload;
@@ -348,20 +417,20 @@ export function initSessionWizard(d){
    if(canonical(record.snapshot.escrows.long)!==canonical(notice.reference))throw Error('The first escrow reference changed.');
    if(record.snapshot.escrows.short===null){await fund(record);return;}
    if(outbox.next===4){
-    try{await publishSessionEscrow({session,role,outbox:starter.outbox,readFrames,now:now(),readers:d.readers,config:await d.loadTiming(),templates:await templates()});await advance();}
+    try{await publishSessionEscrow({session,role,outbox:starter.outbox,readFrames,now:now(),readers:d.readers,config:await d.loadTiming(),templates:await templates(),allowUnverifiedHegemon:hasHegemonConsent(session,role)});await advance();}
     catch(error){const panel=screen('Network or service','Second lock not verified',error.message+' Refresh to check again.');refreshButton(panel);}return;
    }
    await claim(record);return;
   }
   if(outbox.next===2){
    const panel=screen('You','Review and send the terms',termsSummary(terms));
-   panel.append(button('Send these terms',async()=>{await verifyTerms(record,'fund_first');await publishSessionAgreement({session,role,outbox:starter.outbox,readFrames,now:now()});await advance();}));return;
+   panel.append(button('Send these terms',async()=>{await verifyTerms(record,'fund_first');await publishSessionAgreement({session,role,outbox:starter.outbox,readFrames,now:now(),allowUnverifiedHegemon:hasHegemonConsent(session,role)});await advance();}));return;
   }
   if(!peers.length){const panel=screen('The other person','Waiting for their acceptance','The other participant must review the signed terms. Refresh to check again.');refreshButton(panel);return;}
   if(peers[0].body.payload.type!=='accept'||peers[0].body.payload.termsDigest!==digest)throw Error('The other participant’s acceptance does not match the saved terms.');
   if(record.snapshot.escrows.long===null){await fund(record);return;}
   if(outbox.next===3){
-   try{await publishSessionEscrow({session,role,outbox:starter.outbox,readFrames,now:now(),readers:d.readers,config:await d.loadTiming(),templates:await templates()});await advance();}
+   try{await publishSessionEscrow({session,role,outbox:starter.outbox,readFrames,now:now(),readers:d.readers,config:await d.loadTiming(),templates:await templates(),allowUnverifiedHegemon:hasHegemonConsent(session,role)});await advance();}
    catch(error){const panel=screen('Network or service','First lock not verified',error.message+' Refresh to check again.');refreshButton(panel);}return;
   }
   if(peers.length<2){const panel=screen('The other person','Waiting for their lock','Your confirmed escrow has been shared. Refresh after the other person locks their side.');refreshButton(panel);return;}
@@ -377,7 +446,7 @@ export function initSessionWizard(d){
  }
  async function advance(){
   const localEpoch=++epoch,id=viewId,index=readIndex(id);if(!index){await showUnstarted(id);return;}
-  const existing=await getSession(await deriveSessionId(id,index.reservation),index.role);refundAvailable=!!existing?.snapshot.escrows[index.role==='owner'?'long':'short'];
+  const existing=await getSession(await deriveSessionId(id,index.reservation),index.role),own=index.role==='owner'?'long':'short',funding=existing?.snapshot.actions?.[own]?.fund?.at(-1);refundAvailable=!!existing?.snapshot.escrows[own]||!!funding&&(['prepared','uncertain'].includes(funding.state)||funding.state==='intent'&&!actionArmed(existing.session,existing.role,funding.id));
   if(!starter||starter.session!==await deriveSessionId(id,index.reservation)||starter.role!==index.role)starter=await makeStarter(id,index);
   let result;
   try{result=await starter.advance();}

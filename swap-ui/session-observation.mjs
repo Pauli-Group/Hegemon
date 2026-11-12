@@ -6,6 +6,7 @@ import {ethereumContract} from './session-verify.mjs';
 import {assertSepoliaIdentity} from './sepolia-verifier.mjs';
 import {observeBitcoin,observeCardano,observeEthereum} from './observers.mjs';
 import {legRequirements} from './timelock-policy.mjs';
+import {sessionAssetTerms} from './session-assets.mjs';
 
 export async function observeSessionLeg({snapshot,side,readers,config}){
  if(!snapshot||!['long','short'].includes(side))throw Error('Invalid swap observation.');
@@ -14,10 +15,9 @@ export async function observeSessionLeg({snapshot,side,readers,config}){
  if(ref.chain!==leg.asset.chain)throw Error('The escrow reference is on the wrong chain.');
  const confirmations=legRequirements(config,ref.chain).confirmations;
  if(ref.chain==='hegemon'){
-  if(typeof readers?.hegemon?.observe!=='function')throw Error('The Hegemon secret observer is unavailable.');
-  // A revealed secret can be used to claim the other escrow, but on its own
-  // does not prove which private note was spent.
-  return readers.hegemon.observe(snapshot.terms.hashlock,Number(ref.block_height),{confirmations});
+  if(typeof readers?.hegemon?.noteStatus!=='function')throw Error('The Hegemon note observer is unavailable.');
+  const fields=sessionAssetTerms(snapshot.terms,side,{reference:ref}).operationTerms;
+  return readers.hegemon.noteStatus(fields,{confirmations,creationHeight:Number(ref.block_height)});
  }
  if(ref.chain==='bitcoin'){
   if(typeof readers?.bitcoin?.spend!=='function')throw Error('The Bitcoin spend reader is unavailable.');

@@ -23,7 +23,7 @@ export async function verifySepoliaEscrow(provider,template,terms,limits={}){
   // A bounded read-only restart preserves the verifier's stable-head rule.
   for(let attempt=0;attempt<3;attempt++){
     try{
-      const result=await (terms.kind==='eth'?verifyEtherEscrow(provider,template,checked,confirmations,remaining):verifyTokenEscrow(provider,template,checked,confirmations,remaining));
+      const result=await (terms.kind==='eth'?verifyEtherEscrow(provider,template,checked,confirmations,remaining,{allowExpired:limits.allowExpired===true}):verifyTokenEscrow(provider,template,checked,confirmations,remaining));
       await assertSepoliaIdentity(provider);return result;
     }catch(error){
       const message=String(error?.message||'');

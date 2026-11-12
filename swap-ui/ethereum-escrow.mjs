@@ -46,7 +46,8 @@ export function expectedEtherRuntime(template,terms){
   number(terms.amount);if(BigInt(terms.amount)===0n)throw Error('invalid asset quantity');
   return patchRuntime(template,words);
 }
-export async function verifyEtherEscrow(provider,template,terms,confirmations=2,minimumRemainingSeconds=60){
+export async function verifyEtherEscrow(provider,template,terms,confirmations=2,minimumRemainingSeconds=60,{allowExpired=false}={}){
+  if(typeof allowExpired!=='boolean')throw Error('invalid expiry mode');
   if(!provider||typeof provider.request!=='function'||!Number.isSafeInteger(confirmations)||confirmations<1||confirmations>10000||!Number.isSafeInteger(minimumRemainingSeconds)||minimumRemainingSeconds<1)throw Error('invalid provider or verification limits');
   if(!terms||typeof terms.chainId!=='string'||!/^0x[0-9a-f]{1,64}$/i.test(terms.chainId))throw Error('invalid chain');
   const contract='0x'+address(terms.contract).slice(24);
@@ -57,9 +58,9 @@ export async function verifyEtherEscrow(provider,template,terms,confirmations=2,
   const latest=BigInt(await request('eth_blockNumber'));if(latest<BigInt(confirmations-1))throw Error('not enough blocks');
   const tag='0x'+(latest-BigInt(confirmations-1)).toString(16);
   const block=await request('eth_getBlockByNumber',[tag,false]);
-  if(!block||typeof block.hash!=='string'||!/^0x[0-9a-fA-F]{64}$/.test(block.hash)||BigInt(block.timestamp)>=BigInt(terms.expiry))throw Error('missing block or escrow expired');
+  if(!block||typeof block.hash!=='string'||!/^0x[0-9a-fA-F]{64}$/.test(block.hash)||!allowExpired&&BigInt(block.timestamp)>=BigInt(terms.expiry))throw Error('missing block or escrow expired');
   const current=await request('eth_getBlockByNumber',['latest',false]);
-  if(!current||BigInt(terms.expiry)-BigInt(current.timestamp)<BigInt(minimumRemainingSeconds))throw Error('escrow deadline too close');
+  if(!current||!allowExpired&&BigInt(terms.expiry)-BigInt(current.timestamp)<BigInt(minimumRemainingSeconds))throw Error('escrow deadline too close');
   if(typeof current.number!=='string'||!/^0x[0-9a-f]+$/i.test(current.number)||typeof current.hash!=='string'||!/^0x[0-9a-f]{64}$/i.test(current.hash))throw Error('invalid current block');
   const actual=await request('eth_getCode',[contract,tag]);
   const expected=patchRuntime(template,words);
@@ -74,7 +75,7 @@ export async function verifyEtherEscrow(provider,template,terms,confirmations=2,
   const again=await request('eth_getBlockByNumber',[tag,false]);
   if(!again||again.hash!==block.hash||BigInt(await request('eth_chainId'))!==BigInt(terms.chainId))throw Error('snapshot or chain changed');
   const latestBlock=await request('eth_getBlockByNumber',['latest',false]);
-  if(!latestBlock||BigInt(terms.expiry)-BigInt(latestBlock.timestamp)<BigInt(minimumRemainingSeconds))throw Error('escrow deadline too close');
+  if(!latestBlock||!allowExpired&&BigInt(terms.expiry)-BigInt(latestBlock.timestamp)<BigInt(minimumRemainingSeconds))throw Error('escrow deadline too close');
   if(latestBlock.hash!==current.hash)throw Error('snapshot or chain changed');
   return {chainId:terms.chainId,blockNumber:tag,blockHash:block.hash,confirmations,contract,balance:balance.toString(),headTimestamp:Number(latestBlock.timestamp)};
 }

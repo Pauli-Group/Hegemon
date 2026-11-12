@@ -48,3 +48,13 @@ test('Hegemon note lookup and action inclusion require bounded confirmed evidenc
  assert.equal((await reader.inclusion('bb'.repeat(32))).actionId,'cc'.repeat(48));
  value={...value,confirmations:4};await assert.rejects(reader.inclusion('bb'.repeat(32),'cc'.repeat(48)),/stale/);
 });
+test('Hegemon note status binds the exact lock and checks the disclosed claim secret',async()=>{
+ const secret=new Uint8Array(32).fill(7),hashlock=toHex(new Uint8Array(await crypto.subtle.digest('SHA-256',secret))),terms={locked:'7',claim:'shca1'+'p'.repeat(100),refund:'shca1'+'q'.repeat(100),hashlock,timeout:'120',amount:'100',action_id:'bb'.repeat(48)};
+ let value={state:'unspent',lock_height:'98'};
+ const reader=hegemonSessionReader({enabled:()=>true,request:async path=>path.endsWith('/head')?{network:'pre-mainnet',genesis:HEGEMON_GENESIS,chain_id:HEGEMON_CHAIN_ID,height:'100'}:value});
+ assert.equal((await reader.noteStatus(terms,{confirmations:2,creationHeight:98})).state,'unspent');
+ value={state:'claimed',lock_height:'98',action_id:'cc'.repeat(48),block_height:'99',confirmations:2,preimage:toHex(secret)};
+ assert.equal((await reader.noteStatus(terms,{confirmations:2,creationHeight:98})).enough,true);
+ value={...value,preimage:'00'.repeat(32)};await assert.rejects(reader.noteStatus(terms,{confirmations:2,creationHeight:98}),/does not match/);
+ value={...value,state:'refunded',lock_height:'97'};await assert.rejects(reader.noteStatus(terms,{confirmations:2,creationHeight:98}),/lock block/);
+});

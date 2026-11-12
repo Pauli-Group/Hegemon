@@ -882,6 +882,19 @@ impl Poseidon2V8WalletState {
         self.nullifiers.iter().any(|entry| entry.value == value)
     }
 
+    /// Return the canonical block that introduced this nullifier, if present.
+    pub(crate) fn canonical_nullifier_occurrence(&self, value: Poseidon2V8Digest) -> Result<Option<(u64, [u8; 32])>, WalletError> {
+        let mut matches = self.nullifiers.iter().filter(|entry| entry.value == value);
+        let Some(entry) = matches.next() else { return Ok(None) };
+        if matches.next().is_some() { return Err(WalletError::InvalidState("duplicate canonical nullifier")); }
+        let mut blocks = self.blocks.iter().filter(|block| block.block_hash == entry.block_hash);
+        let block = blocks.next().ok_or(WalletError::InvalidState("nullifier block missing"))?;
+        if blocks.next().is_some() || self.canonical_hash(block.height) != Some(block.block_hash) {
+            return Err(WalletError::InvalidState("nullifier block not canonical"));
+        }
+        Ok(Some((block.height, block.block_hash)))
+    }
+
     pub(crate) fn spend_context(
         &self,
         reserved: &std::collections::HashSet<Poseidon2V8Digest>,
@@ -2455,6 +2468,24 @@ pub(crate) mod tests {
     const REPLACEMENT_3: [u8; 32] = [0x23; 32];
     const SOURCE_DIVERSIFIER: u32 = 9;
     const TEST_STABLECOIN_ROOT: Poseidon2V8Digest = [1, 2, 3, 4, 5, 6, 7];
+
+    #[test]
+    fn canonical_nullifier_occurrence_fails_closed_on_ambiguity_or_detachment() {
+        let mut state = Poseidon2V8WalletState::default();
+        let value = [7; 7];
+        assert_eq!(state.canonical_nullifier_occurrence(value).unwrap(), None);
+        state.blocks.push(StoredPoseidon2V8Block {
+            height: 1, block_hash: BLOCK_1, parent_hash: GENESIS, leaf_count_before: 0,
+            root_log_len_before: 0, root_after: [0; 7], stablecoin_root_before: None,
+            stablecoin_root_after: None, introduced_nullifiers: vec![value], released_rewards: vec![],
+        });
+        state.nullifiers.push(StoredPoseidon2V8Nullifier { value, block_hash: BLOCK_1 });
+        assert_eq!(state.canonical_nullifier_occurrence(value).unwrap(), Some((1, BLOCK_1)));
+        state.nullifiers.push(StoredPoseidon2V8Nullifier { value, block_hash: BLOCK_1 });
+        assert!(state.canonical_nullifier_occurrence(value).is_err());
+        state.nullifiers.pop();state.blocks.clear();
+        assert!(state.canonical_nullifier_occurrence(value).is_err());
+    }
 
     include!("poseidon2_v8_reservation_tests.rs");
 

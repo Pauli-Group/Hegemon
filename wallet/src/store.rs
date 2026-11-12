@@ -872,6 +872,18 @@ impl WalletStore {
         })
     }
 
+    /// Observe one owned private note's canonical nullifier without exposing it.
+    pub fn private_spend_note_spend_location(&self, position: u64) -> Result<Option<(u64, [u8; 32])>, WalletError> {
+        self.with_state(|state| {
+            let mut notes = state.private_spend_notes.iter().filter(|note| note.position == position);
+            let note = notes.next().ok_or(WalletError::InvalidState("private note absent"))?;
+            if notes.next().is_some() { return Err(WalletError::InvalidState("ambiguous private note")); }
+            let found = state.poseidon2_v8.canonical_nullifier_occurrence(note.nullifier)?;
+            if note.spent != found.is_some() { return Err(WalletError::InvalidState("private note spent state is inconsistent")); }
+            Ok(found)
+        })
+    }
+
     pub fn poseidon2_v8_spend_context(&self) -> Result<Poseidon2V8SpendContext, WalletError> {
         self.with_state(|state| {
             state

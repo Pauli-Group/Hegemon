@@ -3057,6 +3057,31 @@ That browser test also exercises the guided connection indicator before pairing,
 
 `CHROMIUM_PATH=/usr/bin/chromium node --test swap-service/session-store-browser.test.mjs` checks reload persistence, non-extractable signing keys, optimistic update conflicts, backup acknowledgement, funding prerequisites and recovery of a wallet-signed participant after a lost relay response. `node --test swap-ui/session-recovery.test.mjs swap-ui/session-outbox.test.mjs swap-ui/session-participant.test.mjs swap-service/session-protocol.test.mjs` additionally checks packet-history high-water marks and authenticated relay replay. This exercises synthetic data.
 
-`CHROMIUM_PATH=/usr/bin/chromium node --test swap-service/session-start-browser.test.mjs` exercises two browser contexts against the local relay, a lost handshake response, a changed-offer refusal and session recovery after refresh. `swap-service/session-wizard-browser.test.mjs` drives both participants through simulated ADA/ETH swaps in both orders and a Bitcoin–Ethereum swap, checks individual wallet approvals and backup restoration, and tests ADA/ETH refunds after refresh with the relay unavailable. `swap-service/session-bitcoin-draft-browser.test.mjs` and `swap-service/session-bitcoin-fund-browser.test.mjs` exercise persisted unsigned PSBTs, uncertain broadcasts, refund and claim gates with synthetic data. `node --test swap-ui/session-bitcoin.test.mjs` exercises Bitcoin terms, timing, wallet proofs and testnet escrow verification. Hegemon transaction coordination and additional Bitcoin pairings are not yet complete. None of these tests submits a public-testnet transaction.
+`CHROMIUM_PATH=/usr/bin/chromium node --test swap-service/session-start-browser.test.mjs` exercises two browser contexts against the local relay, a lost handshake response, a changed-offer refusal and session recovery after refresh. `swap-service/session-wizard-browser.test.mjs` drives both participants through all native BTC, ETH, ADA and HGN pairings in both directions using simulated chain responses, checks individual wallet approvals and backup restoration, and tests ADA/ETH refunds after refresh with the relay unavailable. The Bitcoin funding and draft browser tests exercise persisted PSBTs, uncertain broadcasts, refunds and claim gates with synthetic data. `session-reconcile-browser.test.mjs` checks Ethereum and Cardano lost-response recovery; the Bitcoin funding browser test checks Bitcoin recovery. Hegemon funding and claim browser tests cover uncertain local actions and refund handoffs. None of these tests submits a public-testnet transaction.
 
 The local Hegemon primitives can be checked without connecting to a node: `PYTHONPATH=scripts python3 -m unittest scripts.test_local_swap_companion scripts.test_hegemon_swap_observer scripts.test_hegemon_action_runner scripts.test_hegemon_local_actions` and `node --test swap-ui/session-hegemon.test.mjs swap-ui/session-hegemon-read.test.mjs`. The wallet's available-note selector and HTLC checks have targeted Rust tests. The simulated tests do not demonstrate a live Hegemon swap or establish safety for production funds.
+
+### Local public-testnet rehearsal before deployment
+
+The local rehearsal serves the actual Worker and hosted page at a loopback address, with its own persistent local D1. It uses public providers for Bitcoin testnet4, Ethereum Sepolia and Cardano preview. It does not publish the Worker, touch the remote D1, start a node or read any `.wrangler` directory. Its state directory must be a private, empty directory outside the checkout. Restart with the same directory to retain offers and swap sessions. This is a testnet service, not a production configuration.
+
+On the Linux computer with the already-running Hegemon pre-mainnet node, use Node 24 and a source-built branch wallet. The following creates separate private directories and installs the pinned local Worker runtime outside the checkout:
+
+    umask 077
+    mkdir -p "$HOME/.local/share/hegemon-swap/rehearsal-tools" "$HOME/.local/share/hegemon-swap/rehearsal-state" "$HOME/.local/share/hegemon-swap/refund-handoffs"
+    npm install --prefix "$HOME/.local/share/hegemon-swap/rehearsal-tools" wrangler@4.156.2 --no-audit --no-fund
+    cargo build --release -p wallet --bin private-spend --features rpc-client
+    SWAP_MINIFLARE_MODULE="$HOME/.local/share/hegemon-swap/rehearsal-tools/node_modules/miniflare" \
+      node scripts/run_swap_rehearsal.mjs --state "$HOME/.local/share/hegemon-swap/rehearsal-state" --port 8787
+
+Leave that terminal open. In another local terminal, start the companion for one test wallet, replacing the wallet path with the correct file. The existing node must already expose wallet RPC only on loopback; this command neither changes its RPC settings nor restarts it:
+
+    python3 scripts/local_swap_companion.py --local-hegemon-swap \
+      --origin http://127.0.0.1:8787 --hegemon-rpc http://127.0.0.1:9944 \
+      --hegemon-wallet /path/to/one.wallet \
+      --hegemon-handoff-dir "$HOME/.local/share/hegemon-swap/refund-handoffs" \
+      --token-file "$HOME/.local/share/hegemon-swap/companion-token"
+
+Open `http://127.0.0.1:8787/` in the test browser and pair using the local token file. Use separate browser profiles and dedicated testnet wallets for the two parties. If both Hegemon wallets are on the same computer, stop the companion and restart it with the appropriate wallet when switching participants; the wizard checks that the wallet address matches the agreed terms before Hegemon actions. Each action needs local terminal approval. Keep the encrypted refund handoff files and their passphrases: the browser's encrypted recovery backup contains their names, not the files or passphrases. If the node, public tip, wallet, or chain provider is not ready, stop and report the failure rather than bypassing checks or resubmitting an uncertain action.
+
+`SWAP_MINIFLARE_MODULE=/path/to/node_modules/miniflare PYTHONPATH=scripts python3 -m unittest scripts.test_swap_rehearsal` checks local D1 persistence, loopback startup and refusal of an unrelated state directory with synthetic offers. The companion origin tests check that the hosted mode stays pinned to the hosted origin and the rehearsal mode accepts only its configured loopback origin. The local Worker can use the machine's configured HTTP proxy for its allowlisted public providers. These checks do not perform a live swap.

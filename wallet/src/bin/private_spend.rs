@@ -242,6 +242,9 @@ enum Command {
         /// Verify a mature refund note instead of a still-claimable note.
         #[arg(long)]
         refund_ready: bool,
+        /// Observe whether this exact note has a canonical spend, without requiring a live claim window.
+        #[arg(long, conflicts_with = "refund_ready")]
+        observe_spend: bool,
     },
     Attempts,
     Cancel {
@@ -1256,12 +1259,21 @@ async fn main() -> Result<()> {
             min_confirmations,
             min_remaining_blocks,
             refund_ready,
+            observe_spend,
         } => {
             ensure!(
                 min_confirmations > 0 && amount > 0,
                 "invalid verification limits"
             );
-            let note = private_note(&store, locked)?;
+            let note = if observe_spend {
+                store
+                    .private_spend_notes()?
+                    .into_iter()
+                    .find(|n| n.position == locked)
+                    .context("private note absent at position")?
+            } else {
+                private_note(&store, locked)?
+            };
             ensure!(
                 node.block_hash(note.created_height).await? == Some(note.created_block_hash),
                 "HTLC creation block is not canonical"
@@ -1275,7 +1287,9 @@ async fn main() -> Result<()> {
                 confirmations >= min_confirmations,
                 "insufficient confirmations"
             );
-            verify_htlc_window(timeout, r.parent_height, min_remaining_blocks, refund_ready)?;
+            if !observe_spend {
+                verify_htlc_window(timeout, r.parent_height, min_remaining_blocks, refund_ready)?;
+            }
             let path = store
                 .poseidon2_v8_canonical_note_witness_at(note.commitment, note.position)?
                 .context("canonical membership absent")?;
@@ -1306,6 +1320,22 @@ async fn main() -> Result<()> {
                     && node.block_hash(r.parent_height).await? == Some(r.parent_hash),
                 "chain changed during HTLC verification"
             );
+            let spent = if observe_spend {
+                match store.private_spend_note_spend_location(locked)? {
+                    None => Value::Null,
+                    Some((height, hash)) => {
+                        ensure!(
+                            height >= note.created_height
+                                && height <= r.parent_height
+                                && node.block_hash(height).await? == Some(hash),
+                            "spend block is not canonical"
+                        );
+                        serde_json::json!({"height":height,"block_hash":format!("0x{}",hex::encode(hash)),"confirmations":r.parent_height-height+1,"nullifier":hex::encode(note.nullifier.iter().flat_map(|word| word.to_le_bytes()).collect::<Vec<_>>())})
+                    }
+                }
+            } else {
+                Value::Null
+            };
             println!(
                 "{}",
                 serde_json::json!({"verified": true, "position": locked,
@@ -1313,7 +1343,7 @@ async fn main() -> Result<()> {
                 "confirmations": confirmations, "refund_ready": refund_ready,
                 "commitment": hex::encode(note.commitment.iter().flat_map(|word| word.to_le_bytes()).collect::<Vec<_>>()),
                 "created_block_hash": format!("0x{}", hex::encode(note.created_block_hash)),
-                "reference_block_hash": format!("0x{}", hex::encode(r.parent_hash))})
+                "reference_block_hash": format!("0x{}", hex::encode(r.parent_hash)), "spent":spent})
             );
         }
         Command::Attempts => print_attempts(&store)?,

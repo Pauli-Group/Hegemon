@@ -6,12 +6,12 @@
   "local": "index.html"
  },
  "import_map": {
-  "source": "sha256-oa2g6/xSfJi+lk3zmHRwG9Zg5vFuAYz0bZiykdR1hSI=",
-  "modules": 64
+  "source": "sha256-LqQ2aO7wbkiJziv2PuKjQce1z8gag5YOJC4kDmH1a3E=",
+  "modules": 66
  },
  "csp": {
-  "hosted": "default-src 'self'; script-src 'self' 'sha256-oa2g6/xSfJi+lk3zmHRwG9Zg5vFuAYz0bZiykdR1hSI='; style-src 'self'; connect-src 'self' http://127.0.0.1:8788; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
-  "local": "default-src 'self'; script-src 'self' 'sha256-oa2g6/xSfJi+lk3zmHRwG9Zg5vFuAYz0bZiykdR1hSI='; style-src 'self'; connect-src 'self' http://127.0.0.1:8788; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+  "hosted": "default-src 'self'; script-src 'self' 'sha256-LqQ2aO7wbkiJziv2PuKjQce1z8gag5YOJC4kDmH1a3E='; style-src 'self'; connect-src 'self' http://127.0.0.1:8788; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+  "local": "default-src 'self'; script-src 'self' 'sha256-LqQ2aO7wbkiJziv2PuKjQce1z8gag5YOJC4kDmH1a3E='; style-src 'self'; connect-src 'self' http://127.0.0.1:8788; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
  },
  "headers": {
   "x-content-type-options": "nosniff",
@@ -21,12 +21,12 @@
  "chain_timing_sha256": "8b2e3a6dbf87d8a74fe1dbcca5699ee703397d9330203e54c345ebef94d3ad7b",
  "files": {
   "action-journal.mjs": {
-   "sha256": "778f4f3f3bd3e8e65773c9d75798011a6e34dcb2c7bac5cf12f85c984d89edd5",
-   "bytes": 10074
+   "sha256": "7afb3f211b60b104214a8e4f13f4e7a82f0f9ee9c7074800f6f1ae8e07388aba",
+   "bytes": 10568
   },
   "app.js": {
-   "sha256": "52a50ae124b022a4bb8e32c2798ea4d688382107a6e41236cee8556cb2413ed5",
-   "bytes": 92076
+   "sha256": "dd99c6a15e95ecf354fde4cf7f92f6786bc24b6a649176413444c72391d320f8",
+   "bytes": 92185
   },
   "bitcoin-psbt.mjs": {
    "sha256": "1409022bea941c40ff8d9583648c661a4eecaa362359e64a05e9071deddebcff",
@@ -89,8 +89,8 @@
    "bytes": 13451
   },
   "ethereum-escrow.mjs": {
-   "sha256": "6aa3a5dc08b8e5fbb82068240fff9f4909d957124cb6c06de0e9c537758b377c",
-   "bytes": 10674
+   "sha256": "a80ad07c264d3de4bdc618bff2cfbb0a73c35e5eaae9cc0b3297e28f2f510ce0",
+   "bytes": 10816
   },
   "guided-ui.mjs": {
    "sha256": "844599f31e74a49f9c85ac2c5c9cdeae703d341f15e9698b197743850b4de23f",
@@ -101,8 +101,8 @@
    "bytes": 18803
   },
   "hosted.html": {
-   "sha256": "c39695a1fe540d331d03250e1de33a28e54bb5854b4448c7defa95c6852b37a4",
-   "bytes": 75306
+   "sha256": "93310433303f0b52ef7611452c5d664c026f2e26d0085956072e9b770a5b8633",
+   "bytes": 76342
   },
   "identity-flow.mjs": {
    "sha256": "887417777f3780141cc89670e0252af511c10a323f5b523d4a5c60f368c5d7c6",
@@ -125,8 +125,8 @@
    "bytes": 3697
   },
   "index.html": {
-   "sha256": "a44059f59a3fe79e0b516d5b50d3443db2f2296d694c38e50b47b57a150314aa",
-   "bytes": 75456
+   "sha256": "6e6edebaf6e4e51e3da8c3a9b66f82400c83f6fa5dc2b2c4d55dbbf3da11c77d",
+   "bytes": 76492
   },
   "journey-ui.mjs": {
    "sha256": "8d62a60a61673d8703311da5c6903d1d7ff583a52cd60588104a81b9b6ac7303",
@@ -169,12 +169,12 @@
    "bytes": 9136
   },
   "sepolia-verifier.mjs": {
-   "sha256": "e7e7c1b2032758893a59cc070dd3c06834bbc76b37553df85a4f8eec7f2078bb",
-   "bytes": 2497
+   "sha256": "6d93c24d57d214253463bfb90a1198abac896b55b64afe5a06f40b3f700096a1",
+   "bytes": 2539
   },
   "session-action.mjs": {
-   "sha256": "7b2fca509ffeec80bceba11a3cd5c22c8d7a5049b79071abf03c9f330c8eda45",
-   "bytes": 7614
+   "sha256": "982e12f0f11e1570d597ed7de6f9edacf053b1ade2cef76c556c4e696ce9b17b",
+   "bytes": 7781
   },
   "session-assets.mjs": {
    "sha256": "e05a32550ddc963fa3477f27113dae84e9cc75b1fdc3a5c68812a1aa8ebb4f65",
@@ -209,24 +209,28 @@
    "bytes": 9532
   },
   "session-hegemon-funding.mjs": {
-   "sha256": "d7e825facd7f899635c3bd8306d96194c689f82efdb09b71c9df9a0be99fd2a3",
-   "bytes": 12940
+   "sha256": "3089a8459c8439b05e313a577b1993c00bc3b7f51a2fc424fbf62087075f2ea4",
+   "bytes": 17561
   },
   "session-hegemon-read.mjs": {
-   "sha256": "40083f9976e586d5f5c648c27a190c8b74230ef137b9281fa25f165509627443",
-   "bytes": 8464
+   "sha256": "1463826853c6192358dca8abae2a7255f6ddc07a1ea1d971e0ee34ad1652b4f7",
+   "bytes": 10703
   },
   "session-hegemon-recovery.mjs": {
    "sha256": "268484ed51f21cb3df88f52cfd111d34bdf17a6d73d39e93528bd8e031a62e93",
    "bytes": 2424
+  },
+  "session-hegemon-spend.mjs": {
+   "sha256": "ef601d77c2642e5f789418786232533034b1806be25b5f3a42991845e49d5241",
+   "bytes": 14279
   },
   "session-identity.mjs": {
    "sha256": "90b1d71d04371bc8f65f86d4253dcb8a5d0735874fc10d097ef4f11702d7dd2f",
    "bytes": 8229
   },
   "session-observation.mjs": {
-   "sha256": "64a9391be963f4696d2fbae9a5ce146295871d48a2ff90aef6133b2b2c0e6369",
-   "bytes": 2668
+   "sha256": "4accbe175e7943c4ee98f5c40dcb803c6bd1f5cbcf67f867a5023abdd58c0dff",
+   "bytes": 2685
   },
   "session-outbox.mjs": {
    "sha256": "dd1ef3a9b25a5b5551b1ff572388f8fbe7c55b8307a4e31a63ae905d2669d313",
@@ -243,6 +247,10 @@
   "session-plan.mjs": {
    "sha256": "fbc6a576a280f3c5936bba453a0135ac84ca758faa18d9624105552a84625867",
    "bytes": 7033
+  },
+  "session-reconcile.mjs": {
+   "sha256": "d577b692a0f796ad5684dd7d1591f8d9cd99988fa8170a4fcfb90d1ad5b87ce6",
+   "bytes": 4418
   },
   "session-recovery.mjs": {
    "sha256": "25c3edab43b620ec1f1562a0e9d848dccac41ce3c9b731fc90cb00ac21477969",
@@ -261,8 +269,8 @@
    "bytes": 2002
   },
   "session-start.mjs": {
-   "sha256": "a86ba82068293cf36a2ded01dd40c4cab1ce7166670f535ba46ad7f5627df143",
-   "bytes": 9392
+   "sha256": "4932b295e1415de932ac41903912471c574421be492a0357e7cc4a17db782ffc",
+   "bytes": 9412
   },
   "session-store.mjs": {
    "sha256": "b5f9245cc63a334ed79c2082240289ec4afaa410d15931168e8553bedd62391c",
@@ -273,8 +281,8 @@
    "bytes": 10783
   },
   "session-wizard.mjs": {
-   "sha256": "08f4a23913e21d29df8160183e39e11ed8ccd1a4a18d8be52f10056d8dc13d13",
-   "bytes": 50106
+   "sha256": "e2713df8ff4960c26af23cc5f1aa12ea3db2083ef3c1cbefc880a28db2dada83",
+   "bytes": 59563
   },
   "style.css": {
    "sha256": "48860b2dbb77d970093fbc7d91c615485ce253c9e05ab41892d46f79ae7dd954",

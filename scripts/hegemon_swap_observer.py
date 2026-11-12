@@ -10,7 +10,7 @@ import re
 from probe_hegemon_testnet import hegemon_policy_confirmations
 from public_hegemon_preimage_observer import scan_public_hegemon_preimage
 from probe_hegemon_testnet import RELATION
-from hegemon_preimage_observer import IDENTITY
+from hegemon_preimage_observer import IDENTITY, released_preimage
 from check_native_asset_lifecycle import canonical_body, pending_action_public_args, rpc
 
 _HASH = re.compile(r'[0-9a-f]{64}\Z')
@@ -61,6 +61,47 @@ def verify_lock_action_output(url, *, block_height, block_hash, action_id, commi
     if not current():
         raise ValueError('Hegemon lock block changed during verification')
     return True
+
+
+def observe_exact_note_spend(url, *, block_height, block_hash, nullifier, chain_id, hashlock,
+                             read=rpc, body=canonical_body, parse=pending_action_public_args):
+    """Find the one canonical action containing the wallet's spent nullifier.
+
+    The nullifier is passed only inside the local companion. The trusted node
+    supplies consensus-accepted actions; this framing check is not a proof verifier.
+    """
+    if (type(block_height) is not int or not 1 <= block_height < 2**48
+            or not isinstance(block_hash,str) or not re.fullmatch(r'0x[0-9a-f]{64}',block_hash)
+            or not isinstance(nullifier,str) or not _COMMITMENT.fullmatch(nullifier)
+            or not isinstance(chain_id,str) or not re.fullmatch(r'0x[0-9a-f]{64}',chain_id)
+            or not isinstance(hashlock,str) or not _HASH.fullmatch(hashlock)):
+        raise ValueError('Invalid Hegemon spent note reference')
+    def current():
+        value=read(url,'chain_getBlockHash',[block_height])
+        return isinstance(value,str) and value.lower()==block_hash
+    if not current():raise ValueError('Hegemon spend block is no longer canonical')
+    actions,meta,_=body(url,block_hash)
+    if not isinstance(actions,list) or not isinstance(meta,dict) or meta.get('height')!=block_height:raise ValueError('Invalid Hegemon spend block')
+    found=[]
+    for action in actions:
+        if not isinstance(action,(bytes,bytearray)) or len(action)<56 or tuple(int.from_bytes(action[i:i+2],'little') for i in (48,50,52,54))!=(12,7,1,15):continue
+        carrier,outer=parse(action)
+        if (not isinstance(carrier,(bytes,bytearray)) or not 5788<=len(carrier)<=177632 or carrier[:8]!=b'HGPSLC02'
+                or carrier[8:24]!=IDENTITY or carrier[24:72]!=bytes.fromhex(RELATION[:96]) or carrier[72:104]!=bytes.fromhex(chain_id[2:])
+                or carrier[5784:5788]!=b'SMZL' or not isinstance(outer,dict) or outer.get('vector_counts')!=[0,0,2,2]):raise ValueError('Invalid Hegemon spend carrier')
+        values=[bytes(carrier[208:264]),bytes(carrier[264:320])]
+        if any(int.from_bytes(value[i:i+8],'little')>=_GOLDILOCKS for value in values for i in range(0,56,8)):raise ValueError('Invalid Hegemon spend nullifier')
+        if sum(value.hex()==nullifier for value in values)==1:found.append((action,carrier))
+    if len(found)!=1:raise ValueError('Hegemon note spend action is absent or ambiguous')
+    action,carrier=found[0];flag=int.from_bytes(carrier[528:536],'little')
+    secret=released_preimage(carrier,chain_id=bytes.fromhex(chain_id[2:]),relation_prefix=bytes.fromhex(RELATION[:96]),hashlock=hashlock)
+    try:
+        if flag==1 and secret is None:raise ValueError('Hegemon note released a different secret')
+        if not current():raise ValueError('Hegemon spend block changed during verification')
+        return {'state':'claimed' if secret is not None else 'refunded','action_id':bytes(action[:48]).hex(),
+                **({'preimage':secret.hex()} if secret is not None else {})}
+    finally:
+        if secret is not None:secret[:]=b'\0'*len(secret)
 
 
 def observe_claim_request(request, rpc, *, scan=scan_public_hegemon_preimage,

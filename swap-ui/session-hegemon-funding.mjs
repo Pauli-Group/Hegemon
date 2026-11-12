@@ -7,7 +7,8 @@ import {channelFingerprint} from './session-channel.mjs';
 import {peerFundingAgreement} from './session-funding.mjs';
 import {verifySessionSnapshot} from './session-verify.mjs';
 import {sessionAssetTerms} from './session-assets.mjs';
-import {listActions,beginAction,finishAction,uncertainAction,removeAction} from './action-journal.mjs';
+import {legRequirements} from './timelock-policy.mjs';
+import {listActions,beginAction,finishAction,uncertainAction,removeAction,reconcileUncertainAction} from './action-journal.mjs';
 import {actionLock,actionArmed,consumeActionArm,resolveSessionAction,requireRecoveryReviewComplete,hasHegemonConsent} from './session-action.mjs';
 
 const FEE='1000',HEX=/^[0-9a-f]{64}$/,HANDOFF=/^[0-9a-f]{32}\.bin$/;
@@ -19,6 +20,7 @@ async function gate({record,attemptId,outbox,readFrames,readers,config,templates
  const {session,role,snapshot}=record,side=role==='owner'?'long':'short',attempt=snapshot.actions?.[side]?.fund?.at(-1),transport=await outbox.inspect();
  requireRecoveryReviewComplete(session,role,storage);
  if(snapshot.version!==4||snapshot.terms?.legs[side].asset.chain!=='hegemon'||snapshot.terms.legs[side].asset.kind!=='hgn'||snapshot.escrows[side]!==null||attempt?.id!==attemptId||attempt.state!==state||!record.backupAcknowledged||!await sessionBackupCurrent(record)||transport.pending||transport.next!==snapshot.transport.next||transport.previous!==snapshot.transport.previous)throw Error('The swap or its recovery state changed. Refresh before funding.');
+ if(typeof readers.hegemon.address!=='function'||await readers.hegemon.address()!==snapshot.terms.legs[side].refundee)throw Error('The local Hegemon companion has a different wallet. Reconnect the wallet for this swap.');
  if(storage.getItem(`hegemon.swap.peer-pin:${session}:${role}`)!==await participantCode(role==='owner'?snapshot.takerBlob:snapshot.ownerBlob))throw Error('Confirm the other participant’s verification code before funding.');
  const chains=new Set([snapshot.terms.legs.long.asset.chain,snapshot.terms.legs.short.asset.chain]);
  for(const action of await listActions()){
@@ -124,5 +126,32 @@ export async function observeHegemonSessionFunding({session,role,attemptId,reade
   const next=structuredClone(latest.snapshot);next.hegemon[side].fund.actionId=observed.actionId;next.hegemon[side].fund.blockHeight=String(observed.blockHeight);
   const saved=await updateSession(session,role,latest.revision,next);
   return {state:'confirmed',actionId:observed.actionId,blockHeight:String(observed.blockHeight),revision:saved.revision};
+ });
+}
+
+/** Import the encrypted local refund handoff with terminal approval, locate
+ * its exact note, and verify it against the canonical lock. Importing the
+ * same handoff again is idempotent in the wallet and sends no transaction. */
+export async function importHegemonSessionRefundHandoff({session,role,attemptId,readers,config,storage=globalThis.localStorage,locks=globalThis.navigator?.locks}){
+ if(!HEX.test(session||'')||!['owner','taker'].includes(role)||!/^[0-9a-f]{32}$/.test(attemptId||'')||!['inclusion','action','locate','head','escrow'].every(name=>typeof readers?.hegemon?.[name]==='function')||!storage||typeof locks?.request!=='function')throw Error('The Hegemon refund handoff is unavailable.');
+ return locks.request(actionLock(session,role),{mode:'exclusive',ifAvailable:true},async lock=>{
+  if(!lock)throw Error('This swap has a wallet action in another tab.');requireRecoveryReviewComplete(session,role,storage);
+  const record=await getSession(session,role),side=role==='owner'?'long':'short',snapshot=record?.snapshot,item=snapshot?.hegemon?.[side]?.fund,attempt=snapshot?.actions?.[side]?.fund?.at(-1);
+  if(!record||snapshot.version!==4||!record.backupAcknowledged||!await sessionBackupCurrent(record)||snapshot.escrows[side]!==null||!item||item.blockHeight===null||item.actionId===null||item.commitment!==null||attempt?.id!==attemptId||!['prepared','uncertain'].includes(attempt.state)||attempt.txid!==item.candidate)throw Error('Save and review the confirmed Hegemon lock before importing its refund handoff.');
+  if(typeof readers.hegemon.address!=='function'||await readers.hegemon.address()!==snapshot.terms.legs[side].refundee)throw Error('The local Hegemon companion has a different wallet. Reconnect the wallet for this swap.');
+  const seen=await readers.hegemon.inclusion(item.candidate,item.actionId);
+  if(seen.state!=='confirmed'||seen.actionId!==item.actionId||String(seen.blockHeight)!==item.blockHeight)throw Error('The Hegemon lock is no longer confirmed.');
+  const imported=await readers.hegemon.action({operation:'import-refund-handoff',handoff:item.handoff,block_height:item.blockHeight});
+  if(imported?.operation!=='import-refund-handoff'||imported.block_height!==item.blockHeight||!/^[0-9a-f]{112}$/.test(imported.commitment||''))throw Error('The local wallet did not return the imported Hegemon note.');
+  const located=await readers.hegemon.locate(imported.commitment);
+  if(String(located.createdHeight)!==item.blockHeight)throw Error('The imported Hegemon note has a different creation block.');
+  const reference={chain:'hegemon',txid:item.candidate,action_id:item.actionId,position:located.position,block_height:item.blockHeight},fields=sessionAssetTerms(snapshot.terms,side,{reference}).operationTerms,head=await readers.hegemon.head(),refundReady=head.height>=snapshot.terms.legs[side].expiry;
+  const confirmations=legRequirements(config,'hegemon').confirmations,verified=await readers.hegemon.escrow(fields,{confirmations,minBlocksToExpiry:1,refundReady});
+  if(verified?.position!==reference.position||verified.actionId!==reference.action_id||verified.commitment!==imported.commitment||String(verified.createdHeight)!==reference.block_height||verified.refundReady!==refundReady||!Number.isSafeInteger(verified.confirmations)||verified.confirmations<confirmations)throw Error('The local wallet did not verify the imported Hegemon lock.');
+  const latest=await getSession(session,role);if(!latest||latest.revision!==record.revision||canonical(latest.snapshot.hegemon[side].fund)!==canonical(item))throw Error('The Hegemon recovery record changed.');
+  const next=structuredClone(latest.snapshot);next.hegemon[side].fund.commitment=imported.commitment;next.hegemon[side].fund.position=located.position;next.escrows[side]=reference;next.actions[side].fund[next.actions[side].fund.length-1]={id:attemptId,state:'submitted',txid:item.candidate};
+  const saved=await updateSession(session,role,latest.revision,next);
+  for(const action of await listActions())if(action.chain==='hegemon'&&action.operation==='submit'&&action.state==='uncertain'&&action.request.attempt===item.candidate)await reconcileUncertainAction(action.id,{submitted:true,confirmed:false,txid:item.actionId,attempt:item.candidate});
+  return {reference,refundReady,revision:saved.revision};
  });
 }

@@ -23,6 +23,7 @@ SCRIPT_TEST_PATTERNS=(
   'test_check_hegemon_gateway.py'
   'test_probe_hegemon_testnet.py'
   'test_local_swap_companion.py'
+  'test_swap_rehearsal.py'
   'test_unlock_swap_backup.py'
   'test_verify_public_btc_cases.py'
   'test_bitcoin_preimage_observer.py'
@@ -43,7 +44,9 @@ BROWSER_TESTS=(
   swap-service/session-start-browser.test.mjs
   swap-service/session-bitcoin-draft-browser.test.mjs
   swap-service/session-bitcoin-fund-browser.test.mjs
+  swap-service/session-reconcile-browser.test.mjs
   swap-service/session-hegemon-fund-browser.test.mjs
+  swap-service/session-hegemon-claim-browser.test.mjs
   swap-service/session-wizard-browser.test.mjs
   swap-service/observer-browser.test.mjs
   swap-service/timing-browser.test.mjs

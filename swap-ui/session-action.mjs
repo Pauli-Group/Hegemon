@@ -8,6 +8,7 @@ const ARM='hegemon.swap.action-arm:';
 export const recoveryReviewKey=(session,role)=>`hegemon.swap.recovery-review:${session}:${role}`;
 export const hegemonConsentKey=(session,role)=>`hegemon.swap.hegemon-consent:${session}:${role}`;
 export const hasHegemonConsent=(session,role,storage=globalThis.localStorage)=>storage?.getItem(hegemonConsentKey(session,role))==='accepted';
+export const hegemonSubmitArmed=(session,role,id,storage=globalThis.localStorage)=>storage?.getItem(`hegemon.swap.hegemon-submit:${session}:${role}:${id}`)==='ready';
 export function requireRecoveryReviewComplete(session,role,storage=globalThis.localStorage){if(storage?.getItem(recoveryReviewKey(session,role))==='required')throw Error('Review your wallet activity after restoring this backup before continuing.');}
 export const actionLock=(session,role)=>`hegemon.swap.action:${session}:${role}`;
 const armKey=(session,role,id)=>`${ARM}${session}:${role}:${id}`;

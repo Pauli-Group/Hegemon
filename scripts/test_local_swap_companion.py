@@ -20,6 +20,12 @@ from local_swap_companion import HOSTED_ORIGIN, DesktopKeyring, GuiApproval, Hos
 from probe_hegemon_testnet import MANIFEST, MANIFEST_FIELDS, RELEASE, RELATION, REQUIRED
 
 class LocalCompanionTest(unittest.TestCase):
+    def test_local_swap_origin_is_explicit_and_rejects_non_loopback_or_ambiguous_urls(self):
+        self.assertEqual(local_swap_companion.local_swap_origin('http://127.0.0.1:8787'),'http://127.0.0.1:8787')
+        for value in (None,'https://hegemon.example','http://localhost:8787','http://127.0.0.1','http://127.0.0.1:8787/',
+                      'http://127.0.0.1:8787?x=1','http://127.0.0.1:8787#fragment','http://user@127.0.0.1:8787','http://127.0.0.1:99999'):
+            with self.subTest(value=value),self.assertRaises(ValueError):local_swap_companion.local_swap_origin(value)
+
     def test_swap_note_selector_uses_only_available_notes_and_selects_smallest_sufficient_set(self):
         rng=random.Random(3)
         for _ in range(300):
@@ -93,11 +99,19 @@ class LocalCompanionTest(unittest.TestCase):
                     response.clear();response.update(original)
                 with self.assertRaisesRegex(ValueError,'stale or inconsistent'):
                     session.verify_swap_htlc(terms,**{**options,'check_node':lambda:{'height':118,'chain_id':'0x'+'34'*32}})
-                response['refund_ready']=True
+                response['refund_ready']=True;response['reference_height']=120;response['confirmations']=23
                 result=session.verify_swap_htlc({**terms,'refund_ready':True},**{**options,'check_node':lambda:{'height':120,'chain_id':'0x'+'34'*32}})
                 self.assertTrue(result['refund_ready']);self.assertIn('--refund-ready',calls[-1][0])
                 with self.assertRaisesRegex(ValueError,'stale or inconsistent'):
                     session.verify_swap_htlc({**terms,'refund_ready':True},**options)
+                response['refund_ready']=False;response['reference_height']=100;response['confirmations']=3;response['spent']=None
+                self.assertEqual(session.verify_swap_htlc(terms,observe_spend=True,**options),{'state':'unspent','lock_height':'98'})
+                response['spent']={'height':99,'block_hash':'0x'+'12'*32,'confirmations':2,'nullifier':'ef'*56}
+                observed=session.verify_swap_htlc(terms,observe_spend=True,verify_spend=lambda *a,**k:{'state':'claimed','action_id':'bb'*48,'preimage':'aa'*32},**options)
+                self.assertEqual(observed,{'state':'claimed','action_id':'bb'*48,'preimage':'aa'*32,'lock_height':'98','block_height':'99','confirmations':2})
+                self.assertNotIn('ef'*56,json.dumps(observed))
+                response['spent']['confirmations']=1
+                with self.assertRaisesRegex(ValueError,'spend status'):session.verify_swap_htlc(terms,observe_spend=True,**options)
                 session.close()
     def test_swap_address_is_derived_locally_and_checked_after_unlock(self):
         with tempfile.TemporaryDirectory() as d:
@@ -324,6 +338,41 @@ class LocalCompanionTest(unittest.TestCase):
             self.assertEqual(results['head'],(200,{'network':'pre-mainnet','height':'100','genesis':'0x'+'ab'*32,'chain_id':'0x'+'cd'*32}))
             self.assertEqual(results['action'][0],200);self.assertEqual(results['claim'],200);self.assertEqual(results['bad_secret'],409)
             self.assertFalse(results['backup_path'].exists());self.assertEqual(calls,[{'operation':'status'},{'operation':'claim'}])
+
+    def test_local_swap_mode_accepts_only_the_explicit_loopback_rehearsal_origin(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);wallet=root/'wallet';wallet.write_bytes(b'disposable');wallet.chmod(0o600)
+            handoff=root/'handoffs';handoff.mkdir(mode=0o700);token_path=root/'token';origin='http://127.0.0.1:8877'
+            with socket.socket() as probe_port:probe_port.bind(('127.0.0.1',0));port=probe_port.getsockname()[1]
+            argv=['local_swap_companion.py','--local-hegemon-swap','--origin',origin,'--hegemon-rpc','http://127.0.0.1:9',
+                  '--hegemon-wallet',str(wallet),'--hegemon-handoff-dir',str(handoff),'--private-spend',str(root/'fake-binary'),'--token-file',str(token_path),'--port',str(port)]
+            results={}
+            def client():
+                try:
+                    opener=urllib.request.build_opener(urllib.request.ProxyHandler({}));deadline=time.monotonic()+10;token=''
+                    while time.monotonic()<deadline:
+                        if token_path.exists():
+                            token=token_path.read_text().strip()
+                            try:
+                                opener.open(urllib.request.Request(f'http://127.0.0.1:{port}/health',headers={'Origin':origin,'Authorization':'Bearer '+token}),timeout=1);break
+                            except Exception:time.sleep(.02)
+                    def call(request_origin,bearer=token):
+                        req=urllib.request.Request(f'http://127.0.0.1:{port}/health',headers={'Origin':request_origin,'Authorization':'Bearer '+bearer})
+                        try:return opener.open(req,timeout=5)
+                        except urllib.error.HTTPError as error:return error
+                    with call(origin) as response:results['ok']=(response.status,json.load(response)['capabilities'])
+                    with call(HOSTED_ORIGIN) as response:results['hosted']=response.status
+                    with call('http://127.0.0.1:8878') as response:results['other_port']=response.status
+                    with call(origin,'0'*64) as response:results['wrong_token']=response.status
+                except Exception as error:results['error']=error
+                finally:
+                    if local_swap_companion.active_server:local_swap_companion.active_server.shutdown()
+            threading.Thread(target=client,daemon=True).start()
+            with patch('sys.argv',argv),patch('local_swap_companion.os.isatty',return_value=True),patch('local_swap_companion.check_swap_wallet_binary'):
+                local_swap_companion.main()
+            if 'error' in results:raise results['error']
+            self.assertEqual(results['ok'][0],200);self.assertIn('hegemon-swap-actions',results['ok'][1])
+            self.assertEqual((results['hosted'],results['other_port'],results['wrong_token']),(403,403,403))
 
     def test_hosted_balance_view_and_session_keep_totals_and_refresh(self):
         text='\n'.join(['ordinary position=7 value=5',
