@@ -84,7 +84,7 @@ async function sessionApi(req,db,id,op,hash,t,url){
 async function quota(req,env,t){
   const ip=req.headers.get('CF-Connecting-IP');
   if(!ip)return false;
-  const window=Math.floor(t/60),key=await digest(window+':'+ip),limit=req.method==='GET'?180:40;
+  const window=Math.floor(t/60),category=req.method==='GET'?'read':'write',key=await digest(window+':'+category+':'+ip),limit=category==='read'?180:40;
   const row=await env.DB.prepare('INSERT INTO quotas(key,window,count) VALUES(?,?,1) ON CONFLICT(key) DO UPDATE SET count=count+1 WHERE count<? RETURNING count').bind(key,window,limit).first();
   return !!row;
 }

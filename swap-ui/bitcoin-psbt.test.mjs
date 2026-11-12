@@ -77,6 +77,19 @@ test('refund: locktime is the refund height, sequence is non-final, witness is [
   assert.equal(raw.getInput(0).finalScriptWitness.length, 3);
 });
 
+test('small escrows can be spent when the actual fee leaves a non-dust output', () => {
+  for (const op of ['claim', 'refund']) {
+    const t = terms({amount_sats: 900});
+    const built = psbt.buildSpend({op, terms: t, escrow: {...escrow, amount: 900n}, destination: addr(8), feeRate: 1});
+    const signed = signWith(built, op === 'claim' ? claimantPriv : refundPriv);
+    const done = psbt.finalizeSpend(signed.bytes, built.expect, op === 'claim' ? {preimage: hex(preimage)} : {});
+    const raw = Transaction.fromRaw(unhex(done.txHex));
+    assert.equal(raw.getOutput(0).amount, 900n - done.fee);
+    assert.ok(raw.getOutput(0).amount >= 546n);
+    assert.throws(() => psbt.buildSpend({op, terms: terms({amount_sats: 600}), escrow: {...escrow, amount: 600n}, destination: addr(8), feeRate: 1}), /too small/);
+  }
+});
+
 test('signatures by the wrong key, over the wrong data, with the wrong hash type, or for the wrong action are never finalized', () => {
   const claim = psbt.buildSpend({op: 'claim', terms: terms(), escrow, destination: addr(8)});
   assert.throws(() => psbt.finalizeSpend(signWith(claim, refundPriv).bytes, claim.expect, {preimage: hex(preimage)}), /single signature/);

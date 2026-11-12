@@ -2080,3 +2080,9 @@ The in-progress session starter accepts only a locally pinned offer digest, dura
 ### Local companion wallet summary
 
 The companion's Tk window shows an exact native HGN available balance, separate reserved/HTLC/immature totals, a last-checked timestamp and an abbreviated receiving-address preview. Copying uses the complete validated wallet address. A separate, small in-memory summary lock allows Tk to poll public presentation data while a wallet operation holds the main session lock; it contains no passphrase, keys or note rows. Local unlock and refresh run on a worker thread and reuse the existing guarded status and address commands. They do not add an HTTP route or authorize spending. A missing balance is shown as unavailable, a real zero remains zero, and old, failed, lagged or offline-node observations retain their last known value with an explicit status. Browser-initiated wallet reads update the same local card.
+
+### Swap review hardening
+
+The isolated desktop board preserves the relay's generated CSP, including the hash authorizing its integrity import map. Native ETH escrow checks require at least the agreed amount because unsolicited ETH can be forced into a contract; runtime, terms and unspent-state checks still apply. Bitcoin spend sizing uses a nonnegative dummy output before calculating the real fee and checking for dust.
+
+The hosted relay keeps separate per-IP read and write quotas. Retention queries use indexes on offer/session expiry and quota windows; existing D1 databases take the additive `0004_retention_indexes.sql` migration. Companion balance reuse requires a read no older than 60 seconds, at most two blocks of lag, an unchanged canonical hash at the wallet's saved height, and unchanged wallet file identity, size and timestamps. A missing hash or changed wallet requires a fresh read or reports failure.

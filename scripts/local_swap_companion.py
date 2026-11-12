@@ -1016,6 +1016,10 @@ def hosted_balance_view(text, observed_height):
             'observed_height': str(height), 'observed_at': str(int(time.time() * 1000))}
 
 
+def read_hosted_block_hash(url, height):
+    return rpc(url, 'chain_getBlockHash', [height])
+
+
 def read_hosted_node(rpc):
     """Probe the loopback node and the public explorer. Failure is always the same error."""
     from probe_hegemon_testnet import compare_public_tip, probe
@@ -1061,7 +1065,7 @@ def check_swap_wallet_binary(path):
 class HostedWalletSession:
     """One wallet, totals only. The passphrase stays in this process and is wiped on close."""
 
-    def __init__(self, *, rpc, wallet_path, manifest, genesis, binary, scratch, read_node=None, prompt=None, keyring=None):
+    def __init__(self, *, rpc, wallet_path, manifest, genesis, binary, scratch, read_node=None, read_hash=None, prompt=None, keyring=None):
         self.rpc = rpc
         self.wallet_path = wallet_path
         self.manifest = manifest
@@ -1069,6 +1073,7 @@ class HostedWalletSession:
         self.binary = binary
         self.scratch = scratch
         self.read_node = read_node or (lambda: read_hosted_node(rpc))
+        self.read_hash = read_hash or (lambda height: read_hosted_block_hash(rpc, height))
         self.prompt = prompt
         self.keyring = keyring
         self._lock = threading.Lock()
@@ -1076,6 +1081,8 @@ class HostedWalletSession:
         self._phrase = None
         self._cached = None
         self._cached_at = 0.0
+        self._cached_hash = None
+        self._cached_wallet_stamp = None
         self.display = WalletSummary()
         self._display_job = threading.Lock()
 
@@ -1088,6 +1095,8 @@ class HostedWalletSession:
         with self._lock:
             self._wipe()
             self._cached = None
+            self._cached_hash = None
+            self._cached_wallet_stamp = None
             self.display.clear()
 
     def _run(self, secret):
@@ -1102,11 +1111,28 @@ class HostedWalletSession:
             except FileNotFoundError:
                 pass
 
-    def _remember(self, secret, view):
+    def _wallet_stamp(self):
+        try:
+            info = Path(self.wallet_path).lstat()
+        except FileNotFoundError:
+            return None
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError('Hegemon wallet must remain a regular file')
+        return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+    def _block_hash(self, height):
+        value = self.read_hash(height)
+        if not isinstance(value, str) or not re.fullmatch(r'0x[0-9a-fA-F]{64}', value):
+            raise LookupError('hegemon_node_not_ready')
+        return value.lower()
+
+    def _remember(self, secret, view, block_hash, wallet_stamp):
         self._wipe()
         self._phrase = secret
         self._cached = view
         self._cached_at = time.monotonic()
+        self._cached_hash = block_hash
+        self._cached_wallet_stamp = wallet_stamp
         self.display.balance(view)
         return dict(view)
 
@@ -1121,7 +1147,7 @@ class HostedWalletSession:
             node = self.read_node()
             height = int(node['height'])
             view = hosted_balance_view(text, height)
-        return view
+        return view, self._block_hash(int(view['synced_height'])), self._wallet_stamp()
 
     def unlock(self, *, decision=None):
         with self._lock:
@@ -1152,7 +1178,7 @@ class HostedWalletSession:
                 self.activity.set_phase('syncing')
                 print('Passphrase accepted. Syncing the wallet with the local node. This can take several minutes.', flush=True)
                 try:
-                    view = self._status_view(secret)
+                    view, block_hash, wallet_stamp = self._status_view(secret)
                 except Exception:
                     secret[:] = b'\0' * len(secret)
                     raise
@@ -1167,7 +1193,7 @@ class HostedWalletSession:
                             self.prompt.report(str(error))
                         print(str(error), flush=True)
                 print('Wallet read finished. Available HGN is shown in the companion and on the connected page. Creating a listing does not lock those funds.', flush=True)
-                return self._remember(secret, view)
+                return self._remember(secret, view, block_hash, wallet_stamp)
             except ValueError as error:
                 if str(error) == 'wallet unlock declined locally':
                     print('Wallet read was not approved.', flush=True)
@@ -1191,7 +1217,9 @@ class HostedWalletSession:
             saved = int(self._cached['synced_height']) if self._cached is not None else None
             caught_up = saved == height
             fresh = saved is not None and time.monotonic() - self._cached_at <= 60 and 0 <= height - saved <= 2
-            if not force and (caught_up or fresh):
+            if (not force and fresh and self._cached_wallet_stamp is not None
+                    and self._wallet_stamp() == self._cached_wallet_stamp
+                    and self._block_hash(saved) == self._cached_hash):
                 if caught_up:
                     print(f'Using the saved wallet read at block {height}. The chain has not moved, so this did not scan again.', flush=True)
                 view = dict(self._cached)
@@ -1202,12 +1230,14 @@ class HostedWalletSession:
             self.activity.set_phase('syncing')
             try:
                 if saved is not None:
-                    print(f'Refreshing the saved wallet from block {saved} through {height}.' if force else f'The chain moved. Resuming the saved wallet from block {saved} through {height}.', flush=True)
-                view = self._status_view(self._phrase)
+                    print(f'Refreshing the saved wallet from block {saved} through {height}.', flush=True)
+                view, block_hash, wallet_stamp = self._status_view(self._phrase)
             finally:
                 self.activity.set_phase('idle')
             self._cached = view
             self._cached_at = time.monotonic()
+            self._cached_hash = block_hash
+            self._cached_wallet_stamp = wallet_stamp
             self.display.balance(view)
             return dict(view)
 

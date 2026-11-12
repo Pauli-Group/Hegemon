@@ -262,12 +262,8 @@ const openSwapBoard = async (parent: BrowserWindow) => {
   boardSession.webRequest.onBeforeRequest((details, callback) => {
     callback({ cancel: !allowSwapBoardRequest(details.url) });
   });
-  boardSession.webRequest.onHeadersReceived((details, callback) => {
-    callback({ responseHeaders: {
-      ...details.responseHeaders,
-      'Content-Security-Policy': ["default-src 'self'; connect-src 'self' http://127.0.0.1:8788; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"]
-    } });
-  });
+  // Preserve the relay's generated CSP and current import-map hash. A desktop
+  // override can block the map and silently disable dependency integrity.
   const board = new BrowserWindow({
     parent,
     width: 1100,

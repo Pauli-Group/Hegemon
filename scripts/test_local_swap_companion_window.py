@@ -26,7 +26,7 @@ class CompanionWindowTest(unittest.TestCase):
             def snapshot(self):return {'tone':'caught_up','title':'Caught up','fraction':'','progress':1,'time_line':'Ready. Height 16,909, 10 peers.','consequence':''}
         with tempfile.TemporaryDirectory() as directory:
             prompt=GuiApproval()
-            session=HostedWalletSession(rpc='http://127.0.0.1:9',wallet_path=Path(directory)/'test.wallet',manifest=Path(directory)/'manifest',genesis='aa'*32,binary=Path(directory)/'binary',scratch=directory,read_node=lambda:{'height':16909},prompt=prompt)
+            session=HostedWalletSession(rpc='http://127.0.0.1:9',wallet_path=Path(directory)/'test.wallet',manifest=Path(directory)/'manifest',genesis='aa'*32,binary=Path(directory)/'binary',scratch=directory,read_hash=lambda _: '0x'+'ab'*32,read_node=lambda:{'height':16909},prompt=prompt)
             def wallet(_binary,argv,secrets,*args,**kwargs):
                 calls.append(argv)
                 self.assertEqual(bytes(secrets[0][1]),phrase.encode())

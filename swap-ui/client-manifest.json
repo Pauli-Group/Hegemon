@@ -6,12 +6,12 @@
   "local": "index.html"
  },
  "import_map": {
-  "source": "sha256-LqQ2aO7wbkiJziv2PuKjQce1z8gag5YOJC4kDmH1a3E=",
+  "source": "sha256-/qIBW50zvm11doRIDBFO78QkOV1Gs5CrGz1GRWJDiPU=",
   "modules": 66
  },
  "csp": {
-  "hosted": "default-src 'self'; script-src 'self' 'sha256-LqQ2aO7wbkiJziv2PuKjQce1z8gag5YOJC4kDmH1a3E='; style-src 'self'; connect-src 'self' http://127.0.0.1:8788; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
-  "local": "default-src 'self'; script-src 'self' 'sha256-LqQ2aO7wbkiJziv2PuKjQce1z8gag5YOJC4kDmH1a3E='; style-src 'self'; connect-src 'self' http://127.0.0.1:8788; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+  "hosted": "default-src 'self'; script-src 'self' 'sha256-/qIBW50zvm11doRIDBFO78QkOV1Gs5CrGz1GRWJDiPU='; style-src 'self'; connect-src 'self' http://127.0.0.1:8788; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+  "local": "default-src 'self'; script-src 'self' 'sha256-/qIBW50zvm11doRIDBFO78QkOV1Gs5CrGz1GRWJDiPU='; style-src 'self'; connect-src 'self' http://127.0.0.1:8788; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
  },
  "headers": {
   "x-content-type-options": "nosniff",
@@ -29,8 +29,8 @@
    "bytes": 92185
   },
   "bitcoin-psbt.mjs": {
-   "sha256": "1409022bea941c40ff8d9583648c661a4eecaa362359e64a05e9071deddebcff",
-   "bytes": 15565
+   "sha256": "2a9878dabb6dc7d50673723388e7df3d5c7f5a462360ee0d27b2028e5c07cef9",
+   "bytes": 15557
   },
   "bitcoin-testnet-verifier.mjs": {
    "sha256": "c507b2d2c565c35ee7f64b8826314eea44f49f53b1e9adc0970987f682b54871",
@@ -89,8 +89,8 @@
    "bytes": 13451
   },
   "ethereum-escrow.mjs": {
-   "sha256": "a80ad07c264d3de4bdc618bff2cfbb0a73c35e5eaae9cc0b3297e28f2f510ce0",
-   "bytes": 10816
+   "sha256": "019f954f4d2fd14c91844a5b91a2b51ffee6f2755866da301b1d13d246e733cb",
+   "bytes": 10892
   },
   "guided-ui.mjs": {
    "sha256": "844599f31e74a49f9c85ac2c5c9cdeae703d341f15e9698b197743850b4de23f",
@@ -101,7 +101,7 @@
    "bytes": 18803
   },
   "hosted.html": {
-   "sha256": "93310433303f0b52ef7611452c5d664c026f2e26d0085956072e9b770a5b8633",
+   "sha256": "4d182d80fb62c90fd9be3981210c2b8ccb4c30a6acedbd7bd4d51e6567b9a64a",
    "bytes": 76342
   },
   "identity-flow.mjs": {
@@ -125,7 +125,7 @@
    "bytes": 3697
   },
   "index.html": {
-   "sha256": "6e6edebaf6e4e51e3da8c3a9b66f82400c83f6fa5dc2b2c4d55dbbf3da11c77d",
+   "sha256": "4fdd155efbcfa148b646ad6666028951a2c2c3aff0dd5580c8e197fc6540ae97",
    "bytes": 76492
   },
   "journey-ui.mjs": {
@@ -165,8 +165,8 @@
    "bytes": 3150
   },
   "sepolia-actions.mjs": {
-   "sha256": "5e5f2267f50e083eca69100947c1e378697c992e318b2ca2fed2d7d738232533",
-   "bytes": 9136
+   "sha256": "4e99ba75c1fb252853e03aaadc6d97855be912c4ae8f7e9c2b55c1f609adc97a",
+   "bytes": 9134
   },
   "sepolia-verifier.mjs": {
    "sha256": "6d93c24d57d214253463bfb90a1198abac896b55b64afe5a06f40b3f700096a1",

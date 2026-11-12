@@ -33,7 +33,7 @@ async function contractState(request,head,terms,template,{funded}){
  const state=async data=>{const v=await request('eth_call',[{to:contract,data},head.number]);if(typeof v!=='string'||!/^0x[0-9a-f]{64}$/i.test(v))throw Error('Invalid escrow state.');return BigInt(v);};
  if(await state('0x7ab71b7a')!==0n)throw Error('Escrow is already spent.');
  if(terms.kind!=='eth'&&await state('0xf3a504f2')!==BigInt(funded?1:0))throw Error(funded?'Escrow is not funded.':'Escrow is already funded.');
- if(terms.kind==='eth'&&BigInt(await request('eth_getBalance',[contract,head.number]))!==BigInt(terms.amount))throw Error('Escrow balance does not match.');
+ if(terms.kind==='eth'&&BigInt(await request('eth_getBalance',[contract,head.number]))<BigInt(terms.amount))throw Error('Escrow balance does not match.');
  return contract;
 }
 export async function deploySepoliaEscrow(provider,template,terms,options={}){

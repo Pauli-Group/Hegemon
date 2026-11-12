@@ -394,7 +394,8 @@ class LocalCompanionTest(unittest.TestCase):
             (Path(directory)/(label+'.log')).write_text(body)
             return body,{}
         with tempfile.TemporaryDirectory() as d:
-            session=HostedWalletSession(rpc='http://127.0.0.1:9',wallet_path=Path(d)/'wallet',manifest=Path(d)/'manifest',genesis='aa'*32,binary=Path(d)/'private-spend',scratch=d,read_node=lambda:{'height':chain['height']})
+            (Path(d)/'wallet').write_bytes(b'test wallet')
+            session=HostedWalletSession(rpc='http://127.0.0.1:9',wallet_path=Path(d)/'wallet',manifest=Path(d)/'manifest',genesis='aa'*32,binary=Path(d)/'private-spend',scratch=d,read_hash=lambda _: '0x'+'ab'*32,read_node=lambda:{'height':chain['height']})
             with patch('local_swap_companion.wallet',fake_wallet),patch('local_swap_companion.confirm_unlock',return_value='NO'),patch('local_swap_companion.read_passphrase',return_value='unit-test-passphrase'):
                 with self.assertRaises(ValueError):session.unlock()
             with patch('local_swap_companion.wallet',fake_wallet),patch('local_swap_companion.confirm_unlock',return_value='UNLOCK'),patch('local_swap_companion.read_passphrase',return_value='unit-test-passphrase'):
@@ -406,15 +407,15 @@ class LocalCompanionTest(unittest.TestCase):
                 self.assertEqual(len(calls),1)
                 session._cached_at-=61
                 session.balance()
-                self.assertEqual(len(calls),1,'an unchanged chain height reuses the saved read')
+                self.assertEqual(len(calls),2,'even an unchanged height must refresh after 60 seconds')
                 chain['height']=13
                 session.balance()
-                self.assertEqual(len(calls),2)
+                self.assertEqual(len(calls),3)
                 session._cached['synced_height']='7'
                 session._cached_at=time.monotonic()
                 chain['height']=10
                 session.balance()
-                self.assertEqual(len(calls),3)
+                self.assertEqual(len(calls),4)
                 self.assertFalse((Path(d)/'hegemon-hosted-balance.log').exists())
             session.close()
             with self.assertRaises(PermissionError):session.balance()
@@ -429,7 +430,8 @@ class LocalCompanionTest(unittest.TestCase):
             chain['height']=12
             return caught,{}
         with tempfile.TemporaryDirectory() as d:
-            session=HostedWalletSession(rpc='http://127.0.0.1:9',wallet_path=Path(d)/'wallet',manifest=Path(d)/'manifest',genesis='aa'*32,binary=Path(d)/'private-spend',scratch=d,read_node=lambda:{'height':chain['height']})
+            (Path(d)/'wallet').write_bytes(b'test wallet')
+            session=HostedWalletSession(rpc='http://127.0.0.1:9',wallet_path=Path(d)/'wallet',manifest=Path(d)/'manifest',genesis='aa'*32,binary=Path(d)/'private-spend',scratch=d,read_hash=lambda _: '0x'+'ab'*32,read_node=lambda:{'height':chain['height']})
             with patch('local_swap_companion.wallet',catching_wallet),patch('local_swap_companion.confirm_unlock',return_value='UNLOCK'),patch('local_swap_companion.read_passphrase',return_value='unit-test-passphrase'):
                 unlocked=session.unlock()
             self.assertEqual(calls,['catch'])
@@ -453,6 +455,36 @@ class LocalCompanionTest(unittest.TestCase):
             self.assertEqual(calls,['catch','syncing','syncing','syncing'])
             self.assertEqual(lagged['synced_height'],'10')
             self.assertEqual(lagged['observed_height'],'15')
+
+    def test_balance_cache_invalidates_on_reorg_wallet_change_and_missing_hash(self):
+        chain={'height':10,'hash':'0x'+'ab'*32}
+        amount=['5000'];scans=[]
+        def fake_wallet(*_args,**_kwargs):
+            scans.append(amount[0])
+            return ('balance synced_height=10 available_atoms='+amount[0]+' available_notes=1 reserved_atoms=0 reserved_notes=0 htlc_atoms=0 htlc_notes=0 watch_only=false immature_atoms=0',{})
+        with tempfile.TemporaryDirectory() as directory:
+            wallet_path=Path(directory)/'wallet';wallet_path.write_bytes(b'encrypted wallet')
+            session=HostedWalletSession(rpc='http://127.0.0.1:9',wallet_path=wallet_path,manifest=Path(directory)/'manifest',genesis='aa'*32,binary=Path(directory)/'binary',scratch=directory,read_node=lambda:{'height':chain['height']},read_hash=lambda _:chain['hash'])
+            with patch('local_swap_companion.wallet',fake_wallet),patch('local_swap_companion.confirm_unlock',return_value='UNLOCK'),patch('local_swap_companion.read_passphrase',return_value='test-passphrase'):
+                session.unlock()
+                chain['height']=11
+                self.assertEqual(session.balance()['available_atoms'],'5000')
+                self.assertEqual(len(scans),1,'a recent unchanged canonical wallet can reuse its read')
+                chain['height']=10;chain['hash']='0x'+'cd'*32;amount[0]='4000'
+                self.assertEqual(session.balance()['available_atoms'],'4000')
+                self.assertEqual(len(scans),2,'a same-height reorg requires a new scan')
+                replacement=wallet_path.with_suffix('.new');replacement.write_bytes(b'other wallet state');replacement.replace(wallet_path)
+                amount[0]='3000'
+                self.assertEqual(session.balance()['available_atoms'],'3000')
+                self.assertEqual(len(scans),3,'external wallet replacement invalidates the cached reservations')
+                with wallet_path.open('ab') as handle:handle.write(b'updated in place')
+                amount[0]='2000'
+                self.assertEqual(session.balance()['available_atoms'],'2000')
+                self.assertEqual(len(scans),4,'in-place wallet changes also invalidate the cache')
+                chain['hash']=None
+                with self.assertRaises(LookupError):session.balance()
+                self.assertEqual(len(scans),4,'an unavailable canonical hash never serves a cached balance')
+            session.close()
 
     def test_hosted_wallet_status_balance_omits_note_rows(self):
         secret='local-terminal-secret'
@@ -510,7 +542,7 @@ class LocalCompanionTest(unittest.TestCase):
                     server=local_swap_companion.active_server
                     if server:server.shutdown()
             threading.Thread(target=client,daemon=True).start()
-            with patch('sys.argv',argv),patch('local_swap_companion.os.isatty',return_value=True),patch('local_swap_companion.read_hosted_node',read_node),patch('local_swap_companion.confirm_unlock',return_value='UNLOCK'),patch('local_swap_companion.read_passphrase',return_value=secret):
+            with patch('local_swap_companion.read_hosted_block_hash',return_value='0x'+'ab'*32),patch('sys.argv',argv),patch('local_swap_companion.os.isatty',return_value=True),patch('local_swap_companion.read_hosted_node',read_node),patch('local_swap_companion.confirm_unlock',return_value='UNLOCK'),patch('local_swap_companion.read_passphrase',return_value=secret):
                 local_swap_companion.main()
             self.assertNotIn('error',results,results.get('error'))
             self.assertEqual(results['locked'][0],409)
@@ -612,7 +644,7 @@ class LocalCompanionTest(unittest.TestCase):
         self.assertEqual(describe_companion_status({'phase':'syncing','current_height':'15440','target_height':'15445','resumed':True}),'Resuming from the saved wallet: block 15440 of 15445.')
         with tempfile.TemporaryDirectory() as d:
             prompt=GuiApproval()
-            session=HostedWalletSession(rpc='http://127.0.0.1:9',wallet_path=Path(d)/'wallet',manifest=Path(d)/'manifest',genesis='aa'*32,binary=Path(d)/'private-spend',scratch=d,read_node=lambda:{'height':10},prompt=prompt,keyring=Ring())
+            session=HostedWalletSession(rpc='http://127.0.0.1:9',wallet_path=Path(d)/'wallet',manifest=Path(d)/'manifest',genesis='aa'*32,binary=Path(d)/'private-spend',scratch=d,read_hash=lambda _: '0x'+'ab'*32,read_node=lambda:{'height':10},prompt=prompt,keyring=Ring())
             def approve():
                 while not prompt.waiting():time.sleep(0.01)
                 self.assertTrue(prompt.submit(phrase,True))
@@ -663,7 +695,7 @@ class WalletSummaryTest(unittest.TestCase):
 
     def test_local_unlock_reads_balance_and_full_address_without_transaction_commands(self):
         with tempfile.TemporaryDirectory() as directory:
-            session=HostedWalletSession(rpc='http://127.0.0.1:9',wallet_path=Path(directory)/'wallet',manifest=Path(directory)/'manifest',genesis='aa'*32,binary=Path(directory)/'binary',scratch=directory,read_node=lambda:{'height':10},prompt=GuiApproval())
+            session=HostedWalletSession(rpc='http://127.0.0.1:9',wallet_path=Path(directory)/'wallet',manifest=Path(directory)/'manifest',genesis='aa'*32,binary=Path(directory)/'binary',scratch=directory,read_hash=lambda _: '0x'+'ab'*32,read_node=lambda:{'height':10},prompt=GuiApproval())
             calls=[];address='shca1'+'q'*2667
             def run(_binary,argv,secrets,*args,**kwargs):
                 calls.append(argv)

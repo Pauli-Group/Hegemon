@@ -47,6 +47,39 @@ test('rejects invalid tokens, cross-origin actions, oversized bodies and excessi
   assert.equal(status,429);db.raw.close();
 });
 
+test('read and write quotas are independent and both enforce their own limits',async t=>{
+  t.mock.method(Date,'now',()=>1800000000000);
+  t.mock.method(Math,'random',()=>0.5);
+  const db=database(),call=client(db);
+  try{
+    for(let i=0;i<40;i++)assert.equal((await call('/health'))[0],200);
+    for(let i=0;i<40;i++)assert.equal((await call('/offers',{method:'POST',data:offer()}))[0],201);
+    assert.equal((await call('/offers',{method:'POST',data:offer()}))[0],429);
+    for(let i=40;i<180;i++)assert.equal((await call('/health'))[0],200);
+    assert.equal((await call('/health'))[0],429);
+    assert.equal((await call('/health',{ip:'192.0.2.99'}))[0],200);
+    assert.equal((await call('/offers',{method:'POST',data:offer(),ip:'192.0.2.99'}))[0],201);
+  }finally{db.raw.close();}
+});
+
+test('retention migration preserves existing rows and enables indexed expiration queries',async()=>{
+  const db=database(),call=client(db);
+  try{
+    db.raw.exec('DROP INDEX offers_expires; DROP INDEX quotas_window; DROP INDEX swap_sessions_expires;');
+    const [status]=await call('/offers',{method:'POST',data:offer()});assert.equal(status,201);
+    db.raw.exec("INSERT INTO swap_sessions VALUES('session','offer','reservation','owner','taker','{}',1,2)");
+    const tables=['offers','quotas','swap_sessions'];
+    const before=tables.map(table=>db.raw.prepare('SELECT * FROM '+table).all());
+    const migration=readFileSync(new URL('./migrations/0004_retention_indexes.sql',import.meta.url),'utf8');
+    db.raw.exec(migration);db.raw.exec(migration);
+    assert.deepEqual(tables.map(table=>db.raw.prepare('SELECT * FROM '+table).all()),before);
+    for(const [table,column] of [['offers','expires'],['quotas','window'],['swap_sessions','expires']]){
+      const plan=db.raw.prepare(`EXPLAIN QUERY PLAN SELECT * FROM ${table} WHERE ${column}<? LIMIT 100`).all(123);
+      assert.ok(plan.some(row=>row.detail.includes('SEARCH '+table+' USING INDEX')),JSON.stringify(plan));
+    }
+  }finally{db.raw.close();}
+});
+
 test('Bitcoin testnet snapshot checks the fixed network, canonical block and current outspend',async()=>{
   const db=database(),call=client(db),original=globalThis.fetch,txid='1'.repeat(64),block='2'.repeat(64),genesis='00000000da84f2bafbbc53dee25a72ae507ff4914b867c565be350b0da8bf043';let outspends=0;
   globalThis.fetch=async input=>{

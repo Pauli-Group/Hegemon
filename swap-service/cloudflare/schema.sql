@@ -7,12 +7,14 @@ CREATE TABLE IF NOT EXISTS offers (
   owner_identity TEXT, reservation_identity TEXT
 );
 CREATE INDEX IF NOT EXISTS offers_public ON offers(public, closed, expires);
+CREATE INDEX IF NOT EXISTS offers_expires ON offers(expires);
 CREATE TABLE IF NOT EXISTS messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT, offer_id TEXT NOT NULL,
   reservation_id TEXT, sender TEXT NOT NULL, payload TEXT NOT NULL, created INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS messages_offer_session ON messages(offer_id, reservation_id, id);
 CREATE TABLE IF NOT EXISTS quotas (key TEXT PRIMARY KEY, window INTEGER NOT NULL, count INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS quotas_window ON quotas(window);
 -- A swap session is independent of the offer's listing and reservation lifetime.
 CREATE TABLE IF NOT EXISTS swap_sessions (
   id TEXT PRIMARY KEY, offer_id TEXT NOT NULL, reservation_id TEXT NOT NULL,
@@ -27,3 +29,4 @@ CREATE TABLE IF NOT EXISTS swap_packets (
   UNIQUE (session_id, sender, sequence)
 );
 CREATE INDEX IF NOT EXISTS swap_packets_session ON swap_packets(session_id, id);
+CREATE INDEX IF NOT EXISTS swap_sessions_expires ON swap_sessions(expires);

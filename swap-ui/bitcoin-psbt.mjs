@@ -102,7 +102,7 @@ export function buildSpend({op, terms, escrow, destination, feeRate = 2, network
     return tx;
   };
   // Measure the exact virtual size with a worst-case dummy witness, then price it.
-  const probe = make(amount - 1000n);
+  const probe = make(amount);
   probe.updateInput(0, {finalScriptWitness: op === 'claim' ? [new Uint8Array(73), new Uint8Array(32), Uint8Array.of(1), script] : [new Uint8Array(73), new Uint8Array(0), script]});
   const fee = feeFor(probe.vsize, rate), out = amount - fee;
   if (fee > maxFeeSats) throw Error('Bitcoin fee is unexpectedly large.');

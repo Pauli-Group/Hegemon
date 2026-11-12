@@ -47,6 +47,8 @@ Qualification on the public testnets is separate because it spends (worthless) t
 
 Not done: the deployed Cloudflare Worker has not been redeployed with these routes (that needs the operator's Wrangler session, which is not installed here), and no browser-extension wallet product (MetaMask, Eternl, Lace and so on) was driven.
 
+Before upgrading an existing D1 database, back it up and apply `cloudflare/migrations/0003_swap_sessions.sql` if needed, then `cloudflare/migrations/0004_retention_indexes.sql`. The latter is safe to repeat and adds expiration indexes for offers, sessions and quota windows without changing stored records. Apply it before deploying the updated Worker.
+
 ### Relay identity and client integrity
 
 The relay is not trusted with who the participants are, and the served page is not trusted blindly. Two mechanisms, both checked in the browser rather than by the relay.

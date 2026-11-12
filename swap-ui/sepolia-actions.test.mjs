@@ -35,3 +35,15 @@ test('a failed swap-level check blocks deployment and token funding before the w
  const terms={...base,kind:'0',token,tokenId:'0'},fund=wallet({code:expectedTokenRuntime(tokenTemplate,terms)});
  await assert.rejects(tokenSepoliaStep(fund,tokenTemplate,terms,'fund',{verify:async()=>{throw Error('policy changed');}}),/policy changed/);assert.equal(fund.sends.length,0);
 });
+
+test('forced ETH cannot block refunds but insufficient balance and spent escrows still do',async()=>{
+ const code=expectedEtherRuntime(ethTemplate,base);
+ const extra=wallet({code,timestamp:5000,balance:101});
+ await refundSepoliaEscrow(extra,ethTemplate,base);
+ assert.equal(extra.sends.length,1);
+ for(const options of [{balance:99},{spent:1}]){
+  const blocked=wallet({code,timestamp:5000,...options});
+  await assert.rejects(refundSepoliaEscrow(blocked,ethTemplate,base),/balance|spent/);
+  assert.equal(blocked.sends.length,0);
+ }
+});

@@ -67,11 +67,12 @@ export async function verifyEtherEscrow(provider,template,terms,confirmations=2,
   if(typeof actual!=='string'||actual.toLowerCase()!==expected)throw Error('escrow bytecode or terms mismatch');
   const spent=word(await request('eth_call',[{to:contract,data:'0x7ab71b7a'},tag]));
   const balance=BigInt(await request('eth_getBalance',[contract,tag]));
-  if(spent!==0n||balance!==BigInt(terms.amount))throw Error('escrow is not funded and unspent');
+  // ETH can be forced into the escrow; excess balance must not block recovery.
+  if(spent!==0n||balance<BigInt(terms.amount))throw Error('escrow is not funded and unspent');
   const currentCode=await request('eth_getCode',[contract,current.number]);
   const currentSpent=word(await request('eth_call',[{to:contract,data:'0x7ab71b7a'},current.number]));
   const currentBalance=BigInt(await request('eth_getBalance',[contract,current.number]));
-  if(typeof currentCode!=='string'||currentCode.toLowerCase()!==expected||currentSpent!==0n||currentBalance!==BigInt(terms.amount))throw Error('escrow is not funded and unspent at current head');
+  if(typeof currentCode!=='string'||currentCode.toLowerCase()!==expected||currentSpent!==0n||currentBalance<BigInt(terms.amount))throw Error('escrow is not funded and unspent at current head');
   const again=await request('eth_getBlockByNumber',[tag,false]);
   if(!again||again.hash!==block.hash||BigInt(await request('eth_chainId'))!==BigInt(terms.chainId))throw Error('snapshot or chain changed');
   const latestBlock=await request('eth_getBlockByNumber',['latest',false]);
