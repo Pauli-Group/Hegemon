@@ -8,6 +8,7 @@ import {deriveSessionId,sessionOfferDigest,checkSessionAsset} from './session-id
 import {validateSessionReference,validateSessionTerms} from './session-packets.mjs';
 import {validateRecoveryEnvelope} from './recovery.mjs';
 import {fromHex,toHex} from './cbor.mjs';
+import {validateHegemonRecovery,validateHegemonRecoveryAdvance} from './session-hegemon-recovery.mjs';
 
 const KIND='hegemon.swap.session-recovery',ITERATIONS=600000,MAX_PLAINTEXT=120000;
 const HEX64=/^[0-9a-f]{64}$/;
@@ -34,10 +35,10 @@ function envelopeShape(value){
 
 /** Validate the data needed to reconnect or manually recover. All token and amount values remain exact strings. */
 export async function validateSessionSnapshot(snapshot,session){
- const version=snapshot?.version,fields=['version','offer','offerDigest','reservation','credential','channelKey','sessionExpires','terms','escrows','secretEnvelope','ownerBlob','takerBlob',...([2,3].includes(version)?['transport']:[]),...(version===3?['actions']:[])];
- if(!keys(snapshot,fields)||![1,2,3].includes(version)||typeof session!=='string'||!HEX64.test(session)||!['reservation','credential','channelKey','offerDigest'].every(name=>typeof snapshot[name]==='string'&&HEX64.test(snapshot[name]))||!Number.isSafeInteger(snapshot.sessionExpires)||snapshot.sessionExpires<1)fail('Invalid swap recovery data.');
+ const version=snapshot?.version,fields=['version','offer','offerDigest','reservation','credential','channelKey','sessionExpires','terms','escrows','secretEnvelope','ownerBlob','takerBlob',...([2,3,4].includes(version)?['transport']:[]),...(version>=3?['actions']:[]),...(version===4?['hegemon']:[])];
+ if(!keys(snapshot,fields)||![1,2,3,4].includes(version)||typeof session!=='string'||!HEX64.test(session)||!['reservation','credential','channelKey','offerDigest'].every(name=>typeof snapshot[name]==='string'&&HEX64.test(snapshot[name]))||!Number.isSafeInteger(snapshot.sessionExpires)||snapshot.sessionExpires<1)fail('Invalid swap recovery data.');
  if(version>=2){const t=snapshot.transport;if(!keys(t,['next','previous'])||!Number.isSafeInteger(t.next)||t.next<1||t.next>257||!(t.previous===null||typeof t.previous==='string'&&HEX64.test(t.previous))||t.next===1&&t.previous!==null)fail('Invalid saved packet history.');}
- if(version===3){
+ if(version>=3){
   if(!keys(snapshot.actions,['long','short']))fail('Invalid saved wallet actions.');
   const ids=new Set();
   for(const side of ['long','short']){
@@ -45,7 +46,7 @@ export async function validateSessionSnapshot(snapshot,session){
    for(const operation of ['fund','claim','refund']){
     const attempts=leg[operation];if(!Array.isArray(attempts)||attempts.length>16||(!snapshot.terms&&attempts.length)||attempts.slice(0,-1).some(attempt=>attempt?.state!=='declined'))fail('Invalid saved wallet actions.');
     for(const attempt of attempts){
-     if(!keys(attempt,['id','state','txid'])||typeof attempt.id!=='string'||!/^[0-9a-f]{32}$/.test(attempt.id)||ids.has(attempt.id)||!['intent','submitted','declined','uncertain'].includes(attempt.state)||!(attempt.txid===null||typeof attempt.txid==='string'&&HEX64.test(attempt.txid))||attempt.state==='submitted'&&attempt.txid===null||['intent','declined'].includes(attempt.state)&&attempt.txid!==null)fail('Invalid saved wallet action.');
+     if(!keys(attempt,['id','state','txid'])||typeof attempt.id!=='string'||!/^[0-9a-f]{32}$/.test(attempt.id)||ids.has(attempt.id)||!['intent','prepared','submitted','declined','uncertain'].includes(attempt.state)||!(attempt.txid===null||typeof attempt.txid==='string'&&HEX64.test(attempt.txid))||['prepared','submitted'].includes(attempt.state)&&attempt.txid===null||['intent','declined'].includes(attempt.state)&&attempt.txid!==null)fail('Invalid saved wallet action.');
      ids.add(attempt.id);
     }
    }
@@ -62,9 +63,10 @@ export async function validateSessionSnapshot(snapshot,session){
   validateSessionReference(snapshot.escrows[name]);
   if(!snapshot.terms||snapshot.escrows[name].chain!==snapshot.terms.legs[name].asset.chain)fail('The saved escrow is for a different chain.');
  }
- if(version===3)for(const side of ['long','short'])for(const operation of ['fund','claim','refund'])for(const attempt of snapshot.actions[side][operation]){
+ if(version>=3)for(const side of ['long','short'])for(const operation of ['fund','claim','refund'])for(const attempt of snapshot.actions[side][operation]){
   if(attempt.state==='submitted'&&(!snapshot.escrows[side]||operation==='fund'&&snapshot.escrows[side].txid!==attempt.txid))fail('A submitted wallet action needs its saved escrow reference.');
  }
+ if(version===4)validateHegemonRecovery(snapshot);
  if(snapshot.secretEnvelope!==null){
   const secret=validateRecoveryEnvelope(snapshot.secretEnvelope);
   if(snapshot.terms&&secret.hashlock!==snapshot.terms.hashlock)fail('The saved secret backup is for a different swap.');
@@ -83,13 +85,15 @@ export function validateTransportAdvance(previous,next){
 /** Wallet-attempt histories are append-only. Only the latest intent may be
  * resolved, and a new attempt follows an explicit wallet decline only. */
 export function validateActionAdvance(previous,next){
- if(previous.version!==3)return;
+ if(previous.version<3)return;
  for(const side of ['long','short'])for(const operation of ['fund','claim','refund']){
   const a=previous.actions[side][operation],b=next.actions[side][operation];
   if(b.length<a.length||b.length>a.length+1)fail('Recovery update changes wallet action history.');
   for(let i=0;i<a.length;i++){
    if(canonical(a[i])===canonical(b[i]))continue;
-   if(i!==a.length-1||b.length!==a.length||a[i].state!=='intent'||b[i].id!==a[i].id||!['submitted','declined','uncertain'].includes(b[i].state))fail('Recovery update changes wallet action history.');
+   if(i!==a.length-1||b.length!==a.length||b[i].id!==a[i].id)fail('Recovery update changes wallet action history.');
+   const from=a[i],to=b[i],allowed=from.state==='intent'&&['prepared','submitted','declined','uncertain'].includes(to.state)||from.state==='prepared'&&['submitted','uncertain'].includes(to.state)&&to.txid===from.txid||from.state==='uncertain'&&to.state==='submitted'&&(from.txid===null||to.txid===from.txid);
+   if(!allowed)fail('Recovery update changes wallet action history.');
   }
   if(b.length>a.length&&(b.at(-1).state!=='intent'||a.length&&a.at(-1).state!=='declined'))fail('Resolve the previous wallet action before retrying.');
  }
@@ -157,6 +161,7 @@ export async function updateSessionRecovery(envelope,passphrase,snapshot){
   for(const name of ['offer','offerDigest','reservation','credential','channelKey','sessionExpires'])if(canonical(snapshot[name])!==canonical(previous.snapshot[name]))fail('Recovery update changes the session identity.');
   validateTransportAdvance(previous.snapshot,snapshot);
   validateActionAdvance(previous.snapshot,snapshot);
+  validateHegemonRecoveryAdvance(previous.snapshot,snapshot);
   for(const name of ['terms','ownerBlob','takerBlob'])if(previous.snapshot[name]!==null&&canonical(snapshot[name])!==canonical(previous.snapshot[name]))fail('Recovery update changes saved swap terms or participants.');
   for(const name of ['long','short'])if(previous.snapshot.escrows[name]!==null&&canonical(snapshot.escrows[name])!==canonical(previous.snapshot.escrows[name]))fail('Recovery update changes a saved escrow reference.');
   if(previous.snapshot.secretEnvelope!==null&&canonical(snapshot.secretEnvelope)!==canonical(previous.snapshot.secretEnvelope))fail('Recovery update changes the saved secret backup.');

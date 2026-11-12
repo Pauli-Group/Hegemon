@@ -41,6 +41,9 @@ BROWSER_TESTS=(
   swap-service/identity-browser.test.mjs
   swap-service/session-store-browser.test.mjs
   swap-service/session-start-browser.test.mjs
+  swap-service/session-bitcoin-draft-browser.test.mjs
+  swap-service/session-bitcoin-fund-browser.test.mjs
+  swap-service/session-hegemon-fund-browser.test.mjs
   swap-service/session-wizard-browser.test.mjs
   swap-service/observer-browser.test.mjs
   swap-service/timing-browser.test.mjs

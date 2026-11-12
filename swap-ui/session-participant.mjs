@@ -14,13 +14,14 @@ export async function participantCode(blob){
  return toHex(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode('hegemon.swap.participant-code.v1\n'+canonical(item.statement))))).slice(0,16);
 }
 
-export async function participantDraft({session,role,snapshot,publicKey,now}){
+export async function participantDraft({session,role,snapshot,publicKey,now,allowUnverifiedHegemon=false}){
  await validateSessionSnapshot(snapshot,session);
- if(![2,3].includes(snapshot.version)||!['owner','taker'].includes(role)||!Number.isSafeInteger(now)||typeof publicKey!=='string'||!/^04[0-9a-f]{128}$/.test(publicKey))throw Error('Invalid session participant request.');
+ if(![2,3,4].includes(snapshot.version)||!['owner','taker'].includes(role)||!Number.isSafeInteger(now)||typeof publicKey!=='string'||!/^04[0-9a-f]{128}$/.test(publicKey))throw Error('Invalid session participant request.');
  const existing=role==='owner'?snapshot.ownerBlob:snapshot.takerBlob;
  if(existing!==null)throw Error('This participant statement is already saved.');
  const assets={give:snapshot.offer.give,receive:snapshot.offer.receive};
- if(!['bitcoin','cardano','ethereum'].includes(assets.give.chain)||!['bitcoin','cardano','ethereum'].includes(assets.receive.chain))throw Error('A verified wallet proof is not available for this chain yet.');
+ if(!['hegemon','bitcoin','cardano','ethereum'].includes(assets.give.chain)||!['hegemon','bitcoin','cardano','ethereum'].includes(assets.receive.chain))throw Error('A wallet proof is not available for this chain.');
+ if([assets.give.chain,assets.receive.chain].includes('hegemon')&&allowUnverifiedHegemon!==true)throw Error('Review the Hegemon address proof limitation before continuing.');
  return {session,role,snapshot,publicKey,now,assets,channelDigest:await channelFingerprint(session,snapshot.channelKey)};
 }
 
@@ -38,10 +39,10 @@ export function addSessionProof(statement,assets,proofs,proof){
 }
 
 /** Require a verified proof for every address on every supported chain. */
-export async function completeParticipant(draft,statement,proofs,now){
+export async function completeParticipant(draft,statement,proofs,now,{allowUnverifiedHegemon=false}={}){
  const blob=serializeParticipant(statement,proofs);
  const expected={session:draft.session,role:draft.role,offer:draft.snapshot.offer.id,reservation:draft.snapshot.reservation,offerDigest:draft.snapshot.offerDigest,channelDigest:draft.channelDigest,assets:draft.assets,sessionExpires:draft.snapshot.sessionExpires};
  const participant=await verifyParticipant(blob,expected,now);
- if(participant.statement.protocolKey!==draft.publicKey||participant.unverified.length)throw Error('The wallet proofs do not bind this session.');
+ if(participant.statement.protocolKey!==draft.publicKey||participant.unverified.length&&allowUnverifiedHegemon!==true)throw Error('The wallet proofs do not bind this session.');
  return blob;
 }

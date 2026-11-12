@@ -13,6 +13,14 @@ import stat
 from pathlib import Path
 
 
+def validate_envelope(v):
+    """Validate only the public shape of an encrypted browser secret backup."""
+    if not isinstance(v,dict) or set(v)!={'version','iterations','hashlock','salt','iv','ciphertext'} or type(v['version']) is not int or v['version']!=1 or type(v['iterations']) is not int or v['iterations']!=600000:raise ValueError('invalid encrypted backup')
+    for name,length in (('hashlock',64),('salt',32),('iv',24),('ciphertext',96)):
+        if not isinstance(v[name],str) or not re.fullmatch('[0-9a-f]{'+str(length)+'}',v[name]):raise ValueError('invalid encrypted backup')
+    return v
+
+
 def unlock_backup(path, password):
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
     path=Path(path)
@@ -27,10 +35,7 @@ def unlock_backup(path, password):
         try:entry=json.loads(raw)
         except (ValueError,UnicodeError) as e:raise ValueError('invalid encrypted backup') from e
     if not isinstance(entry,dict) or set(entry)!={'label','envelope'} or not isinstance(entry['label'],str):raise ValueError('invalid encrypted backup')
-    v=entry['envelope']
-    if not isinstance(v,dict) or set(v)!={'version','iterations','hashlock','salt','iv','ciphertext'} or type(v['version']) is not int or v['version']!=1 or type(v['iterations']) is not int or v['iterations']!=600000:raise ValueError('invalid encrypted backup')
-    for name,length in (('hashlock',64),('salt',32),('iv',24),('ciphertext',96)):
-        if not isinstance(v[name],str) or not re.fullmatch('[0-9a-f]{'+str(length)+'}',v[name]):raise ValueError('invalid encrypted backup')
+    v=validate_envelope(entry['envelope'])
     if not isinstance(password,(bytes,bytearray)) or not 12<=len(password)<=4096:raise ValueError('invalid backup passphrase')
     key=bytearray(hashlib.pbkdf2_hmac('sha256',password,bytes.fromhex(v['salt']),600000,32))
     try:

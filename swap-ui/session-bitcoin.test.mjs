@@ -12,6 +12,7 @@ import {SEPOLIA_GENESIS} from './sepolia-verifier.mjs';
 import {planWithMargin} from './swap-flow.mjs';
 import {channelFingerprint} from './session-channel.mjs';
 import {planSessionTerms} from './session-plan.mjs';
+import {checkSessionRefund} from './session-refund.mjs';
 
 const config=JSON.parse(readFileSync(new URL('./chain-timing.json',import.meta.url),'utf8')),now=1800000000,offerId='11'.repeat(32),reservation='22'.repeat(32),channelKey='33'.repeat(32),btcTx='44'.repeat(32),ethTx='55'.repeat(32),contract='0x'+'66'.repeat(20);
 async function fixture(lifetime=20*86400){
@@ -24,8 +25,8 @@ async function fixture(lifetime=20*86400){
  const heads={long:{height:150000,observedAt:now},short:{timestamp:now,observedAt:now}},plan=planWithMargin(config,'bitcoin','ethereum',heads,now);
  const terms={version:2,hashlock:'77'.repeat(32),legs:{long:{asset:offer.give,network:'testnet4',refundee:ownerBtc.publicKey,claimant:takerBtc.publicKey,expiry:plan.long.expiry},short:{asset:offer.receive,network:'sepolia',refundee:takerEth.address,claimant:ownerEth.address,expiry:plan.short.expiry}}};
  const btcRef={chain:'bitcoin',txid:btcTx,vout:0},ethRef={chain:'ethereum',txid:ethTx},btcFields=sessionAssetTerms(terms,'long',{reference:btcRef}).operationTerms,script=await expectedBitcoinScript({...btcFields,refund_height:Number(btcFields.refund_height)});
- const state={genesis:TESTNET4_GENESIS,script,spent:false};
- const readers={bitcoin:{head:async()=>({genesis:state.genesis,tip:150000}),escrow:async(txid,vout)=>({genesis:state.genesis,txid,vout,tip:150000,confirmed:true,confirmations:2,block_height:149999,block_hash:'88'.repeat(32),spent:state.spent,amount_sats:50000,script:state.script})},ethereum:{provider:{request:async({method,params=[]})=>{
+ const state={genesis:TESTNET4_GENESIS,script,spent:false,tip:150000};
+ const readers={bitcoin:{head:async()=>({genesis:state.genesis,tip:state.tip}),escrow:async(txid,vout)=>({genesis:state.genesis,txid,vout,tip:state.tip,confirmed:true,confirmations:2,block_height:state.tip-1,block_hash:'88'.repeat(32),spent:state.spent,amount_sats:50000,script:state.script})},ethereum:{provider:{request:async({method,params=[]})=>{
   if(method==='eth_chainId')return '0xaa36a7';if(method==='eth_getBlockByNumber')return params[0]==='0x0'?{hash:SEPOLIA_GENESIS}:{timestamp:'0x'+now.toString(16)};
   if(method==='eth_getTransactionReceipt')return {transactionHash:'0x'+ethTx,status:'0x1',contractAddress:contract};
   if(method==='eth_getTransactionByHash')return {hash:'0x'+ethTx,to:null,from:takerEth.address};throw Error('Unexpected RPC '+method);
@@ -49,4 +50,11 @@ test('the planner derives Bitcoin block heights and an encrypted secret from bot
  const result=await planSessionTerms(input);
  assert.equal(result.terms.legs.long.network,'testnet4');assert.ok(result.terms.legs.long.expiry>150000);assert.equal(result.minimumCardanoLovelace,null);assert.equal(result.secretEnvelope.hashlock,result.terms.hashlock);
  state.genesis='00'.repeat(32);await assert.rejects(planSessionTerms(input),/Bitcoin testnet4 head/);
+});
+test('Bitcoin refund recovery verifies the exact unspent escrow after its refund height without a relay',async()=>{
+ const {args,state}=await fixture(),snapshot={terms:args.terms,escrows:args.references};
+ await assert.rejects(checkSessionRefund({snapshot,role:'owner',readers:args.readers,config}),/refund height has not been reached/);
+ state.tip=args.terms.legs.long.expiry;
+ assert.equal((await checkSessionRefund({snapshot,role:'owner',readers:args.readers,config})).chain,'bitcoin');
+ state.spent=true;await assert.rejects(checkSessionRefund({snapshot,role:'owner',readers:args.readers,config}),/spent/);
 });

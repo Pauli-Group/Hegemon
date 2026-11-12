@@ -46,6 +46,8 @@ def run_hegemon_action(*, binary, base_args, scratch, request, handoff_dir,
             if len(handoff_phrase)<12 or not hmac.compare_digest(handoff_phrase,confirmation):raise ValueError('handoff passphrases must match and contain at least 12 bytes')
             confirmation[:]=b'\0'*len(confirmation)
             prompts.append((HANDOFF,handoff_phrase))
+        if op=='import-refund-handoff':
+            prompts.append((HANDOFF,prompt('Encrypted refund handoff passphrase (local terminal only): ')))
         try:
             text,metrics=wallet(binary,[*base_args,*argv],prompts,Path(scratch),'hegemon-action')
         except RuntimeError as e:
@@ -59,6 +61,10 @@ def run_hegemon_action(*, binary, base_args, scratch, request, handoff_dir,
             match=re.search(r'\bsubmitted ([0-9a-f]{96})\b',text)
             if not match:raise ValueError('submission acknowledgement missing; check wallet status before retrying')
             return {'operation':op,'attempt':request['attempt'],'txid':match.group(1),'submitted':True,'confirmed':False,'metrics':metrics}
+        if op=='import-refund-handoff':
+            match=re.search(r'\bimported HTLC commitment ([0-9a-f]{112})\b',text)
+            if not match:raise ValueError('refund import acknowledgement missing; check wallet status')
+            return {'operation':op,'commitment':match.group(1),'block_height':request['block_height'],'metrics':metrics}
         match=re.search(r'\bcandidate ([0-9a-f]{64})\b',text)
         if not match:raise ValueError('candidate acknowledgement missing; check wallet status')
         result={'operation':op,'attempt':match.group(1),'submitted':False,'metrics':metrics}

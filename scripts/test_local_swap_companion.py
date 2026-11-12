@@ -1,6 +1,8 @@
 import os
 import hashlib
 import json
+import itertools
+import random
 import socket
 import subprocess
 import sys
@@ -18,6 +20,27 @@ from local_swap_companion import HOSTED_ORIGIN, DesktopKeyring, GuiApproval, Hos
 from probe_hegemon_testnet import MANIFEST, MANIFEST_FIELDS, RELEASE, RELATION, REQUIRED
 
 class LocalCompanionTest(unittest.TestCase):
+    def test_swap_note_selector_uses_only_available_notes_and_selects_smallest_sufficient_set(self):
+        rng=random.Random(3)
+        for _ in range(300):
+            values=[rng.randrange(1,100) for _ in range(rng.randrange(0,14))]
+            excluded={str(i) for i in rng.sample(range(len(values)),min(len(values),rng.randrange(3)))}
+            need=rng.randrange(1,170)
+            rows=[{'position':str(i),'value':str(v)} for i,v in enumerate(values)]
+            request={'amount':str(need),'fee':'0','exclude':sorted(excluded)}
+            choices=[(v,(str(i),)) for i,v in enumerate(values) if str(i) not in excluded and v>=need]
+            if not choices:
+                choices=[(values[a]+values[b],(str(a),str(b))) for a,b in itertools.combinations(range(len(values)),2) if str(a) not in excluded and str(b) not in excluded and values[a]+values[b]>=need]
+            snapshot={'synced_height':'100','available':rows}
+            if not choices:
+                with self.assertRaises(ValueError):local_swap_companion.select_swap_notes(snapshot,request)
+                continue
+            selected=local_swap_companion.select_swap_notes(snapshot,request)
+            self.assertEqual(int(selected['total']),min(x[0] for x in choices))
+            self.assertTrue(all(p not in excluded for p in selected['inputs']))
+            self.assertEqual(sum(values[int(p)] for p in selected['inputs']),int(selected['total']))
+        for request in ({'amount':'0','fee':'0','exclude':[]},{'amount':str(2**64-1),'fee':'1','exclude':[]},{'amount':'1','fee':'0','exclude':['1','1']}):
+            with self.assertRaises(ValueError):local_swap_companion.select_swap_notes({'synced_height':'1','available':[]},request)
     def test_token_private_and_symlink_rejected(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);token=root/'token'
@@ -43,6 +66,82 @@ class LocalCompanionTest(unittest.TestCase):
             self.assertEqual(hegemon_wire_terms(data)['timeout'],'9007199254740993')
             with self.assertRaises(ValueError):hegemon_wire_terms({**data,'timeout':str(2**64)})
             with self.assertRaises(ValueError):hegemon_wire_terms({**data,'amount':'0'})
+    def test_swap_htlc_read_checks_the_wallet_and_current_public_tip_without_exposing_notes(self):
+        terms={'locked':'7','timeout':'120','amount':'100','min_confirmations':'2',
+               'min_remaining_blocks':'3','hashlock':'aa'*32,'claim':'claim','refund':'refund','action_id':'ab'*48,'refund_ready':False}
+        response={'verified':True,'position':7,'created_height':98,'reference_height':100,'confirmations':3,
+                  'refund_ready':False,'commitment':'cd'*56,'created_block_hash':'0x'+'ef'*32,'reference_block_hash':'0x'+'12'*32}
+        with tempfile.TemporaryDirectory() as d:
+            session=HostedWalletSession(rpc='http://127.0.0.1:9944',wallet_path=Path(d)/'wallet',manifest=Path(d)/'manifest',genesis='g',binary=Path(d)/'private-spend',scratch=d)
+            calls=[]
+            def fake_wallet(_binary,argv,secrets,_scratch,_label):
+                calls.append((argv,bytes(secrets[0][1])))
+                return json.dumps(response)+'\n',{}
+            node=lambda:{'height':101,'chain_id':'0x'+'34'*32}
+            options={'check_node':node,'verify_action':lambda *a,**k:True,'read_block':lambda _:'0x'+'12'*32}
+            with patch('local_swap_companion.public_v8_address_keys'),patch('local_swap_companion.wallet',fake_wallet):
+                with self.assertRaises(PermissionError):session.verify_swap_htlc(terms,**options)
+                session._phrase=bytearray(b'disposable')
+                result=session.verify_swap_htlc(terms,**options)
+                self.assertEqual(result,{'verified':True,'position':'7','created_height':'98','reference_height':'100','confirmations':'3','commitment':'cd'*56,'action_id':'ab'*48,'refund_ready':False})
+                self.assertNotIn('disposable',json.dumps(result))
+                self.assertIn('verify-htlc',calls[-1][0]);self.assertEqual(calls[-1][1],b'disposable')
+                for change in ({'position':8},{'confirmations':1},{'reference_height':101},{'verified':False}):
+                    original=response.copy();response.update(change)
+                    with self.subTest(change=change),self.assertRaisesRegex(ValueError,'stale or inconsistent'):
+                        session.verify_swap_htlc(terms,**options)
+                    response.clear();response.update(original)
+                with self.assertRaisesRegex(ValueError,'stale or inconsistent'):
+                    session.verify_swap_htlc(terms,**{**options,'check_node':lambda:{'height':118,'chain_id':'0x'+'34'*32}})
+                response['refund_ready']=True
+                result=session.verify_swap_htlc({**terms,'refund_ready':True},**{**options,'check_node':lambda:{'height':120,'chain_id':'0x'+'34'*32}})
+                self.assertTrue(result['refund_ready']);self.assertIn('--refund-ready',calls[-1][0])
+                with self.assertRaisesRegex(ValueError,'stale or inconsistent'):
+                    session.verify_swap_htlc({**terms,'refund_ready':True},**options)
+                session.close()
+    def test_swap_address_is_derived_locally_and_checked_after_unlock(self):
+        with tempfile.TemporaryDirectory() as d:
+            session=HostedWalletSession(rpc='http://127.0.0.1:9944',wallet_path=Path(d)/'wallet',manifest=Path(d)/'manifest',genesis='g',binary=Path(d)/'private-spend',scratch=d)
+            calls=[]
+            def fake_wallet(_binary,argv,secrets,_scratch,_label):calls.append((argv,bytes(secrets[0][1])));return 'shca1testaddress\n',{}
+            with patch('local_swap_companion.public_v8_address_keys') as validate,patch('local_swap_companion.wallet',fake_wallet):
+                with self.assertRaises(PermissionError):session.swap_address(check_node=lambda:{'height':100})
+                session._phrase=bytearray(b'disposable')
+                self.assertEqual(session.swap_address(check_node=lambda:{'height':100}),{'address':'shca1testaddress'})
+                self.assertEqual(calls[-1][0][-3:],['address','--index','0']);validate.assert_called_once_with('shca1testaddress')
+                session.close()
+    def test_swap_htlc_lookup_and_inclusion_keep_wallet_output_local(self):
+        with tempfile.TemporaryDirectory() as d:
+            session=HostedWalletSession(rpc='http://127.0.0.1:9944',wallet_path=Path(d)/'wallet',manifest=Path(d)/'manifest',genesis='g',binary=Path(d)/'private-spend',scratch=d)
+            candidate='aa'*32;action='bb'*48;block='cc'*32;anchor='dd'*32
+            output={'text':json.dumps({'position':'7','created_height':'98','synced_height':'100'})}
+            def fake_wallet(*_args):return output['text'],{}
+            node=lambda:{'height':100}
+            def read(_url,method,params):
+                self.assertEqual(method,'chain_getBlockHash')
+                return '0x'+(block if params==[98] else anchor)
+            body=lambda _url,_block:([bytes.fromhex(action)+bytes(8)],{'height':98},None)
+            with patch('local_swap_companion.wallet',fake_wallet):
+                with self.assertRaises(PermissionError):session.locate_swap_htlc('ab'*56,check_node=node)
+                session._phrase=bytearray(b'disposable')
+                self.assertEqual(session.locate_swap_htlc('ab'*56,check_node=node),{'position':'7','created_height':'98','synced_height':'100'})
+                output['text']=json.dumps({'attempt':candidate,'action_id':action,'mined':{'height':'98','block_hash':'0x'+block},'inputs_consumed':True,'synced_height':'100'})
+                request={'attempt':candidate,'action_id':action}
+                self.assertEqual(session.swap_attempt_inclusion(request,check_node=node,read=read,body=body),{'state':'confirmed','block_height':'98','block_hash':'0x'+block,'confirmations':3,'action_id':action})
+                self.assertEqual(session.swap_attempt_inclusion({**request,'action_id':None},check_node=node,read=read,body=body)['action_id'],action)
+                with self.assertRaisesRegex(ValueError,'does not match'):
+                    session.swap_attempt_inclusion({**request,'action_id':'ee'*48},check_node=node,read=read,body=body)
+                with self.assertRaisesRegex(ValueError,'absent or ambiguous'):
+                    session.swap_attempt_inclusion(request,check_node=node,read=read,body=lambda *_:([],{'height':98},None))
+                with self.assertRaisesRegex(ValueError,'no longer canonical'):
+                    session.swap_attempt_inclusion(request,check_node=node,read=lambda *_:'0x'+'ff'*32,body=body)
+                output['text']=json.dumps({'attempt':candidate,'action_id':action,'mined':None,'inputs_consumed':False,'synced_height':'100'})
+                self.assertEqual(session.swap_attempt_inclusion(request,check_node=node,read=read,body=body),{'state':'pending','action_id':action})
+                session.close()
+    def test_swap_node_rejects_wrong_or_missing_private_spend_parameters(self):
+        with patch('probe_hegemon_testnet.assert_public_profile',return_value=({'height':100,'basic_wallet_checks_passed':False},{})):
+            with self.assertRaisesRegex(ValueError,'private-spend parameters'):
+                local_swap_companion.read_hosted_swap_node('http://127.0.0.1:9944','genesis','manifest')
     def test_hegemon_companion_refuses_noninteractive_terminal(self):
         with tempfile.TemporaryDirectory() as d:
             process=subprocess.run([sys.executable,'scripts/local_swap_companion.py','--token-file',str(Path(d)/'token'),
@@ -160,6 +259,71 @@ class LocalCompanionTest(unittest.TestCase):
             process=subprocess.run(missing,stdin=subprocess.DEVNULL,capture_output=True,text=True,timeout=10)
             self.assertNotEqual(process.returncode,0)
             self.assertIn('one wallet file',process.stderr)
+
+    def test_hosted_swap_mode_requires_private_opt_in_and_rejects_other_origins(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);wallet=root/'wallet';wallet.write_bytes(b'disposable');wallet.chmod(0o600)
+            token_path=root/'token';handoff=root/'handoffs';handoff.mkdir(mode=0o700)
+            with socket.socket() as probe_port:
+                probe_port.bind(('127.0.0.1',0));port=probe_port.getsockname()[1]
+            argv=['local_swap_companion.py','--hosted-hegemon-swap','--hegemon-rpc','http://127.0.0.1:9',
+                  '--hegemon-wallet',str(wallet),'--hegemon-handoff-dir',str(handoff),
+                  '--private-spend',str(root/'fake-binary'),'--token-file',str(token_path),'--port',str(port)]
+            calls=[];results={}
+            def action(**kwargs):
+                calls.append(kwargs['request'])
+                if kwargs['preimage_backup']:
+                    backup=kwargs['preimage_backup'];results['backup_path']=backup
+                    self.assertEqual(backup.stat().st_mode & 0o777,0o600)
+                    self.assertEqual(json.loads(backup.read_text())['envelope']['hashlock'],'ab'*32)
+                return {'operation':kwargs['request']['operation'],'status':'disposable'}
+            def client():
+                try:
+                    opener=urllib.request.build_opener(urllib.request.ProxyHandler({}));deadline=time.monotonic()+10;token=''
+                    while time.monotonic()<deadline:
+                        if token_path.exists():
+                            token=token_path.read_text().strip()
+                            try:
+                                opener.open(urllib.request.Request(f'http://127.0.0.1:{port}/health',headers={'Origin':HOSTED_ORIGIN,'Authorization':'Bearer '+token}),timeout=1);break
+                            except Exception:time.sleep(.02)
+                    def call(path,method='GET',body=None,origin=HOSTED_ORIGIN,bearer=token):
+                        data=None if body is None else json.dumps(body).encode()
+                        req=urllib.request.Request(f'http://127.0.0.1:{port}'+path,data=data,headers={'Origin':origin,'Authorization':'Bearer '+bearer,'Content-Type':'application/json'},method=method)
+                        try:return opener.open(req,timeout=5)
+                        except urllib.error.HTTPError as error:return error
+                    with call('/health') as response:results['capabilities']=json.load(response)['capabilities']
+                    with call('/hegemon/swap/action','POST',{'operation':'status'},origin='https://evil.example') as response:results['wrong_origin']=response.status
+                    with call('/hegemon/swap/action','POST',{'operation':'status'},bearer='0'*64) as response:results['wrong_token']=response.status
+                    with call('/hegemon/swap/verify','POST',{'sample':'request'}) as response:results['verify']=(response.status,json.load(response))
+                    with call('/hegemon/swap/observe','POST',{'sample':'request'}) as response:results['observe']=(response.status,json.load(response))
+                    with call('/hegemon/swap/select','POST',{'amount':'8','fee':'1','exclude':[]}) as response:results['selection']=(response.status,json.load(response))
+                    with call('/hegemon/swap/select','POST',{'amount':'8','fee':'1','exclude':[]},origin='https://evil.example') as response:results['selection_wrong_origin']=response.status
+                    with call('/hegemon/swap/head') as response:results['head']=(response.status,json.load(response))
+                    with call('/hegemon/swap/action','POST',{'operation':'status'}) as response:results['action']=(response.status,json.load(response))
+                    envelope={'version':1,'iterations':600000,'hashlock':'ab'*32,'salt':'cd'*16,'iv':'ef'*12,'ciphertext':'12'*48}
+                    with call('/hegemon/swap/action','POST',{'action':{'operation':'claim'},'secret_envelope':envelope}) as response:results['claim']=response.status
+                    with call('/hegemon/swap/action','POST',{'action':{'operation':'refund'},'secret_envelope':envelope}) as response:results['bad_secret']=response.status
+                    with call('/hegemon/action','POST',{'operation':'status'}) as response:results['legacy']=response.status
+                except Exception as error:results['error']=error
+                finally:
+                    if local_swap_companion.active_server:local_swap_companion.active_server.shutdown()
+            threading.Thread(target=client,daemon=True).start()
+            with patch('sys.argv',argv),patch('local_swap_companion.os.isatty',return_value=True),\
+                 patch('local_swap_companion.check_swap_wallet_binary'),patch('probe_hegemon_testnet.assert_public_profile',return_value=({'height':100,'genesis':'0x'+'ab'*32,'chain_id':'0x'+'cd'*32,'basic_wallet_checks_passed':True},{})),\
+                 patch('local_swap_companion.HostedWalletSession.verify_swap_htlc',return_value={'verified':True,'position':'7'}),\
+                 patch('local_swap_companion.HostedWalletSession.available_swap_notes',return_value={'synced_height':'100','available':[{'position':'7','value':'10'},{'position':'8','value':'20'}]}),\
+                 patch('hegemon_swap_observer.observe_claim_request',return_value={'state':'pending'}),\
+                 patch('local_swap_companion.run_hegemon_action',side_effect=action):
+                local_swap_companion.main()
+            if 'error' in results:raise results['error']
+            self.assertIn('hegemon-swap-actions',results['capabilities'])
+            self.assertEqual(results['wrong_origin'],403);self.assertEqual(results['wrong_token'],403)
+            self.assertEqual(results['verify'],(200,{'verified':True,'snapshot':{'verified':True,'position':'7'}}))
+            self.assertEqual(results['observe'],(200,{'state':'pending'}));self.assertEqual(results['legacy'],404)
+            self.assertEqual(results['selection'],(200,{'inputs':['7'],'total':'10','synced_height':'100'}));self.assertEqual(results['selection_wrong_origin'],403)
+            self.assertEqual(results['head'],(200,{'network':'pre-mainnet','height':'100','genesis':'0x'+'ab'*32,'chain_id':'0x'+'cd'*32}))
+            self.assertEqual(results['action'][0],200);self.assertEqual(results['claim'],200);self.assertEqual(results['bad_secret'],409)
+            self.assertFalse(results['backup_path'].exists());self.assertEqual(calls,[{'operation':'status'},{'operation':'claim'}])
 
     def test_hosted_balance_view_and_session_keep_totals_and_refresh(self):
         text='\n'.join(['ordinary position=7 value=5',

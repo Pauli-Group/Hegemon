@@ -43,6 +43,16 @@ class HegemonActionRunnerTest(unittest.TestCase):
         self.assertEqual(result['attempt'],'a'*64)
         self.assertEqual(result['txid'],'b'*96)
         self.assertTrue(result['submitted']);self.assertFalse(result['confirmed'])
+    def test_refund_handoff_import_requires_local_approval_and_passphrase(self):
+        name='a'*32+'.bin';path=self.path/name;path.write_bytes(b'encrypted');path.chmod(0o600)
+        data={'operation':'import-refund-handoff','handoff':name,'block_height':'123'}
+        captured=[];supplied=iter(['wallet passphrase','handoff passphrase'])
+        def fake_wallet(_binary,args,prompts,_scratch,_label):
+            self.assertEqual(args[-4:],['--block-height','123','--refund-index','0']);captured.extend(value for _,value in prompts)
+            return 'imported HTLC commitment '+'ab'*56,{}
+        with patch('hegemon_action_runner.wallet',side_effect=fake_wallet):
+            result=self.call(data,confirm=lambda _: 'APPROVE',password=lambda _:next(supplied))
+        self.assertEqual(result['commitment'],'ab'*56);self.assertEqual(result['block_height'],'123');self.assertTrue(all(not any(value) for value in captured))
 
     def test_missing_submit_ack_requires_status_check(self):
         with patch('hegemon_action_runner.wallet',return_value=('unexpected output',{})):

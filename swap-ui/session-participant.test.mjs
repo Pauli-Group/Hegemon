@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {cardanoWallet,ethereumWallet} from './test-wallets.mjs';
-import {signCardano,signEthereum} from './identity-flow.mjs';
+import {bitcoinMessageWallet,cardanoWallet,ethereumWallet} from './test-wallets.mjs';
+import {bitcoinProof,signCardano,signEthereum} from './identity-flow.mjs';
 import {deriveSessionId,participantText,sessionOfferDigest} from './session-identity.mjs';
 import {createProtocolKey} from './session-packets.mjs';
 import {addSessionProof,completeParticipant,participantDraft,participantStatement} from './session-participant.mjs';
@@ -31,4 +31,13 @@ test('a proof from another address or a modified session is refused',async()=>{
  const changed={...statement,session:'ff'.repeat(32)};
  assert.throws(()=>addSessionProof(changed,draft.assets,[],cardanoProof),/proof|signature|signed payload/i);
  await assert.rejects(participantDraft({...draft,snapshot:{...draft.snapshot,ownerBlob:'already saved'}}),/already saved/);
+});
+test('a pasted Bitcoin wallet proof is bound to the participant and other chain',async()=>{
+ const prior=await setup(),btc=bitcoinMessageWallet('03'.repeat(32)),offer={...prior.draft.snapshot.offer,give:{chain:'bitcoin',kind:'btc',id:'',amount:'50000'}},snapshot={...prior.draft.snapshot,offer,offerDigest:await sessionOfferDigest(offer)};
+ const draft=await participantDraft({...prior.draft,snapshot}),statement=participantStatement(draft,{give:btc.publicKey,receive:eth.address}),text=participantText(statement);
+ let proofs=addSessionProof(statement,draft.assets,[],bitcoinProof('bip137',btc.sign(text),text));
+ await assert.rejects(completeParticipant(draft,statement,proofs,now),/missing its wallet proof/);
+ proofs=addSessionProof(statement,draft.assets,proofs,await signEthereum({request:async({params})=>eth.personalSign(params[0])},eth.address,text));
+ assert.equal(JSON.parse(await completeParticipant(draft,statement,proofs,now)).proofs.length,2);
+ assert.throws(()=>addSessionProof(statement,draft.assets,[],bitcoinProof('bip137',bitcoinMessageWallet('04'.repeat(32)).sign(text),text)),/not from a wallet/);
 });

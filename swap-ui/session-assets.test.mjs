@@ -43,3 +43,10 @@ test('a Bitcoin session observes the exact saved testnet outpoint',async()=>{
  readers.bitcoin.spend=async(id,vout)=>({genesis:'00'.repeat(32),txid:id,vout,tip:99_000,spent:false});
  await assert.rejects(observeSessionLeg({snapshot,side:'long',readers,config}),/different output or network/);
 });
+test('Hegemon references distinguish a wallet candidate, public action and private note position',()=>{
+ const leg={asset:{chain:'hegemon',kind:'hgn',id:'',amount:'9007199254740993'},network:'pre-mainnet',claimant:'shca1'+'p'.repeat(100),refundee:'shca1'+'q'.repeat(100),expiry:50000},terms={...base,legs:{...base.legs,long:leg}};
+ const reference={chain:'hegemon',txid,action_id:'aa'.repeat(48),position:'9007199254740993',block_height:'49900'};
+ assert.deepEqual(sessionAssetTerms(terms,'long',{reference}),{chain:'hegemon',operationTerms:{amount:'9007199254740993',hashlock,claim:leg.claimant,refund:leg.refundee,timeout:'50000',locked:'9007199254740993',action_id:'aa'.repeat(48)}});
+ for(const bad of [{...reference,position:'01'},{...reference,position:String(1n<<64n)},{...reference,action_id:'aa'.repeat(32)}])assert.throws(()=>sessionAssetTerms(terms,'long',{reference:bad}),/Invalid Hegemon escrow reference/);
+ assert.throws(()=>sessionAssetTerms({...terms,legs:{...terms.legs,long:{...leg,asset:{...leg.asset,amount:String(1n<<64n)}}}},'long'),/Invalid Hegemon/);
+});

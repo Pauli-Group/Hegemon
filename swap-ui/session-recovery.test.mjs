@@ -77,6 +77,12 @@ test('version-3 wallet attempts cannot be forgotten, replaced or retried while u
  const created=await createSessionRecovery({session,role:'owner',snapshot:v3,passphrase:pass});
  const intent={id:'11'.repeat(16),state:'intent',txid:null},armed=structuredClone(v3);armed.actions.long.fund.push(intent);
  const armedBackup=await updateSessionRecovery(created.envelope,pass,armed);
+ const prepared=structuredClone(armed);prepared.actions.long.fund[0]={...intent,state:'prepared',txid:'66'.repeat(32)};
+ const preparedBackup=await updateSessionRecovery(armedBackup,pass,prepared);
+ const changedPrepared=structuredClone(prepared);changedPrepared.actions.long.fund[0]={...intent,state:'submitted',txid:'77'.repeat(32)};changedPrepared.escrows.long={chain:'bitcoin',txid:'77'.repeat(32),vout:0};
+ await assert.rejects(updateSessionRecovery(preparedBackup,pass,changedPrepared),/wallet action/);
+ const submitted=structuredClone(prepared);submitted.actions.long.fund[0].state='submitted';submitted.escrows.long={chain:'bitcoin',txid:'66'.repeat(32),vout:0};
+ assert.equal((await openSessionRecovery(await updateSessionRecovery(preparedBackup,pass,submitted),pass)).snapshot.actions.long.fund[0].state,'submitted');
  const unknown=structuredClone(armed);unknown.actions.long.fund[0].state='uncertain';
  const unknownBackup=await updateSessionRecovery(armedBackup,pass,unknown);
  const retry=structuredClone(unknown);retry.actions.long.fund.push({id:'22'.repeat(16),state:'intent',txid:null});

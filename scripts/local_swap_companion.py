@@ -863,6 +863,31 @@ def read_hosted_node(rpc):
     return node
 
 
+def read_hosted_swap_node(rpc, genesis, manifest):
+    """Pin the public profile and the wallet's expected private-spend relation."""
+    from probe_hegemon_testnet import assert_public_profile
+    node, _reference = assert_public_profile(rpc, genesis=genesis, manifest=manifest)
+    if not isinstance(node, dict) or node.get('basic_wallet_checks_passed') is not True:
+        raise ValueError('Hegemon wallet RPC or private-spend parameters are unavailable')
+    return node
+
+
+def check_swap_wallet_binary(path):
+    """Require the reviewed wallet build with the explicit mature-refund check."""
+    from public_hegemon_wallet import check_binary
+    checked=check_binary(path)
+    try:
+        help_text=subprocess.run([str(path),'verify-htlc','--help'],stdin=subprocess.DEVNULL,
+                                 stdout=subprocess.PIPE,stderr=subprocess.PIPE,check=True,timeout=15).stdout
+        root_help=subprocess.run([str(path),'--help'],stdin=subprocess.DEVNULL,
+                                 stdout=subprocess.PIPE,stderr=subprocess.PIPE,check=True,timeout=15).stdout
+    except (OSError,subprocess.SubprocessError) as error:
+        raise ValueError('Could not inspect the Hegemon swap wallet') from error
+    if len(help_text)>65536 or len(root_help)>65536 or b'--refund-ready' not in help_text or any(name not in root_help for name in (b'available-notes',b'locate-htlc',b'attempt-reference')):
+        raise ValueError('Hegemon swap mode needs the branch wallet with refund verification and note lookup')
+    return checked
+
+
 class HostedWalletSession:
     """One wallet, totals only. The passphrase stays in this process and is wiped on close."""
 
@@ -1008,6 +1033,193 @@ class HostedWalletSession:
             self._cached_at = time.monotonic()
             return dict(view)
 
+    def verify_swap_htlc(self, request, *, check_node=None, verify_action=None, read_block=None):
+        """Verify a live private HTLC using the unlocked local wallet.
+
+        This read discloses only the validated public snapshot. It does not
+        approve, prepare or submit a transaction. The caller must still check
+        the other chain and deadline policy immediately before a wallet action.
+        """
+        fields = ('locked', 'claim', 'refund', 'hashlock', 'timeout', 'amount',
+                  'min_confirmations', 'min_remaining_blocks')
+        if not isinstance(request, dict) or set(request) != set(fields)|{'action_id','refund_ready'}:
+            raise ValueError('invalid Hegemon verification fields')
+        if not isinstance(request['action_id'],str) or not re.fullmatch(r'[0-9a-f]{96}',request['action_id']) or type(request['refund_ready']) is not bool:
+            raise ValueError('invalid Hegemon verification mode')
+        values = hegemon_wire_terms({field:request[field] for field in fields})
+        if check_node is None:
+            check_node = lambda: read_hosted_swap_node(self.rpc, self.genesis, self.manifest)
+        if not self._lock.acquire(blocking=False):
+            raise RuntimeError('wallet busy')
+        try:
+            if self._phrase is None:
+                raise PermissionError('wallet locked')
+            node=check_node()
+            argv = ['--wallet', self.wallet_path, '--manifest', self.manifest, '--genesis', self.genesis,
+                    '--rpc', self.rpc, 'verify-htlc']
+            for field in fields:
+                argv.extend(['--' + field.replace('_', '-'), values[field]])
+            if request['refund_ready']:argv.append('--refund-ready')
+            try:
+                text, _ = wallet(self.binary, argv, [(PASS, bytes(self._phrase))], Path(self.scratch), 'hegemon-swap-verify')
+                result = json_line(text)
+            finally:
+                try:
+                    (Path(self.scratch) / 'hegemon-swap-verify.log').unlink()
+                except FileNotFoundError:
+                    pass
+            node = check_node()
+            names = ('position', 'created_height', 'reference_height', 'confirmations')
+            if (not isinstance(result, dict) or result.get('verified') is not True
+                    or result.get('refund_ready') is not request['refund_ready']
+                    or any(type(result.get(name)) is not int or result[name] < 0 for name in names)
+                    or result['position'] != int(values['locked'])
+                    or result['confirmations'] < int(values['min_confirmations'])
+                    or result['reference_height'] - result['created_height'] + 1 != result['confirmations']
+                    or not isinstance(node, dict) or type(node.get('height')) is not int or not isinstance(node.get('chain_id'),str)
+                    or node['height'] < result['reference_height']
+                    or (node['height'] < int(values['timeout']) if request['refund_ready'] else int(values['timeout']) - node['height'] < int(values['min_remaining_blocks']))
+                    or not isinstance(result.get('commitment'),str) or not re.fullmatch(r'[0-9a-f]{112}',result['commitment'])
+                    or any(not isinstance(result.get(name),str) or not re.fullmatch(r'0x[0-9a-f]{64}',result[name]) for name in ('created_block_hash','reference_block_hash'))):
+                raise ValueError('Hegemon verification is stale or inconsistent')
+            if verify_action is None:
+                from hegemon_swap_observer import verify_lock_action_output
+                verify_action=verify_lock_action_output
+            if read_block is None:read_block=lambda height:rpc(self.rpc,'chain_getBlockHash',[height])
+            if read_block(result['reference_height'])!=result['reference_block_hash']:
+                raise ValueError('Hegemon verification reference changed')
+            verify_action(self.rpc,block_height=result['created_height'],block_hash=result['created_block_hash'],action_id=request['action_id'],commitment=result['commitment'],chain_id=node['chain_id'])
+            node=check_node()
+            if (type(node.get('height')) is not int or node['height']<result['reference_height']
+                    or read_block(result['reference_height'])!=result['reference_block_hash']
+                    or (node['height']<int(values['timeout']) if request['refund_ready'] else int(values['timeout'])-node['height']<int(values['min_remaining_blocks']))):
+                raise ValueError('Hegemon chain changed during verification')
+            return {'verified': True, **{name: str(result[name]) for name in names},
+                    'commitment':result['commitment'],'action_id':request['action_id'],'refund_ready':request['refund_ready']}
+        finally:
+            self._lock.release()
+
+    def swap_address(self, *, check_node=None):
+        """Derive address zero from the unlocked wallet; never return key material."""
+        if check_node is None:
+            check_node = lambda: read_hosted_swap_node(self.rpc, self.genesis, self.manifest)
+        if not self._lock.acquire(blocking=False):
+            raise RuntimeError('wallet busy')
+        try:
+            if self._phrase is None:
+                raise PermissionError('wallet locked')
+            check_node()
+            argv=['--wallet', self.wallet_path, '--manifest', self.manifest, '--genesis', self.genesis,
+                  '--rpc', self.rpc, 'address', '--index', '0']
+            try:
+                text,_=wallet(self.binary,argv,[(PASS,bytes(self._phrase))],Path(self.scratch),'hegemon-swap-address')
+            finally:
+                try:(Path(self.scratch)/'hegemon-swap-address.log').unlink()
+                except FileNotFoundError:pass
+            lines=[line.strip() for line in text.splitlines() if line.strip().startswith('shca1')]
+            if len(lines)!=1 or len(lines[0])>3000:raise ValueError('Hegemon address unavailable')
+            public_v8_address_keys(lines[0]);check_node()
+            return {'address':lines[0]}
+        finally:
+            self._lock.release()
+
+    def available_swap_notes(self, *, check_node=None):
+        """Read selector-safe position/value pairs without exposing the inventory."""
+        if check_node is None:
+            check_node=lambda:read_hosted_swap_node(self.rpc,self.genesis,self.manifest)
+        if not self._lock.acquire(blocking=False):raise RuntimeError('wallet busy')
+        try:
+            if self._phrase is None:raise PermissionError('wallet locked')
+            check_node()
+            argv=['--wallet',self.wallet_path,'--manifest',self.manifest,'--genesis',self.genesis,
+                  '--rpc',self.rpc,'available-notes']
+            try:
+                text,_=wallet(self.binary,argv,[(PASS,bytes(self._phrase))],Path(self.scratch),'hegemon-swap-notes')
+                value=json_line(text)
+            finally:
+                try:(Path(self.scratch)/'hegemon-swap-notes.log').unlink()
+                except FileNotFoundError:pass
+            if not isinstance(value,dict) or set(value)!={'synced_height','available'} or not isinstance(value['available'],list) or len(value['available'])>10000:
+                raise ValueError('invalid available Hegemon notes')
+            synced=int(hegemon_wire_integer(value['synced_height']))
+            rows=[];positions=set()
+            for row in value['available']:
+                if not isinstance(row,dict) or set(row)!={'position','value'}:raise ValueError('invalid available Hegemon note')
+                position=hegemon_wire_integer(row['position']);amount=hegemon_wire_integer(row['value'])
+                if position in positions:raise ValueError('duplicate Hegemon note')
+                positions.add(position);rows.append({'position':position,'value':amount})
+            node=check_node()
+            if type(node.get('height')) is not int or not 0<=node['height']-synced<=2:
+                raise ValueError('Hegemon wallet note list is stale')
+            return {'synced_height':str(synced),'available':rows}
+        finally:self._lock.release()
+
+    def locate_swap_htlc(self, commitment, *, check_node=None):
+        """Find one imported, unspent HTLC by its exact private commitment."""
+        if not isinstance(commitment,str) or not re.fullmatch('[0-9a-f]{112}',commitment):raise ValueError('invalid Hegemon commitment')
+        if check_node is None:check_node=lambda:read_hosted_swap_node(self.rpc,self.genesis,self.manifest)
+        if not self._lock.acquire(blocking=False):raise RuntimeError('wallet busy')
+        try:
+            if self._phrase is None:raise PermissionError('wallet locked')
+            check_node()
+            argv=['--wallet',self.wallet_path,'--manifest',self.manifest,'--genesis',self.genesis,
+                  '--rpc',self.rpc,'locate-htlc','--commitment',commitment]
+            try:
+                text,_=wallet(self.binary,argv,[(PASS,bytes(self._phrase))],Path(self.scratch),'hegemon-swap-locate')
+                value=json_line(text)
+            finally:
+                try:(Path(self.scratch)/'hegemon-swap-locate.log').unlink()
+                except FileNotFoundError:pass
+            if not isinstance(value,dict) or set(value)!={'position','created_height','synced_height'}:raise ValueError('invalid Hegemon HTLC lookup')
+            position=hegemon_wire_integer(value['position']);created=int(hegemon_wire_integer(value['created_height']));synced=int(hegemon_wire_integer(value['synced_height']))
+            node=check_node()
+            if created<1 or created>synced or type(node.get('height')) is not int or not 0<=node['height']-synced<=2:raise ValueError('Hegemon HTLC lookup is stale')
+            return {'position':position,'created_height':str(created),'synced_height':str(synced)}
+        finally:self._lock.release()
+
+    def swap_attempt_inclusion(self, request, *, check_node=None, read=None, body=None):
+        """Find a candidate's canonical inclusion without exposing wallet status."""
+        from check_native_asset_lifecycle import rpc,canonical_body
+        if (not isinstance(request,dict) or set(request)!={'attempt','action_id'}
+                or not isinstance(request['attempt'],str) or not re.fullmatch('[0-9a-f]{64}',request['attempt'])
+                or not (request['action_id'] is None or isinstance(request['action_id'],str) and re.fullmatch('[0-9a-f]{96}',request['action_id']))):raise ValueError('invalid Hegemon attempt')
+        if check_node is None:check_node=lambda:read_hosted_swap_node(self.rpc,self.genesis,self.manifest)
+        read=read or rpc;body=body or canonical_body
+        if not self._lock.acquire(blocking=False):raise RuntimeError('wallet busy')
+        try:
+            if self._phrase is None:raise PermissionError('wallet locked')
+            check_node()
+            argv=['--wallet',self.wallet_path,'--manifest',self.manifest,'--genesis',self.genesis,'--rpc',self.rpc,'attempt-reference','--attempt',request['attempt']]
+            try:
+                text,_=wallet(self.binary,argv,[(PASS,bytes(self._phrase))],Path(self.scratch),'hegemon-swap-inclusion')
+                result=json_line(text)
+            finally:
+                try:(Path(self.scratch)/'hegemon-swap-inclusion.log').unlink()
+                except FileNotFoundError:pass
+            node=check_node()
+            if (not isinstance(result,dict) or set(result)!={'attempt','action_id','mined','inputs_consumed','synced_height'}
+                    or result['attempt']!=request['attempt'] or type(result['inputs_consumed']) is not bool):raise ValueError('invalid Hegemon wallet attempt')
+            tip=node.get('height');synced=int(hegemon_wire_integer(result['synced_height']))
+            if type(tip) is not int or not 0<=tip-synced<=2:raise ValueError('stale Hegemon attempt')
+            action=result['action_id']
+            if action is not None and (not isinstance(action,str) or not re.fullmatch('[0-9a-f]{96}',action)):raise ValueError('invalid Hegemon wallet action')
+            if request['action_id'] is not None and action is not None and action!=request['action_id']:raise ValueError('Hegemon action does not match the wallet attempt')
+            if result['mined'] is None:return {'state':'pending','action_id':action}
+            mined=result['mined']
+            if (action is None or result['inputs_consumed'] is not True or not isinstance(mined,dict) or set(mined)!={'height','block_hash'}
+                    or not isinstance(mined['block_hash'],str) or not re.fullmatch('0x[0-9a-f]{64}',mined['block_hash'])):raise ValueError('invalid Hegemon attempt inclusion')
+            height=int(hegemon_wire_integer(mined['height']));block=mined['block_hash']
+            if not 1<=height<2**48 or height>synced:raise ValueError('stale Hegemon attempt')
+            if tip-height+1<2:return {'state':'pending','action_id':action}
+            anchor=read(self.rpc,'chain_getBlockHash',[tip]);canonical=read(self.rpc,'chain_getBlockHash',[height])
+            if not isinstance(anchor,str) or not re.fullmatch('0x[0-9a-fA-F]{64}',anchor) or not isinstance(canonical,str) or canonical.lower()!=block:raise ValueError('Hegemon attempt is no longer canonical')
+            actions,metadata,_=body(self.rpc,block)
+            if not isinstance(actions,list) or not isinstance(metadata,dict) or metadata.get('height')!=height or sum(isinstance(item,(bytes,bytearray)) and len(item)>=56 and item[:48].hex()==action for item in actions)!=1:raise ValueError('Hegemon attempt action is absent or ambiguous')
+            latest=check_node()
+            if type(latest.get('height')) is not int or latest['height']<tip or read(self.rpc,'chain_getBlockHash',[height]).lower()!=block or read(self.rpc,'chain_getBlockHash',[tip]).lower()!=anchor.lower():raise ValueError('Hegemon chain changed during attempt lookup')
+            return {'state':'confirmed','block_height':str(height),'block_hash':block,'confirmations':latest['height']-height+1,'action_id':action}
+        finally:self._lock.release()
+
 
 def private_token(path):
     parent=path.parent.stat()
@@ -1048,12 +1260,49 @@ def cardano_wire_terms(data):
     return {**data,'expiry_ms':decimal(data['expiry_ms']),'expected_value':converted}
 
 
+def hegemon_wire_integer(value):
+    if not isinstance(value,str) or not re.fullmatch('0|[1-9][0-9]{0,19}',value) or int(value)>=2**64:raise ValueError('invalid Hegemon integer')
+    return value
+
+
+def select_swap_notes(snapshot, request):
+    """Choose at most two available native notes without exposing the inventory."""
+    if not isinstance(request,dict) or set(request)!={'amount','fee','exclude'}:raise ValueError('invalid Hegemon selection request')
+    amount=int(hegemon_wire_integer(request['amount']));fee=int(hegemon_wire_integer(request['fee']))
+    if amount<=0 or amount+fee>=2**64:raise ValueError('invalid Hegemon selection amount')
+    exclude=request['exclude']
+    if not isinstance(exclude,list) or len(exclude)>2 or any(not isinstance(x,str) for x in exclude):raise ValueError('invalid Hegemon exclusions')
+    excluded={hegemon_wire_integer(x) for x in exclude}
+    if len(excluded)!=len(exclude):raise ValueError('duplicate Hegemon exclusions')
+    if not isinstance(snapshot,dict) or set(snapshot)!={'synced_height','available'} or not isinstance(snapshot['available'],list) or len(snapshot['available'])>10000:raise ValueError('invalid Hegemon note snapshot')
+    height=hegemon_wire_integer(snapshot['synced_height']);rows=[];seen=set()
+    for row in snapshot['available']:
+        if not isinstance(row,dict) or set(row)!={'position','value'}:raise ValueError('invalid Hegemon note')
+        position=hegemon_wire_integer(row['position']);value=int(hegemon_wire_integer(row['value']))
+        if position in seen:raise ValueError('duplicate Hegemon note')
+        seen.add(position)
+        if value>0 and position not in excluded:rows.append((value,position))
+    rows.sort();need=amount+fee
+    one=next((row for row in rows if row[0]>=need),None)
+    if one is not None:return {'inputs':[one[1]],'total':str(one[0]),'synced_height':height}
+    left,right,best=0,len(rows)-1,None
+    while left<right:
+        total=rows[left][0]+rows[right][0]
+        if total>=2**64:right-=1
+        elif total>=need:
+            candidate=(total,rows[left][1],rows[right][1])
+            if best is None or candidate<best:best=candidate
+            right-=1
+        else:left+=1
+    if best is None:raise ValueError('not enough unreserved Hegemon notes for amount and fee')
+    return {'inputs':[best[1],best[2]],'total':str(best[0]),'synced_height':height}
+
+
 def hegemon_wire_terms(data):
     values={}
     for field in ('locked','timeout','amount','min_confirmations','min_remaining_blocks'):
         value=data[field]
-        if not isinstance(value,str) or not re.fullmatch('0|[1-9][0-9]{0,19}',value) or int(value)>=2**64:raise ValueError('invalid Hegemon integer')
-        values[field]=value
+        values[field]=hegemon_wire_integer(value)
     if values['amount']=='0' or values['min_confirmations']=='0' or values['min_remaining_blocks']=='0':raise ValueError('invalid Hegemon verification limits')
     if not isinstance(data['hashlock'],str) or not re.fullmatch('[0-9a-f]{64}',data['hashlock']):raise ValueError('invalid hashlock')
     for field in ('claim','refund'):public_v8_address_keys(data[field])
@@ -1088,6 +1337,7 @@ def main():
     p.add_argument('--hegemon-public',action='store_true',help='use the pinned v0.11 public pre-mainnet (mutually exclusive with --enable-hegemon-actions)')
     p.add_argument('--hosted-node-status',action='store_true',help='allow the hosted testnet page to read Hegemon node status only; no wallet or transaction operations')
     p.add_argument('--hosted-wallet-status',action='store_true',help='allow the hosted testnet page to read one unlocked wallet\'s HGN totals; no spends')
+    p.add_argument('--hosted-hegemon-swap',action='store_true',help='opt in to locally approved Hegemon pre-mainnet swap operations from the pinned hosted page')
     p.add_argument('--hegemon-handoff-dir',type=Path,help='private directory for encrypted refund handoffs')
     p.add_argument('--hegemon-preimage-backup',type=Path,help='optional private exported browser backup for local claims')
     p.add_argument('--token-file',type=Path,required=True,help='0600 file inside a user-owned 0700 directory')
@@ -1096,7 +1346,7 @@ def main():
     p.add_argument('--origin',default=None)
     p.add_argument('--port',type=int,default=8788)
     args=p.parse_args();os.umask(0o077)
-    if args.hosted_node_status and args.hosted_wallet_status:p.error('hosted node status and hosted wallet status are mutually exclusive')
+    if sum((args.hosted_node_status,args.hosted_wallet_status,args.hosted_hegemon_swap))>1:p.error('hosted node status, wallet status and swap mode are mutually exclusive')
     if args.hosted_node_status:
         if args.origin not in (None, HOSTED_ORIGIN):p.error('hosted node status accepts only the pinned hosted origin')
         args.origin=HOSTED_ORIGIN
@@ -1106,13 +1356,20 @@ def main():
         if not args.hegemon_rpc or any(other):p.error('hosted node status requires only a loopback Hegemon RPC and no wallet or other chain options')
         from probe_hegemon_testnet import endpoint
         endpoint(args.hegemon_rpc)
-    elif args.hosted_wallet_status:
+    elif args.hosted_wallet_status or args.hosted_hegemon_swap:
         if args.origin not in (None, HOSTED_ORIGIN):p.error('hosted wallet status accepts only the pinned hosted origin')
         args.origin=HOSTED_ORIGIN
         other=[args.bitcoin_rpc,args.bitcoin_cookie,args.enable_bitcoin_actions,args.bitcoin_wallet,args.bitcoin_genesis,args.bitcoin_preimage_backup,
                args.cardano_socket,args.cardano_network_dir,args.enable_cardano_actions,args.cardano_node_pid,args.cardano_genesis,args.cardano_signing_key,args.cardano_journal_dir,args.cardano_preimage_backup,
-               args.ethereum_rpc,args.hegemon_manifest,args.hegemon_genesis,args.enable_hegemon_actions,args.hegemon_public,args.hegemon_handoff_dir,args.hegemon_preimage_backup]
+               args.ethereum_rpc,args.hegemon_manifest,args.hegemon_genesis,args.enable_hegemon_actions,args.hegemon_public]
+        if not args.hosted_hegemon_swap:other.extend([args.hegemon_handoff_dir,args.hegemon_preimage_backup])
         if not args.hegemon_rpc or not args.hegemon_wallet or any(other):p.error('hosted wallet status requires only a loopback Hegemon RPC and one wallet file')
+        if args.hosted_hegemon_swap:
+            if not args.hegemon_handoff_dir:p.error('hosted Hegemon swap mode requires a private refund handoff directory')
+            if not os.isatty(0):p.error('hosted Hegemon swap actions require an interactive local terminal')
+            private_handoff_directory(args.hegemon_handoff_dir)
+            check_swap_wallet_binary(args.private_spend)
+            args.hegemon_public=True
         from probe_hegemon_testnet import endpoint
         endpoint(args.hegemon_rpc)
         release=json.loads((ROOT/'config/testnet/0.11/release.json').read_text())
@@ -1141,8 +1398,8 @@ def main():
     hegemon_options=[args.hegemon_wallet,args.hegemon_manifest,args.hegemon_genesis,args.hegemon_rpc]
     if args.hegemon_public and args.enable_hegemon_actions:
         p.error('--hegemon-public is mutually exclusive with --enable-hegemon-actions')
-    if not args.hosted_node_status and not args.hosted_wallet_status and any(hegemon_options) and not all(hegemon_options):p.error('all Hegemon wallet, manifest, genesis and RPC options are required')
-    if not args.hosted_node_status and not args.hosted_wallet_status and not args.bitcoin_rpc and not args.cardano_socket and not args.ethereum_rpc and not all(hegemon_options):p.error('configure at least one local node')
+    if not args.hosted_node_status and not args.hosted_wallet_status and not args.hosted_hegemon_swap and any(hegemon_options) and not all(hegemon_options):p.error('all Hegemon wallet, manifest, genesis and RPC options are required')
+    if not args.hosted_node_status and not args.hosted_wallet_status and not args.hosted_hegemon_swap and not args.bitcoin_rpc and not args.cardano_socket and not args.ethereum_rpc and not all(hegemon_options):p.error('configure at least one local node')
     if args.ethereum_rpc:ethereum_local_head(args.ethereum_rpc)
     if all(hegemon_options):
         if not os.isatty(0):p.error('Hegemon verification requires an interactive local terminal')
@@ -1168,9 +1425,9 @@ def main():
         btc.call('getwalletinfo',wallet=args.bitcoin_wallet)
     scratch=tempfile.TemporaryDirectory(prefix='hegemon-local-companion-')
     session=None
-    prompt=GuiApproval() if args.gui and args.hosted_wallet_status else None
+    prompt=GuiApproval() if args.gui and (args.hosted_wallet_status or args.hosted_hegemon_swap) else None
     keyring=DesktopKeyring() if prompt is not None else None
-    if args.hosted_wallet_status:
+    if args.hosted_wallet_status or args.hosted_hegemon_swap:
         session=HostedWalletSession(rpc=args.hegemon_rpc,wallet_path=args.hegemon_wallet,manifest=args.hegemon_manifest,genesis=args.hegemon_genesis,binary=args.private_spend,scratch=scratch.name,prompt=prompt,keyring=keyring)
     cardano=None
     if args.cardano_socket:
@@ -1216,23 +1473,34 @@ def main():
             if not self.authorized():return self.reply(403,{'error':'forbidden'})
             try:
                 if self.path=='/health':
+                    if args.hosted_hegemon_swap:return self.reply(200,{'status':'ok','capabilities':['hegemon-public-status','hegemon-public-balance','hegemon-swap-verify','hegemon-swap-actions','hegemon-swap-observe','hegemon-swap-select']})
                     if args.hosted_wallet_status:return self.reply(200,{'status':'ok','capabilities':['hegemon-public-status','hegemon-public-balance']})
                     if args.hosted_node_status:return self.reply(200,{'status':'ok','capabilities':['hegemon-public-status']})
                     capabilities=(['bitcoin-regtest-verify'] if btc else [])+(['bitcoin-regtest-actions'] if args.enable_bitcoin_actions else [])+(['cardano-local-verify'] if cardano else [])+(['cardano-local-actions'] if args.enable_cardano_actions else [])+(['ethereum-local-anchor'] if args.ethereum_rpc else [])+(['hegemon-public-verify'] if args.hegemon_public else ['hegemon-local-verify'] if all(hegemon_options) else [])+(['hegemon-public-actions'] if args.hegemon_public and args.hegemon_handoff_dir else ['hegemon-local-actions'] if args.enable_hegemon_actions else [])
                     return self.reply(200,{'status':'ok','capabilities':capabilities})
-                if self.path=='/hegemon/status' and (args.hosted_node_status or args.hosted_wallet_status):
+                if self.path=='/hegemon/status' and (args.hosted_node_status or args.hosted_wallet_status or args.hosted_hegemon_swap):
                     from probe_hegemon_testnet import probe
                     node=probe(args.hegemon_rpc)
                     return self.reply(200,{'network':node['network'],'height':str(node['height']),'syncing':node['syncing'],
                                            'peers':node['peers'],'wallet_rpc_ready':node['basic_wallet_checks_passed']})
-                if self.path=='/hegemon/wallet-activity' and args.hosted_wallet_status:
+                if self.path=='/hegemon/wallet-activity' and (args.hosted_wallet_status or args.hosted_hegemon_swap):
                     return self.reply(200,session.activity.snapshot())
-                if self.path=='/hegemon/balance' and args.hosted_wallet_status:
+                if self.path=='/hegemon/swap/address' and args.hosted_hegemon_swap:
+                    try:return self.reply(200,session.swap_address())
+                    except PermissionError:return self.reply(409,{'error':'wallet_locked'})
+                    except RuntimeError:return self.reply(409,{'error':'wallet_busy'})
+                    except Exception:return self.reply(502,{'error':'Hegemon address unavailable'})
+                if self.path=='/hegemon/swap/head' and args.hosted_hegemon_swap:
+                    try:
+                        node=read_hosted_swap_node(args.hegemon_rpc,args.hegemon_genesis,args.hegemon_manifest)
+                        return self.reply(200,{'network':'pre-mainnet','genesis':node['genesis'],'chain_id':node['chain_id'],'height':str(node['height'])})
+                    except Exception:return self.reply(503,{'error':'hegemon_node_not_ready'})
+                if self.path=='/hegemon/balance' and (args.hosted_wallet_status or args.hosted_hegemon_swap):
                     try:return self.reply(200,session.balance())
                     except PermissionError:return self.reply(409,{'error':'wallet_locked'})
                     except LookupError:return self.reply(503,{'error':'hegemon_node_not_ready'})
                     except Exception:return self.reply(502,{'error':'wallet balance unavailable'})
-                if args.hosted_node_status or args.hosted_wallet_status:return self.reply(404,{'error':'not found'})
+                if args.hosted_node_status or args.hosted_wallet_status or args.hosted_hegemon_swap:return self.reply(404,{'error':'not found'})
                 if self.path=='/bitcoin/head' and btc:
                     info=btc.call('getblockchaininfo')
                     if info['chain']!='regtest' or btc.call('getconnectioncount')!=0:raise ValueError('Bitcoin node is not isolated regtest')
@@ -1261,7 +1529,57 @@ def main():
         def do_POST(self):
             if not self.authorized():return self.reply(403,{'error':'forbidden'})
             if args.hosted_node_status:return self.reply(403,{'error':'hosted node status is read-only'})
-            if args.hosted_wallet_status:
+            if args.hosted_hegemon_swap and self.path!='/hegemon/unlock':
+                if self.path not in ('/hegemon/swap/verify','/hegemon/swap/observe','/hegemon/swap/action','/hegemon/swap/select','/hegemon/swap/locate','/hegemon/swap/inclusion'):return self.reply(404,{'error':'not found'})
+                if self.headers.get_content_type()!='application/json':return self.reply(400,{'error':'JSON required'})
+                try:
+                    length=int(self.headers.get('Content-Length','0'))
+                    if not 0<length<=16384:raise ValueError('invalid body size')
+                    data=json.loads(self.rfile.read(length))
+                    if self.path=='/hegemon/swap/verify':
+                        return self.reply(200,{'verified':True,'snapshot':session.verify_swap_htlc(data)})
+                    if self.path=='/hegemon/swap/observe':
+                        from hegemon_swap_observer import observe_claim_request
+                        return self.reply(200,observe_claim_request(data,args.hegemon_rpc))
+                    if self.path=='/hegemon/swap/select':
+                        return self.reply(200,select_swap_notes(session.available_swap_notes(),data))
+                    if self.path=='/hegemon/swap/locate':
+                        if not isinstance(data,dict) or set(data)!={'commitment'}:raise ValueError('invalid Hegemon lookup')
+                        return self.reply(200,session.locate_swap_htlc(data['commitment']))
+                    if self.path=='/hegemon/swap/inclusion':
+                        return self.reply(200,session.swap_attempt_inclusion(data))
+                    secret_backup=None
+                    if isinstance(data,dict) and set(data)=={'action','secret_envelope'}:
+                        from unlock_swap_backup import validate_envelope
+                        if not isinstance(data['action'],dict) or data['action'].get('operation')!='claim':raise ValueError('encrypted secret is only valid for a claim')
+                        validate_envelope(data['secret_envelope'])
+                        secret_backup=data['secret_envelope'];data=data['action']
+                    if not session._lock.acquire(blocking=False):return self.reply(409,{'error':'wallet_busy'})
+                    try:
+                        read_hosted_swap_node(args.hegemon_rpc,args.hegemon_genesis,args.hegemon_manifest)
+                        base=['--wallet',args.hegemon_wallet,'--manifest',args.hegemon_manifest,'--genesis',args.hegemon_genesis,'--rpc',args.hegemon_rpc]
+                        backup_path=None
+                        try:
+                            if secret_backup is not None:
+                                with tempfile.NamedTemporaryFile(mode='w',prefix='encrypted-swap-secret-',dir=scratch.name,delete=False) as backup:
+                                    backup_path=Path(backup.name);json.dump({'label':'Swap recovery','envelope':secret_backup},backup);backup.flush();os.fsync(backup.fileno())
+                            result=run_hegemon_action(binary=args.private_spend,base_args=base,scratch=scratch.name,request=data,handoff_dir=args.hegemon_handoff_dir,preimage_backup=backup_path or args.hegemon_preimage_backup,banner='Hegemon public pre-mainnet swap wallet action')
+                        finally:
+                            if backup_path is not None:
+                                try:backup_path.unlink()
+                                except FileNotFoundError:pass
+                        read_hosted_swap_node(args.hegemon_rpc,args.hegemon_genesis,args.hegemon_manifest)
+                        return self.reply(200,{'completed':True,'result':result})
+                    finally:
+                        session._cached=None
+                        session._lock.release()
+                except PermissionError:return self.reply(409,{'error':'wallet_locked'})
+                except RuntimeError:return self.reply(409,{'error':'wallet_busy_or_action_uncertain'})
+                except (ValueError,TypeError,json.JSONDecodeError):
+                    if self.path=='/hegemon/swap/action':return self.reply(409,{'error':'Action outcome may be uncertain. Check wallet status before retrying.'})
+                    return self.reply(400,{'error':'Local Hegemon request declined or invalid.'})
+                except Exception:return self.reply(502,{'error':'Local Hegemon operation unavailable; check wallet status before retrying.'})
+            if args.hosted_wallet_status or args.hosted_hegemon_swap:
                 if self.path!='/hegemon/unlock':return self.reply(404,{'error':'not found'})
                 try:
                     length=int(self.headers.get('Content-Length','0'))
@@ -1353,9 +1671,9 @@ def main():
             except Exception:
                 self.reply(502,{'error':'local operation failed; check wallet status before retrying'})
     global active_server
-    Server=ThreadingHTTPServer if args.hosted_wallet_status else HTTPServer
+    Server=ThreadingHTTPServer if args.hosted_wallet_status or args.hosted_hegemon_swap else HTTPServer
     server=Server(('127.0.0.1',args.port),Handler)
-    if args.hosted_wallet_status:server.daemon_threads=True
+    if args.hosted_wallet_status or args.hosted_hegemon_swap:server.daemon_threads=True
     active_server=server
     def terminate(_signum,_frame):raise KeyboardInterrupt
     signal.signal(signal.SIGTERM,terminate)
@@ -1365,7 +1683,7 @@ def main():
             threading.Thread(target=server.serve_forever,name='companion-http',daemon=True).start()
             activity_path=(args.hegemon_node_path if args.hegemon_node_path is not None else Path.home()/'.hegemon-node-v0.11')/'node-activity.json'
             monitor=NodeActivityMonitor(args.hegemon_rpc,activity_path)
-            CompanionWindow(token=token,wallet_path=args.hegemon_wallet if args.hosted_wallet_status else None,keyring=keyring,prompt=prompt,activity=session.activity if session is not None else None,monitor=monitor).run()
+            CompanionWindow(token=token,wallet_path=args.hegemon_wallet if args.hosted_wallet_status or args.hosted_hegemon_swap else None,keyring=keyring,prompt=prompt,activity=session.activity if session is not None else None,monitor=monitor).run()
             monitor.stop()
             server.shutdown()
         else:

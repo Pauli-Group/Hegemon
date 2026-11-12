@@ -11,7 +11,7 @@ import {verifySessionSnapshot} from './session-verify.mjs';
 
 async function load(session,role){
  const record=await getSession(session,role);
- if(!record||![2,3].includes(record.snapshot.version))throw Error('A recoverable swap session is required.');
+ if(!record||![2,3,4].includes(record.snapshot.version))throw Error('A recoverable swap session is required.');
  return record;
 }
 function sameTransport(saved,current){return saved.next===current.next&&saved.previous===current.previous;}
@@ -85,13 +85,13 @@ export async function readPeerSessionPackets({session,role,readFrames,now}){
 /** Publish the first proposal or its acceptance. Both parties' wallet proofs,
  * exact terms, current backup and the peer's proposal (for acceptance) must
  * already be saved. Escrow announcements and cancellation are separate steps. */
-export async function publishSessionAgreement({session,role,outbox,readFrames,now}){
+export async function publishSessionAgreement({session,role,outbox,readFrames,now,allowUnverifiedHegemon=false}){
  if(outbox?.session!==session||outbox?.role!==role||typeof readFrames!=='function'||!Number.isSafeInteger(now))throw Error('The matching session outbox and history reader are required.');
  const record=await load(session,role),snapshot=record.snapshot;
  if(!record.backupAcknowledged||!await sessionBackupCurrent(record)||!snapshot.terms||!snapshot.ownerBlob||!snapshot.takerBlob)throw Error('Save the current recovery backup and both participants before continuing.');
  const channelDigest=await channelFingerprint(session,snapshot.channelKey);
  const checked=await checkSessionProposal(snapshot.terms,{offer:snapshot.offer,expectedOfferDigest:snapshot.offerDigest,channelDigest,ownerBlob:snapshot.ownerBlob,takerBlob:snapshot.takerBlob,session,reservation:snapshot.reservation,sessionExpires:snapshot.sessionExpires,now});
- if(checked.unverifiedHegemon)throw Error('This session has an unverified Hegemon participant.');
+ if(checked.unverifiedHegemon&&allowUnverifiedHegemon!==true)throw Error('Review the Hegemon address proof limitation before continuing.');
  const state=await outbox.inspect(),expectedSequence=role==='owner'?2:3;
  if(state.pending||!sameTransport(snapshot.transport,state)||state.next!==expectedSequence||state.previous!==null)throw Error('Synchronize the session history before agreeing.');
  if(role==='taker'){
@@ -110,7 +110,7 @@ export async function publishSessionAgreement({session,role,outbox,readFrames,no
 
 /** Announce only an independently verified, confirmed escrow. The local
  * reference and the updated recovery backup must already be durable. */
-export async function publishSessionEscrow({session,role,outbox,readFrames,now,readers,config,templates}){
+export async function publishSessionEscrow({session,role,outbox,readFrames,now,readers,config,templates,allowUnverifiedHegemon=false}){
  if(outbox?.session!==session||outbox?.role!==role||typeof readFrames!=='function'||!Number.isSafeInteger(now))throw Error('The matching session outbox and history reader are required.');
  const record=await load(session,role),snapshot=record.snapshot,own=role==='owner'?'long':'short',expectedSequence=role==='owner'?3:4;
  if(!record.backupAcknowledged||!await sessionBackupCurrent(record)||!snapshot.terms||!snapshot.escrows[own])throw Error('Save the current escrow reference in your recovery backup first.');
@@ -122,7 +122,7 @@ export async function publishSessionEscrow({session,role,outbox,readFrames,now,r
  }else{
   if(peer.length!==2||peer[0].body.payload.type!=='proposal'||canonical(peer[0].body.payload.terms)!==canonical(snapshot.terms)||peer[1].body.payload.type!=='escrow'||peer[1].body.payload.leg!=='long'||peer[1].body.payload.termsDigest!==digest||canonical(peer[1].body.payload.reference)!==canonical(snapshot.escrows.long))throw Error('The first escrow announcement does not match the agreed terms.');
  }
- await verifySessionSnapshot({terms:snapshot.terms,offer:snapshot.offer,expectedOfferDigest:snapshot.offerDigest,channelDigest:await channelFingerprint(session,snapshot.channelKey),ownerBlob:snapshot.ownerBlob,takerBlob:snapshot.takerBlob,session,reservation:snapshot.reservation,sessionExpires:snapshot.sessionExpires,role:role==='owner'?'initiator':'responder',references:snapshot.escrows,purpose:role==='owner'?'verify_first':'verify_both',readers,config,now,templates});
+ await verifySessionSnapshot({terms:snapshot.terms,offer:snapshot.offer,expectedOfferDigest:snapshot.offerDigest,channelDigest:await channelFingerprint(session,snapshot.channelKey),ownerBlob:snapshot.ownerBlob,takerBlob:snapshot.takerBlob,session,reservation:snapshot.reservation,sessionExpires:snapshot.sessionExpires,role:role==='owner'?'initiator':'responder',references:snapshot.escrows,purpose:role==='owner'?'verify_first':'verify_both',readers,config,now,templates,allowUnverifiedHegemon});
  const payload={type:'escrow',termsDigest:digest,leg:own,reference:snapshot.escrows[own]};
  await outbox.enqueue(async({sequence,previous})=>{
   if(sequence!==expectedSequence||previous!==local.previous)throw Error('The session changed in another tab. Refresh before continuing.');

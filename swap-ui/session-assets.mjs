@@ -12,6 +12,10 @@ export function sessionAssetTerms(terms,side,{reference=null,contract=''}={}){
   if(asset.kind!=='btc'||BigInt(asset.amount)<546n||BigInt(asset.amount)>2100000000000000n||leg.expiry>=500000000)throw Error('Invalid Bitcoin testnet amount or refund height.');
   return {chain:'bitcoin',operationTerms:{amount_sats:asset.amount,hashlock:terms.hashlock,claimant_key:leg.claimant,refund_key:leg.refundee,refund_height:String(leg.expiry),...(reference?{txid:reference.txid,vout:String(reference.vout)}:{})}};
  }
+ if(asset.chain==='hegemon'){
+  if(asset.kind!=='hgn'||BigInt(asset.amount)>=(1n<<64n)||leg.expiry>=2**48)throw Error('Invalid Hegemon amount or refund height.');
+  return {chain:'hegemon',operationTerms:{amount:asset.amount,hashlock:terms.hashlock,claim:leg.claimant,refund:leg.refundee,timeout:String(leg.expiry),...(reference?{locked:reference.position,action_id:reference.action_id}:{})}};
+ }
  if(asset.chain==='cardano'){
   const expiryMs=leg.expiry*1000;
   if(!Number.isSafeInteger(expiryMs))throw Error('Cardano deadline is too large.');

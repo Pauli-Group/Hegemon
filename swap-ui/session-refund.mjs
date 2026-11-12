@@ -5,6 +5,7 @@ import {sessionAssetTerms} from './session-assets.mjs';
 import {ethereumContract} from './session-verify.mjs';
 import {assertSepoliaIdentity} from './sepolia-verifier.mjs';
 import {verifyCardanoPreviewEscrow} from './cardano-preview-verifier.mjs';
+import {TESTNET4_GENESIS,verifyBitcoinTestnetEscrow} from './bitcoin-testnet-verifier.mjs';
 import {legRequirements} from './timelock-policy.mjs';
 import {cardanoWalletAction} from './cardano-wallet.mjs';
 import {refundSepoliaEscrow} from './sepolia-actions.mjs';
@@ -17,6 +18,21 @@ export async function checkSessionRefund({snapshot,role,readers,config}){
  if(!snapshot?.terms||!['owner','taker'].includes(role))throw Error('The saved swap is unavailable.');
  const side=role==='owner'?'long':'short',leg=snapshot.terms.legs[side],ref=snapshot.escrows[side];
  if(!ref||ref.chain!==leg.asset.chain)throw Error('The saved escrow reference is unavailable.');
+ if(ref.chain==='hegemon'){
+  if(typeof readers?.hegemon?.head!=='function'||typeof readers.hegemon.escrow!=='function')throw Error('The local Hegemon swap companion is required.');
+  const head=await readers.hegemon.head();if(!Number.isSafeInteger(head?.height)||head.height<leg.expiry)throw Error('The Hegemon refund height has not been reached.');
+  const fields=sessionAssetTerms(snapshot.terms,side,{reference:ref}).operationTerms,checked=await readers.hegemon.escrow(fields,{confirmations:legRequirements(config,'hegemon').confirmations,minBlocksToExpiry:1,refundReady:true});
+  if(!checked||checked.position!==ref.position||checked.actionId!==ref.action_id||checked.createdHeight!==Number(ref.block_height)||checked.refundReady!==true)throw Error('The local wallet did not verify the Hegemon refund note.');
+  return {side,fields,chain:'hegemon',snapshot:checked};
+ }
+ if(ref.chain==='bitcoin'){
+  if(typeof readers?.bitcoin?.head!=='function'||typeof readers.bitcoin.escrow!=='function')throw Error('The Bitcoin testnet reader is unavailable.');
+  const head=await readers.bitcoin.head();if(head?.genesis!==TESTNET4_GENESIS||!Number.isSafeInteger(head.tip)||head.tip<0)throw Error('The Bitcoin testnet4 head is unavailable or invalid.');
+  if(head.tip<leg.expiry)throw Error('The Bitcoin refund height has not been reached.');
+  const fields=sessionAssetTerms(snapshot.terms,side,{reference:ref}).operationTerms;
+  const checked=await verifyBitcoinTestnetEscrow({...fields,vout:Number(fields.vout),amount_sats:Number(fields.amount_sats),refund_height:Number(fields.refund_height)},readers.bitcoin.escrow,{...legRequirements(config,'bitcoin'),allowExpired:true});
+  return {side,fields,chain:'bitcoin',snapshot:checked};
+ }
  if(ref.chain==='cardano'){
   const fields=sessionAssetTerms(snapshot.terms,side,{reference:ref}).operationTerms,params=await readers.cardano.params();
   if(params?.network!=='preview'||params.magic!==2||params.system_start!==1666656000||!Number.isSafeInteger(params.slot)||params.slot<0)throw Error('Cardano preview is unavailable.');
@@ -39,7 +55,7 @@ export async function refundSession({session,role,attemptId,readers,config,templ
  return locks.request(actionLock(session,role),{mode:'exclusive',ifAvailable:true},async lock=>{
   if(!lock)throw Error('This swap has a wallet action in another tab.');
   requireRecoveryReviewComplete(session,role,storage);
-  const record=await getSession(session,role);if(!record||record.snapshot.version!==3)throw Error('The saved swap is unavailable.');
+  const record=await getSession(session,role);if(!record||![3,4].includes(record.snapshot.version))throw Error('The saved swap is unavailable.');
   const snapshot=record.snapshot,side=role==='owner'?'long':'short',attempt=snapshot.actions[side].refund.at(-1);
   if(!attempt||attempt.id!==attemptId||attempt.state!=='intent'||!actionArmed(session,role,attemptId,storage))throw Error('This refund needs manual review before retrying.');
   const original=canonical(snapshot.terms),reference=canonical(snapshot.escrows[side]);let ownJournal=null,walletAsked=false;

@@ -37,7 +37,7 @@ export async function sessionStarter({role,offer,reservation,credential,pinnedOf
  if(!['owner','taker'].includes(role)||![reservation,credential,pinnedOfferDigest].every(value=>typeof value==='string'&&HEX.test(value))||typeof api!=='function'||!storage||typeof storage.removeItem!=='function'||typeof locks?.request!=='function'||typeof clock!=='function')fail('Invalid session setup.');
  const fixed=fixedOffer(offer),offerDigest=await sessionOfferDigest(fixed);
  if(offerDigest!==pinnedOfferDigest)fail('The offer changed since you reviewed it. Do not start the swap.');
- if(!['cardano','ethereum'].includes(fixed.give.chain)||!['cardano','ethereum'].includes(fixed.receive.chain))fail('Guided sessions currently support Cardano and Ethereum only.');
+ if(!['bitcoin','cardano','ethereum'].includes(fixed.give.chain)||!['bitcoin','cardano','ethereum'].includes(fixed.receive.chain)||fixed.give.chain===fixed.receive.chain)fail('This guided session cannot yet support that pair.');
  const session=await deriveSessionId(fixed.id,reservation),key=`hegemon.swap.session-start.v1:${session}:${role}`;
  const lock=fn=>locks.request(key,{mode:'exclusive'},fn);
  const initial={version:1,session,role,offer:fixed,offerDigest,reservation,credential,sessionExpires:null,channelKey:null,handshake:null};
@@ -92,7 +92,8 @@ export async function sessionStarter({role,offer,reservation,credential,pinnedOf
    if(passphrase===undefined)return {stage:'backup-required',session};
    const state=await outbox.inspect();if(state.pending||state.previous!==null||state.next!==(role==='owner'?1:2))fail('The session message order changed.');
    const blank=()=>({fund:[],claim:[],refund:[]});
-   const snapshot={version:3,offer:fixed,offerDigest,reservation,credential,channelKey:item.channelKey,sessionExpires:info.expires,terms:null,escrows:{long:null,short:null},secretEnvelope:null,ownerBlob:null,takerBlob:null,transport:{next:state.next,previous:null},actions:{long:blank(),short:blank()}};
+   const hegemon=[fixed.give.chain,fixed.receive.chain].includes('hegemon'),emptyHegemon=()=>({fund:null,claim:null,refund:null});
+   const snapshot={version:hegemon?4:3,offer:fixed,offerDigest,reservation,credential,channelKey:item.channelKey,sessionExpires:info.expires,terms:null,escrows:{long:null,short:null},secretEnvelope:null,ownerBlob:null,takerBlob:null,transport:{next:state.next,previous:null},actions:{long:blank(),short:blank()},...(hegemon?{hegemon:{long:emptyHegemon(),short:emptyHegemon()}}:{})};
    const recovery=await createSessionRecovery({session,role,snapshot,passphrase});
    const record=await addSession(recovery.envelope,passphrase);
    storage.removeItem(key);

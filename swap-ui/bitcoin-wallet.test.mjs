@@ -68,6 +68,11 @@ test('claim refuses inside the cutoff, a spent escrow, a wrong key, a wrong prei
   await assert.rejects(finishBitcoinPsbt({session, signedPsbt: signSpend(session, claimantPriv), preimage, ...w}), /spent/);
   assert.equal(w.log.broadcasts.length, 0, 'a head that changed while the user was signing stops the claim');
 });
+test('a swap-level safety check runs after signing but before the claim is broadcast',async()=>{
+ const w=world(),session=await prepareBitcoinPsbt({op:'claim',terms:escrowTerms,address:destination,feeRate:2,...w});
+ await assert.rejects(finishBitcoinPsbt({session,signedPsbt:signSpend(session,claimantPriv),preimage,...w,verifyBeforeBroadcast:async()=>{throw Error('Other escrow changed');}}),/Other escrow changed/);
+ assert.equal(w.log.broadcasts.length,0);assert.deepEqual(w.log.journal.at(-1)[0],'begin');
+});
 
 test('refund is refused before the refund height and works after it', async () => {
   const early = world({tip: 129_999});

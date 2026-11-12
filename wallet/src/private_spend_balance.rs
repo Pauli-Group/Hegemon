@@ -47,6 +47,13 @@ pub struct PrivateSpendBalance {
     pub watch_only: bool,
 }
 
+/// Public-only selector row for an unspent, native, unreserved ordinary note.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AvailablePrivateSpendNote {
+    pub position: u64,
+    pub value: u64,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Kind {
     Ordinary,
@@ -116,6 +123,67 @@ fn count_note(
     }
 }
 
+fn inventory_rows(state: &WalletState) -> Result<BTreeMap<u64, InventoryNote>, WalletError> {
+    let mut rows = BTreeMap::new();
+    for (position, commitment, nullifier, value, asset, spent) in
+        state.poseidon2_v8.balance_notes()?
+    {
+        add_occurrence(
+            &mut rows,
+            InventoryNote {
+                position,
+                commitment,
+                nullifier,
+                value,
+                asset,
+                spent,
+                kind: Kind::Ordinary,
+            },
+        )?;
+    }
+    for note in &state.private_spend_notes {
+        let payload = note.opening()?;
+        let kind = match &payload.state {
+            NoteState::Ordinary { .. } => Kind::Ordinary,
+            NoteState::Htlc(_) => Kind::Htlc,
+            NoteState::Policy(_) => Kind::Policy,
+            NoteState::TreasuryValue(_) => Kind::TreasuryValue,
+            NoteState::TreasuryAccumulator(_) => Kind::Accumulator,
+        };
+        add_occurrence(
+            &mut rows,
+            InventoryNote {
+                position: note.position,
+                commitment: note.commitment,
+                nullifier: note.nullifier,
+                value: payload.note.value,
+                asset: payload.note.asset_id,
+                spent: note.spent,
+                kind,
+            },
+        )?;
+    }
+    Ok(rows)
+}
+
+fn available_notes(
+    rows: &BTreeMap<u64, InventoryNote>,
+    reserved: &HashSet<Digest>,
+) -> Vec<AvailablePrivateSpendNote> {
+    rows.values()
+        .filter(|note| {
+            !note.spent
+                && note.kind == Kind::Ordinary
+                && note.asset == NATIVE_ASSET_ID
+                && !reserved.contains(&note.nullifier)
+        })
+        .map(|note| AvailablePrivateSpendNote {
+            position: note.position,
+            value: note.value,
+        })
+        .collect()
+}
+
 impl WalletStore {
     pub fn private_spend_balance(&self) -> Result<PrivateSpendBalance, WalletError> {
         self.with_state(|state| {
@@ -134,45 +202,7 @@ impl WalletStore {
             // This is the selector's complete live reservation union: ordinary,
             // private spend, HTLC, asset spend/recovery, and treasury multisig.
             let reserved = state.reserved_poseidon2_v8_nullifiers();
-            let mut rows = BTreeMap::new();
-            for (position, commitment, nullifier, value, asset, spent) in
-                state.poseidon2_v8.balance_notes()?
-            {
-                add_occurrence(
-                    &mut rows,
-                    InventoryNote {
-                        position,
-                        commitment,
-                        nullifier,
-                        value,
-                        asset,
-                        spent,
-                        kind: Kind::Ordinary,
-                    },
-                )?;
-            }
-            for note in &state.private_spend_notes {
-                let payload = note.opening()?;
-                let kind = match &payload.state {
-                    NoteState::Ordinary { .. } => Kind::Ordinary,
-                    NoteState::Htlc(_) => Kind::Htlc,
-                    NoteState::Policy(_) => Kind::Policy,
-                    NoteState::TreasuryValue(_) => Kind::TreasuryValue,
-                    NoteState::TreasuryAccumulator(_) => Kind::Accumulator,
-                };
-                add_occurrence(
-                    &mut rows,
-                    InventoryNote {
-                        position: note.position,
-                        commitment: note.commitment,
-                        nullifier: note.nullifier,
-                        value: payload.note.value,
-                        asset: payload.note.asset_id,
-                        spent: note.spent,
-                        kind,
-                    },
-                )?;
-            }
+            let rows = inventory_rows(state)?;
             for note in rows.values() {
                 count_note(&mut balance, note, &reserved)?;
             }
@@ -197,6 +227,22 @@ impl WalletStore {
                 .next_maturity_height
                 .map(|height| height - next_inclusion);
             Ok(balance)
+        })
+    }
+
+    /// Read selector-safe rows from the current wallet state. This is a
+    /// snapshot; proving must still reserve and revalidate the selected notes.
+    pub fn private_spend_available_notes(
+        &self,
+    ) -> Result<Vec<AvailablePrivateSpendNote>, WalletError> {
+        self.with_state(|state| {
+            if state.mode != WalletMode::Full || state.derived.is_none() {
+                return Err(WalletError::WatchOnly);
+            }
+            Ok(available_notes(
+                &inventory_rows(state)?,
+                &state.reserved_poseidon2_v8_nullifiers(),
+            ))
         })
     }
 }
@@ -270,6 +316,31 @@ mod tests {
         let mut other = row;
         other.spent = true;
         assert!(add_occurrence(&mut rows, other).is_err());
+    }
+    #[test]
+    fn available_note_rows_exclude_reserved_spent_conditional_and_other_assets() {
+        let mut rows = BTreeMap::new();
+        for row in [
+            note(0, 4, Kind::Ordinary),
+            note(1, 5, Kind::Ordinary),
+            note(2, 6, Kind::Htlc),
+        ] {
+            add_occurrence(&mut rows, row).unwrap();
+        }
+        let mut spent = note(3, 7, Kind::Ordinary);
+        spent.spent = true;
+        add_occurrence(&mut rows, spent).unwrap();
+        let mut other = note(4, 8, Kind::Ordinary);
+        other.asset = 1;
+        add_occurrence(&mut rows, other).unwrap();
+        let reserved: HashSet<_> = [[3; 7]].into_iter().collect();
+        assert_eq!(
+            available_notes(&rows, &reserved),
+            vec![AvailablePrivateSpendNote {
+                position: 0,
+                value: 4
+            }]
+        );
     }
     #[test]
     fn private_spend_balance_watch_only_is_not_reported_as_zero_available() {

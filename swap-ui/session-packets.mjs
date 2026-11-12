@@ -81,6 +81,13 @@ export function checkFundingPolicy(terms,{role,heads,config,now}){
 
 export function validateSessionReference(value){
  if(!value||!['bitcoin','ethereum','cardano','hegemon'].includes(value.chain))fail('Invalid escrow reference.');
+ if(value.chain==='hegemon'){
+  // A wallet's local candidate is 32 bytes; the public action ID is 48 bytes,
+  // and a private note is identified separately by its u64 position. None of
+  // these alone proves that the note contains the agreed HTLC terms.
+  if(!keys(value,['chain','txid','action_id','position','block_height'])||typeof value.txid!=='string'||!HEX64.test(value.txid)||typeof value.action_id!=='string'||!/^[0-9a-f]{96}$/.test(value.action_id)||typeof value.position!=='string'||!/^(0|[1-9][0-9]{0,19})$/.test(value.position)||BigInt(value.position)>=1n<<64n||typeof value.block_height!=='string'||!/^[1-9][0-9]{0,14}$/.test(value.block_height)||BigInt(value.block_height)>=1n<<48n)fail('Invalid Hegemon escrow reference.');
+  return;
+ }
  const utxo=['bitcoin','cardano'].includes(value.chain);
  if(!keys(value,['chain','txid',...(utxo?['vout']:[])])||typeof value.txid!=='string'||!HEX64.test(value.txid)||utxo&&(!Number.isSafeInteger(value.vout)||value.vout<0||value.vout>0xffffffff))fail('Invalid escrow reference.');
 }

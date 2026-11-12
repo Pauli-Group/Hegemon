@@ -13,6 +13,12 @@ export async function observeSessionLeg({snapshot,side,readers,config}){
  const leg=snapshot.terms.legs[side],ref=snapshot.escrows?.[side];validateSessionReference(ref);
  if(ref.chain!==leg.asset.chain)throw Error('The escrow reference is on the wrong chain.');
  const confirmations=legRequirements(config,ref.chain).confirmations;
+ if(ref.chain==='hegemon'){
+  if(typeof readers?.hegemon?.observe!=='function')throw Error('The Hegemon secret observer is unavailable.');
+  // A revealed secret can be used to claim the other escrow, but on its own
+  // does not prove which private note was spent.
+  return readers.hegemon.observe(snapshot.terms.hashlock,Number(ref.block_height),{confirmations});
+ }
  if(ref.chain==='bitcoin'){
   if(typeof readers?.bitcoin?.spend!=='function')throw Error('The Bitcoin spend reader is unavailable.');
   return observeBitcoin({...sessionBitcoinTerms(snapshot.terms,side),txid:ref.txid,vout:ref.vout},readers.bitcoin.spend,{confirmations});

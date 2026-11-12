@@ -71,6 +71,18 @@ def build_action(data,handoff_dir=None):
         argv=[op,'--locked',decimal(data['locked']),'--fee-input',decimal(data['fee_input']),
               '--recipient',address(data['recipient']),'--fee',decimal(data['fee'])]
         return argv,None
+    if op=='import-refund-handoff':
+        if set(data)!={'operation','handoff','block_height'}:raise ValueError('invalid refund import fields')
+        name=data['handoff']
+        if not isinstance(name,str) or not re.fullmatch(r'[0-9a-f]{32}\.bin',name):raise ValueError('invalid refund handoff name')
+        directory=private_handoff_directory(handoff_dir);path=directory/name
+        fd=os.open(path,os.O_RDONLY|getattr(os,'O_NOFOLLOW',0))
+        try:
+            info=os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid!=os.getuid() or stat.S_IMODE(info.st_mode)&0o077 or not 0<info.st_size<=1024*1024:
+                raise ValueError('refund handoff is not a bounded private file')
+        finally:os.close(fd)
+        return ['import-refund-handoff',str(path),'--block-height',decimal(data['block_height'],positive=True),'--refund-index','0'],None
     if op=='submit':
         if set(data)!={'operation','attempt'}:raise ValueError('invalid submit fields')
         return ['submit',hash32(data['attempt'])],None

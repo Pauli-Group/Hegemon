@@ -14,14 +14,14 @@ import {actionSeconds,legRequirements} from './timelock-policy.mjs';
 import {cardanoWalletAction} from './cardano-wallet.mjs';
 import {claimSepoliaEscrow} from './sepolia-actions.mjs';
 import {listActions,beginAction,finishAction,uncertainAction,removeAction} from './action-journal.mjs';
-import {actionLock,actionArmed,consumeActionArm,resolveSessionAction,requireRecoveryReviewComplete} from './session-action.mjs';
+import {actionLock,actionArmed,consumeActionArm,resolveSessionAction,requireRecoveryReviewComplete,hasHegemonConsent} from './session-action.mjs';
 
 export async function claimSession({session,role,attemptId,outbox,readFrames,readers,config,templates,getEthereum,getCardano,confirm,passphrase,storage=globalThis.localStorage,locks=globalThis.navigator?.locks,clock=()=>Math.floor(Date.now()/1000)}){
  if(!['owner','taker'].includes(role)||outbox?.session!==session||outbox?.role!==role||typeof readFrames!=='function'||typeof getEthereum!=='function'||typeof getCardano!=='function'||typeof confirm!=='function'||!storage||typeof locks?.request!=='function')throw Error('The claim controls are unavailable.');
  return locks.request(actionLock(session,role),{mode:'exclusive',ifAvailable:true},async lock=>{
   if(!lock)throw Error('This swap has a wallet action in another tab.');
   requireRecoveryReviewComplete(session,role,storage);
-  const record=await getSession(session,role);if(!record||record.snapshot.version!==3)throw Error('The saved swap is unavailable.');
+  const record=await getSession(session,role);if(!record||![3,4].includes(record.snapshot.version))throw Error('The saved swap is unavailable.');
   const snapshot=record.snapshot,side=role==='owner'?'short':'long',leg=snapshot.terms.legs[side],attempt=snapshot.actions[side].claim.at(-1);
   if(!attempt||attempt.id!==attemptId||attempt.state!=='intent'||!actionArmed(session,role,attemptId,storage))throw Error('This claim needs manual review before retrying.');
   const savedTerms=canonical(snapshot.terms),digest=await sessionTermsDigest(snapshot.terms);let ownJournal=null,walletAsked=false,secret;
@@ -37,10 +37,10 @@ export async function claimSession({session,role,attemptId,outbox,readFrames,rea
    }
    const peers=await readPeerSessionPackets({session,role,readFrames,now:clock()}),first=peers[0]?.body.payload,last=peers[1]?.body.payload;
    if(peers.length!==2||role==='owner'&&(first?.type!=='accept'||first.termsDigest!==digest)||role==='taker'&&(first?.type!=='proposal'||canonical(first.terms)!==savedTerms)||last?.type!=='escrow'||last.leg!==(role==='owner'?'short':'long')||last.termsDigest!==digest||canonical(last.reference)!==canonical(snapshot.escrows[last.leg]))throw Error('The signed escrow history does not match the saved swap.');
-   const result=await verifySessionSnapshot({terms:latest.snapshot.terms,offer:latest.snapshot.offer,expectedOfferDigest:latest.snapshot.offerDigest,channelDigest:await channelFingerprint(session,latest.snapshot.channelKey),ownerBlob:latest.snapshot.ownerBlob,takerBlob:latest.snapshot.takerBlob,session,reservation:latest.snapshot.reservation,sessionExpires:latest.snapshot.sessionExpires,role:role==='owner'?'initiator':'responder',references:latest.snapshot.escrows,purpose:role==='owner'?'claim_short':'claim_long',readers,config,now:clock(),templates});
+   const result=await verifySessionSnapshot({terms:latest.snapshot.terms,offer:latest.snapshot.offer,expectedOfferDigest:latest.snapshot.offerDigest,channelDigest:await channelFingerprint(session,latest.snapshot.channelKey),ownerBlob:latest.snapshot.ownerBlob,takerBlob:latest.snapshot.takerBlob,session,reservation:latest.snapshot.reservation,sessionExpires:latest.snapshot.sessionExpires,role:role==='owner'?'initiator':'responder',references:latest.snapshot.escrows,purpose:role==='owner'?'claim_short':'claim_long',readers,config,now:clock(),templates,allowUnverifiedHegemon:hasHegemonConsent(session,role,storage)});
    if(role==='taker'){
     const seen=await observeSessionLeg({snapshot:latest.snapshot,side:'short',readers,config});
-    if(seen.state!=='claimed'||!seen.enough||!secret||seen.preimage!==toHex(secret))throw Error('The other person’s confirmed claim and secret are not yet verified.');
+    if(!['claimed','secret-revealed'].includes(seen.state)||!seen.enough||!secret||seen.preimage!==toHex(secret))throw Error('The other person’s confirmed secret is not yet verified.');
    }
    return result;
   };

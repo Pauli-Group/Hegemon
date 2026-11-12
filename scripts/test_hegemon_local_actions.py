@@ -26,5 +26,16 @@ class HegemonLocalActionsTest(unittest.TestCase):
     def test_submit_requires_exact_attempt_identifier(self):
         self.assertEqual(build_action({'operation':'submit','attempt':'a'*64})[0],['submit','a'*64])
         with self.assertRaises(ValueError):build_action({'operation':'submit','attempt':'../other'})
+    def test_refund_handoff_import_accepts_only_a_private_file_in_the_configured_directory(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);name='a'*32+'.bin';path=root/name;path.write_bytes(b'encrypted');path.chmod(0o600)
+            data={'operation':'import-refund-handoff','handoff':name,'block_height':'123'}
+            args,_=build_action(data,root);self.assertEqual(args,['import-refund-handoff',str(path),'--block-height','123','--refund-index','0'])
+            for bad in ({**data,'handoff':'../'+name},{**data,'block_height':'0'},{**data,'refund_index':'1'}):
+                with self.assertRaises(ValueError):build_action(bad,root)
+            path.chmod(0o644)
+            with self.assertRaises(ValueError):build_action(data,root)
+            path.unlink();path.symlink_to('/etc/hosts')
+            with self.assertRaises(OSError):build_action(data,root)
 
 if __name__=='__main__':unittest.main()

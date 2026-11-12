@@ -12,9 +12,9 @@ import {sessionAssetTerms} from './session-assets.mjs';
 import {cardanoWalletAction} from './cardano-wallet.mjs';
 import {deploySepoliaEscrow} from './sepolia-actions.mjs';
 import {listActions,beginAction,finishAction,uncertainAction,removeAction} from './action-journal.mjs';
-import {actionLock,actionArmed,consumeActionArm,resolveSessionAction,requireRecoveryReviewComplete} from './session-action.mjs';
+import {actionLock,actionArmed,consumeActionArm,resolveSessionAction,requireRecoveryReviewComplete,hasHegemonConsent} from './session-action.mjs';
 
-async function peerAgreement(record,readFrames,now){
+export async function peerFundingAgreement(record,readFrames,now){
  const {session,role,snapshot}=record,packets=await readPeerSessionPackets({session,role,readFrames,now}),digest=await sessionTermsDigest(snapshot.terms);
  if(role==='owner'){
   if(packets.length!==1||packets[0].body.payload.type!=='accept'||packets[0].body.payload.termsDigest!==digest)throw Error('The other participant has not accepted these terms.');
@@ -49,8 +49,8 @@ export async function fundSession({session,role,attemptId,outbox,readFrames,read
     const raw=action.request?.hashlock,related=raw===undefined||typeof raw==='string'&&raw.toLowerCase().replace(/^0x/,'')===latest.snapshot.terms.hashlock;
     if(related&&(action.state==='pending'||action.state==='uncertain'||action.chain===asset.chain&&['lock','deploy'].includes(action.operation)&&action.state==='completed'&&action.receipt?.submitted===true))throw Error('A related wallet action needs review before funding.');
    }
-   await peerAgreement(latest,readFrames,clock());
-   return verifySessionSnapshot({terms:latest.snapshot.terms,offer:latest.snapshot.offer,expectedOfferDigest:latest.snapshot.offerDigest,channelDigest:await channelFingerprint(session,latest.snapshot.channelKey),ownerBlob:latest.snapshot.ownerBlob,takerBlob:latest.snapshot.takerBlob,session,reservation:latest.snapshot.reservation,sessionExpires:latest.snapshot.sessionExpires,role:role==='owner'?'initiator':'responder',references:latest.snapshot.escrows,purpose,readers,config,now:clock(),templates});
+   await peerFundingAgreement(latest,readFrames,clock());
+   return verifySessionSnapshot({terms:latest.snapshot.terms,offer:latest.snapshot.offer,expectedOfferDigest:latest.snapshot.offerDigest,channelDigest:await channelFingerprint(session,latest.snapshot.channelKey),ownerBlob:latest.snapshot.ownerBlob,takerBlob:latest.snapshot.takerBlob,session,reservation:latest.snapshot.reservation,sessionExpires:latest.snapshot.sessionExpires,role:role==='owner'?'initiator':'responder',references:latest.snapshot.escrows,purpose,readers,config,now:clock(),templates,allowUnverifiedHegemon:hasHegemonConsent(session,role,storage)});
   };
   await gate();
   const fields=sessionAssetTerms(snapshot.terms,own).operationTerms;

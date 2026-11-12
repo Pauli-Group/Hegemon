@@ -58,7 +58,7 @@ export async function prepareBitcoinPsbt({op, terms, address, feeRate, read, ver
 }
 
 /** Check the signed PSBT against the session, re-verify the chain, finalize, and either broadcast or hand back the raw transaction. */
-export async function finishBitcoinPsbt({session, signedPsbt, preimage, read, verifyEscrow, journal, broadcast = true}) {
+export async function finishBitcoinPsbt({session, signedPsbt, preimage, read, verifyEscrow, journal, verifyBeforeBroadcast, broadcast = true}) {
   const {op, terms} = session;
   let bytes;
   try { bytes = decodePsbt(signedPsbt); } catch (error) { refuse(error.message); }
@@ -80,6 +80,10 @@ export async function finishBitcoinPsbt({session, signedPsbt, preimage, read, ve
     await journal.uncertain(session.journalId);
     return {state: 'finalized', txid: done.txid, txHex: done.txHex, fee: done.fee, vsize: done.vsize,
       message: 'The transaction is signed and checked but not broadcast by this page. If you broadcast it elsewhere, confirm it on a Bitcoin testnet4 explorer.'};
+  }
+  if (verifyBeforeBroadcast !== undefined) {
+    if (typeof verifyBeforeBroadcast !== 'function') refuse('The swap safety check is unavailable.');
+    await verifyBeforeBroadcast({op, txid: done.txid});
   }
   let answer;
   try {

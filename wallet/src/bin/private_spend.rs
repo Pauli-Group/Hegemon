@@ -209,6 +209,18 @@ enum Command {
     },
     /// Print local positions and values, never private openings or policies.
     Notes,
+    /// List native ordinary notes that are unspent and not reserved by an attempt.
+    AvailableNotes,
+    /// Read the public action reference retained for one exact wallet attempt.
+    AttemptReference {
+        #[arg(long)]
+        attempt: String,
+    },
+    /// Find the single owned, unspent HTLC at an exact commitment.
+    LocateHtlc {
+        #[arg(long)]
+        commitment: String,
+    },
     /// Verify an unspent local HTLC against independently agreed terms without revealing its opening.
     VerifyHtlc {
         #[arg(long)]
@@ -227,6 +239,9 @@ enum Command {
         min_confirmations: u64,
         #[arg(long, default_value_t = 2)]
         min_remaining_blocks: u64,
+        /// Verify a mature refund note instead of a still-claimable note.
+        #[arg(long)]
+        refund_ready: bool,
     },
     Attempts,
     Cancel {
@@ -507,6 +522,15 @@ fn unhex<const N: usize>(s: &str) -> Result<[u8; N]> {
     hex::decode(s.strip_prefix("0x").unwrap_or(s))?
         .try_into()
         .map_err(|_| anyhow::anyhow!("expected {N} bytes"))
+}
+fn decode_note_commitment(value: &str) -> Result<[u64; 7]> {
+    let bytes: [u8; 56] = unhex(value)?;
+    let mut words = [0u64; 7];
+    for (word, bytes) in words.iter_mut().zip(bytes.chunks_exact(8)) {
+        *word = u64::from_le_bytes(bytes.try_into().expect("eight byte chunk"));
+        ensure!(*word < 0xffff_ffff_0000_0001, "noncanonical commitment");
+    }
+    Ok(words)
 }
 fn bounded_read(path: &Path, cap: u64) -> Result<Vec<u8>> {
     let f = fs::File::open(path)?;
@@ -836,6 +860,23 @@ fn private_note(s: &WalletStore, position: u64) -> Result<StoredPrivateSpendNote
         .find(|n| n.position == position && !n.spent)
         .context("unspent private note absent at position")
 }
+fn verify_htlc_window(
+    timeout: u64,
+    tip: u64,
+    min_remaining: u64,
+    refund_ready: bool,
+) -> Result<()> {
+    if refund_ready {
+        ensure!(tip >= timeout, "HTLC refund deadline has not been reached");
+    } else {
+        ensure!(min_remaining > 0, "invalid verification limits");
+        ensure!(
+            timeout.checked_sub(tip).is_some_and(|n| n >= min_remaining),
+            "HTLC deadline too close"
+        );
+    }
+    Ok(())
+}
 fn stored_input(
     s: &WalletStore,
     k: &DerivedKeys,
@@ -1147,6 +1188,64 @@ async fn main() -> Result<()> {
             println!("{}", address.encode()?);
         }
         Command::Notes => print_notes(&store)?,
+        Command::AvailableNotes => {
+            let balance = store.private_spend_balance()?;
+            let notes = store.private_spend_available_notes()?;
+            let rows: Vec<_> = notes.iter().map(|note| serde_json::json!({"position":note.position.to_string(),"value":note.value.to_string()})).collect();
+            println!(
+                "{}",
+                serde_json::json!({"synced_height":balance.synced_height.to_string(),"available":rows})
+            );
+        }
+        Command::AttemptReference { attempt } => {
+            let id: [u8; 32] = unhex(&attempt)?;
+            let matches: Vec<_> = store
+                .private_spend_attempts()?
+                .into_iter()
+                .filter(|a| a.id == id)
+                .collect();
+            ensure!(matches.len() == 1, "wallet attempt is absent or ambiguous");
+            let found = &matches[0];
+            let mined = found.mined_in.map(|(height, hash)| serde_json::json!({"height":height.to_string(),"block_hash":format!("0x{}",hex::encode(hash))}));
+            println!(
+                "{}",
+                serde_json::json!({"attempt":hex::encode(found.id),"action_id":found.action_id.map(hex::encode),"mined":mined,"inputs_consumed":found.inputs_consumed,"synced_height":r.parent_height.to_string()})
+            );
+        }
+        Command::LocateHtlc { commitment } => {
+            let commitment = decode_note_commitment(&commitment)?;
+            let positions = store.poseidon2_v8_canonical_commitment_positions(commitment)?;
+            ensure!(
+                positions.len() == 1,
+                "HTLC commitment is absent or ambiguous"
+            );
+            let note = private_note(&store, positions[0])?;
+            ensure!(
+                note.commitment == commitment,
+                "owned HTLC commitment mismatch"
+            );
+            ensure!(
+                matches!(note.opening()?.state, NoteState::Htlc(_)),
+                "not an HTLC note"
+            );
+            ensure!(
+                node.block_hash(note.created_height).await? == Some(note.created_block_hash),
+                "HTLC creation block is not canonical"
+            );
+            let witness = store
+                .poseidon2_v8_canonical_note_witness_at(commitment, note.position)?
+                .context("canonical membership absent")?;
+            ensure!(witness.anchor == r.merkle_root, "stale membership");
+            ensure!(
+                node.latest_block().await?.height == r.parent_height
+                    && node.block_hash(r.parent_height).await? == Some(r.parent_hash),
+                "chain changed during HTLC lookup"
+            );
+            println!(
+                "{}",
+                serde_json::json!({"position":note.position.to_string(),"created_height":note.created_height.to_string(),"synced_height":r.parent_height.to_string()})
+            );
+        }
         Command::VerifyHtlc {
             locked,
             claim,
@@ -1156,9 +1255,10 @@ async fn main() -> Result<()> {
             amount,
             min_confirmations,
             min_remaining_blocks,
+            refund_ready,
         } => {
             ensure!(
-                min_confirmations > 0 && min_remaining_blocks > 0 && amount > 0,
+                min_confirmations > 0 && amount > 0,
                 "invalid verification limits"
             );
             let note = private_note(&store, locked)?;
@@ -1175,12 +1275,7 @@ async fn main() -> Result<()> {
                 confirmations >= min_confirmations,
                 "insufficient confirmations"
             );
-            ensure!(
-                timeout
-                    .checked_sub(r.parent_height)
-                    .is_some_and(|n| n >= min_remaining_blocks),
-                "HTLC deadline too close"
-            );
+            verify_htlc_window(timeout, r.parent_height, min_remaining_blocks, refund_ready)?;
             let path = store
                 .poseidon2_v8_canonical_note_witness_at(note.commitment, note.position)?
                 .context("canonical membership absent")?;
@@ -1215,7 +1310,10 @@ async fn main() -> Result<()> {
                 "{}",
                 serde_json::json!({"verified": true, "position": locked,
                 "created_height": note.created_height, "reference_height": r.parent_height,
-                "confirmations": confirmations})
+                "confirmations": confirmations, "refund_ready": refund_ready,
+                "commitment": hex::encode(note.commitment.iter().flat_map(|word| word.to_le_bytes()).collect::<Vec<_>>()),
+                "created_block_hash": format!("0x{}", hex::encode(note.created_block_hash)),
+                "reference_block_hash": format!("0x{}", hex::encode(r.parent_hash))})
             );
         }
         Command::Attempts => print_attempts(&store)?,
@@ -1631,6 +1729,36 @@ async fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod htlc_window_tests {
+    use super::{decode_note_commitment, verify_htlc_window};
+
+    #[test]
+    fn commitment_decoder_requires_seven_canonical_little_endian_words() {
+        let mut bytes = [0u8; 56];
+        bytes[..8].copy_from_slice(&42u64.to_le_bytes());
+        assert_eq!(decode_note_commitment(&hex::encode(bytes)).unwrap()[0], 42);
+        assert!(decode_note_commitment("00").is_err());
+        bytes[..8].copy_from_slice(&0xffff_ffff_0000_0001u64.to_le_bytes());
+        assert!(decode_note_commitment(&hex::encode(bytes)).is_err());
+    }
+
+    #[test]
+    fn claim_verification_requires_a_positive_remaining_window() {
+        assert!(verify_htlc_window(120, 117, 3, false).is_ok());
+        assert!(verify_htlc_window(120, 118, 3, false).is_err());
+        assert!(verify_htlc_window(120, 120, 1, false).is_err());
+        assert!(verify_htlc_window(120, 100, 0, false).is_err());
+    }
+
+    #[test]
+    fn refund_verification_requires_the_deadline_to_have_matured() {
+        assert!(verify_htlc_window(120, 119, 0, true).is_err());
+        assert!(verify_htlc_window(120, 120, 0, true).is_ok());
+        assert!(verify_htlc_window(120, 121, 5, true).is_ok());
+    }
 }
 
 #[cfg(test)]

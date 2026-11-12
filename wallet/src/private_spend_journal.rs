@@ -64,6 +64,8 @@ impl std::fmt::Debug for StoredPrivateAttempt {
 #[derive(Clone, Debug)]
 pub struct PrivateSpendAttemptView {
     pub id: [u8; 32],
+    /// Public action ID retained for this exact wallet attempt, when exported.
+    pub action_id: Option<[u8; 48]>,
     pub status: PrivateSpendAttemptStatus,
     pub mined_in: Option<(u64, [u8; 32])>,
     pub inputs_consumed: bool,
@@ -967,6 +969,7 @@ impl WalletStore {
                 .iter()
                 .map(|r| PrivateSpendAttemptView {
                     id: r.id,
+                    action_id: r.action_id.as_slice().try_into().ok(),
                     status: r.status,
                     mined_in: r.mined_in,
                     inputs_consumed: r

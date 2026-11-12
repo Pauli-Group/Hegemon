@@ -12,7 +12,7 @@ const fail=message=>{throw Error(message);};
 export async function replayOwnFrames({session,role,snapshot,publicKey,frames,now}){
  if(!['owner','taker'].includes(role)||!Array.isArray(frames)||frames.length>512||frames.some(row=>!row||!['owner','taker'].includes(row.sender)||!Number.isSafeInteger(row.sequence)||row.sequence<1||row.sequence>256||typeof row.ciphertext!=='string')||!Number.isSafeInteger(now)||typeof publicKey!=='string'||!/^04[0-9a-f]{128}$/.test(publicKey))fail('Invalid session history.');
  await validateSessionSnapshot(snapshot,session);
- if(![2,3].includes(snapshot.version))fail('This older backup has no authenticated packet history; recover manually.');
+ if(![2,3,4].includes(snapshot.version))fail('This older backup has no authenticated packet history; recover manually.');
  const own=frames.filter(row=>row?.sender===role).slice().sort((a,b)=>a.sequence-b.sequence);
  if(own.length>256)fail('Invalid session history.');
  for(let i=0;i<own.length;i++)if(!Number.isSafeInteger(own[i].sequence)||own[i].sequence!==i+1||typeof own[i].ciphertext!=='string')fail('Session packet history is incomplete or duplicated.');

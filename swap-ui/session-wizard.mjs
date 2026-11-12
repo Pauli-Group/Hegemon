@@ -1,12 +1,12 @@
 /** Guided testnet swap session. Every wallet transaction requires approval. */
 import {pinOffer,readOfferPin} from './offer-pin.mjs';
-import {deriveSessionId,participantText} from './session-identity.mjs';
+import {deriveSessionId,participantText,checkSessionAddress} from './session-identity.mjs';
 import {sessionStarter,readSessionFrames} from './session-start.mjs';
 import {channelFingerprint,openParticipantFrame} from './session-channel.mjs';
 import {getSession,updateSession,setSessionBackup,acknowledgeSessionBackup,sessionBackupCurrent} from './session-store.mjs';
 import {updateSessionRecovery} from './session-recovery.mjs';
 import {participantDraft,participantStatement,addSessionProof,completeParticipant,participantCode} from './session-participant.mjs';
-import {signCardano,signEthereum} from './identity-flow.mjs';
+import {bitcoinProof,signCardano,signEthereum} from './identity-flow.mjs';
 import {publishSessionParticipant,publishSessionAgreement,publishSessionEscrow,readPeerSessionPackets,retrySessionMessage,syncSessionTransport} from './session-coordination.mjs';
 import {assertSepoliaIdentity} from './sepolia-verifier.mjs';
 import {planSessionTerms} from './session-plan.mjs';
@@ -15,6 +15,8 @@ import {sessionTermsDigest} from './session-packets.mjs';
 import {loadPinnedScript,pinnedScript} from './cardano-tx.mjs';
 import {formatBaseUnits,toBaseUnits} from './offer-draft.mjs';
 import {fundSession} from './session-funding.mjs';
+import {prepareBitcoinSessionFund,bitcoinSessionFundDraft,broadcastBitcoinSessionFund} from './session-bitcoin-fund.mjs';
+import {prepareBitcoinSessionSpend,bitcoinSessionSpendDraft,broadcastBitcoinSessionSpend} from './session-bitcoin-spend.mjs';
 import {prepareFundingAttempt,prepareSpendAttempt,actionArmed,recoveryReviewKey} from './session-action.mjs';
 import {claimSession} from './session-claim.mjs';
 import {checkSessionRefund,refundSession} from './session-refund.mjs';
@@ -105,45 +107,59 @@ export function initSessionWizard(d){
   return result.blob;
  }
  async function ownProof(record){
-  if(!d.getEthereum()){
+  const chains=new Set([record.snapshot.offer.give.chain,record.snapshot.offer.receive.chain]);
+  if(chains.has('ethereum')&&!d.getEthereum()){
    const panel=screen('You','Connect your Ethereum wallet','Connect the wallet you will use for this swap. Connecting does not request a signature or move funds.');
    panel.append(button('Connect Ethereum wallet',async()=>{await d.connectEthereum();await advance();}));return;
   }
-  if(!d.getCardano()){
+  if(chains.has('cardano')&&!d.getCardano()){
    const panel=screen('You','Connect your Cardano wallet','Choose your Cardano testnet wallet. Connecting does not request a signature or move funds.');
    const label=el('label','Cardano wallet'),select=el('select');select.add(new Option('Choose a wallet',''));
    for(const [id,wallet] of Object.entries(window.cardano||{}))if(wallet&&typeof wallet.enable==='function')select.add(new Option(String(wallet.name||id),id));
    label.append(select);panel.append(label,button('Connect Cardano wallet',async()=>{if(!select.value)throw Error('Choose a Cardano wallet.');if(!await d.connectCardano(select.value))throw Error('Switch your Cardano wallet to a test network.');await advance();}));return;
   }
+  const btcKey=`hegemon.swap.bitcoin-key:${record.session}:${record.role}`,draftKey=`hegemon.swap.identity-draft:${record.session}:${record.role}`;
+  if(chains.has('bitcoin')&&!localStorage.getItem(btcKey)){
+   const panel=screen('You','Enter your Bitcoin public key','Enter the compressed public key for your Bitcoin testnet wallet. This is public information, not a private key.');
+   const label=el('label','Bitcoin public key'),input=el('input');input.autocomplete='off';input.maxLength=66;label.append(input);panel.append(label,button('Continue',async()=>{const value=input.value.trim().toLowerCase();checkSessionAddress('bitcoin',value);localStorage.setItem(btcKey,value);await advance();}));return;
+  }
   if(!draft||draft.session!==record.session||draft.role!==record.role){
-   const provider=d.getEthereum(),cardano=d.getCardano();await assertSepoliaIdentity(provider);
-   const accounts=await provider.request({method:'eth_accounts'}),used=await cardano.getUsedAddresses(),unused=used.length?[]:await (cardano.getUnusedAddresses?.()??[]);
-   if(provider!==d.getEthereum()||cardano!==d.getCardano()||!Array.isArray(accounts)||!/^0x[0-9a-fA-F]{40}$/.test(accounts[0]||''))throw Error('A connected Ethereum account is required.');
-   const address=[...used,...unused].map(fromHex).find(bytes=>bytes.length>=29&&[0,2,4,6].includes(bytes[0]>>4));if(!address)throw Error('The Cardano wallet has no payment-key address.');
-   const eth=accounts[0].toLowerCase(),ada=toHex(address.slice(1,29)),assets=record.snapshot.offer;
-   const addresses={give:assets.give.chain==='cardano'?ada:eth,receive:assets.receive.chain==='cardano'?ada:eth};
-   const base=await participantDraft({session:record.session,role:record.role,snapshot:record.snapshot,publicKey:record.publicKey,now:now()});
+   const provider=d.getEthereum(),cardano=d.getCardano(),addressesByChain={};
+   if(chains.has('ethereum')){await assertSepoliaIdentity(provider);const accounts=await provider.request({method:'eth_accounts'});if(provider!==d.getEthereum()||!Array.isArray(accounts)||!/^0x[0-9a-fA-F]{40}$/.test(accounts[0]||''))throw Error('A connected Ethereum account is required.');addressesByChain.ethereum=accounts[0].toLowerCase();}
+   if(chains.has('cardano')){const used=await cardano.getUsedAddresses(),unused=used.length?[]:await (cardano.getUnusedAddresses?.()??[]),address=[...used,...unused].map(fromHex).find(bytes=>bytes.length>=29&&[0,2,4,6].includes(bytes[0]>>4));if(cardano!==d.getCardano()||!address)throw Error('The Cardano wallet has no payment-key address.');addressesByChain.cardano=toHex(address.slice(1,29));}
+   if(chains.has('bitcoin')){addressesByChain.bitcoin=localStorage.getItem(btcKey);checkSessionAddress('bitcoin',addressesByChain.bitcoin);}
+   const assets=record.snapshot.offer,addresses={give:addressesByChain[assets.give.chain],receive:addressesByChain[assets.receive.chain]};
+   let prior=null;const raw=sessionStorage.getItem(draftKey);if(raw){try{prior=JSON.parse(raw);}catch{throw Error('The saved wallet proof is invalid.');}if(!prior||Object.keys(prior).sort().join(',')!=='addresses,issued,proofs'||!Number.isSafeInteger(prior.issued)||prior.issued>now()+300||!Array.isArray(prior.proofs)||prior.proofs.length>2||canonical(prior.addresses)!==canonical(addresses))throw Error('The saved wallet proof does not match the connected wallets.');}
+   const base=await participantDraft({session:record.session,role:record.role,snapshot:record.snapshot,publicKey:record.publicKey,now:prior?.issued??now()});
    draft={...base,statement:participantStatement(base,addresses)};proofs=[];
+   for(const proof of prior?.proofs??[])proofs=addSessionProof(draft.statement,draft.assets,proofs,proof);
   }
   const side=['give','receive'].find(name=>!proofs.some(proof=>proof.chain===draft.assets[name].chain&&proof.signer===draft.statement.addresses[name]));
   if(!side){
    const blob=await completeParticipant(draft,draft.statement,proofs,now()),field=record.role==='owner'?'ownerBlob':'takerBlob';
-   record=await updateSession(record.session,record.role,record.revision,{...record.snapshot,[field]:blob});draft=null;proofs=[];
+   record=await updateSession(record.session,record.role,record.revision,{...record.snapshot,[field]:blob});draft=null;proofs=[];sessionStorage.removeItem(draftKey);
    await publishSessionParticipant({session:record.session,role:record.role,outbox:starter.outbox,readFrames:args=>readSessionFrames({...args,api:d.api}),now:now()});
    await advance();return;
   }
-  const chain=draft.assets[side].chain,panel=screen('You',`Sign with your ${chain==='ethereum'?'Ethereum':'Cardano'} wallet`,'This signature binds your wallet addresses to the swap. It does not move funds.');
+  const chain=draft.assets[side].chain;
+  if(chain==='bitcoin'){
+   const panel=screen('You','Sign with your Bitcoin wallet','Sign this message in your Bitcoin wallet and paste the resulting signature. Signing does not move funds.'),text=participantText(draft.statement),message=el('textarea');message.value=text;message.readOnly=true;message.rows=5;panel.append(message);
+   const schemeLabel=el('label','Signature format'),scheme=el('select');scheme.add(new Option('BIP-137','bip137'));scheme.add(new Option('BIP-322 simple','bip322-simple'));schemeLabel.append(scheme);
+   const label=el('label','Bitcoin signature'),input=el('textarea');input.rows=3;label.append(input);panel.append(schemeLabel,label,button('Check signature',async()=>{const proof=bitcoinProof(scheme.value,input.value,text);proofs=addSessionProof(draft.statement,draft.assets,proofs,proof);sessionStorage.setItem(draftKey,JSON.stringify({addresses:draft.statement.addresses,issued:draft.now,proofs}));await advance();}));return;
+  }
+  const panel=screen('You',`Sign with your ${chain==='ethereum'?'Ethereum':'Cardano'} wallet`,'This signature binds your wallet addresses to the swap. It does not move funds.');
   panel.append(button(`Sign with ${chain==='ethereum'?'Ethereum':'Cardano'}`,async()=>{
    const text=participantText(draft.statement),provider=d.getEthereum(),cardano=d.getCardano();
    const proof=chain==='ethereum'?await signEthereum(provider,draft.statement.addresses[side],text):await signCardano(cardano,text);
    if(provider!==d.getEthereum()||cardano!==d.getCardano())throw Error('A wallet changed while signing. Reconnect before continuing.');
-   proofs=addSessionProof(draft.statement,draft.assets,proofs,proof);await advance();
+   proofs=addSessionProof(draft.statement,draft.assets,proofs,proof);sessionStorage.setItem(draftKey,JSON.stringify({addresses:draft.statement.addresses,issued:draft.now,proofs}));await advance();
   }));
  }
  function termsSummary(terms){
   const describe=leg=>{const asset=leg.asset;let amount;try{amount=formatBaseUnits(asset.chain+':'+asset.kind,asset.amount);}catch{amount=asset.amount+' base units';}
    const deposit=asset.chain==='cardano'&&asset.kind==='native'?` + ${formatBaseUnits('cardano:ada',leg.lovelace)} ADA sent with the token`:'';
-   return `${amount} · ${asset.chain} ${asset.kind}${asset.id?' · '+asset.id:''}${deposit} · refund after ${new Date(leg.expiry*1000).toLocaleString()}`;};
+   const deadline=['bitcoin','hegemon'].includes(asset.chain)?`block ${leg.expiry}`:new Date(leg.expiry*1000).toLocaleString();
+   return `${amount} · ${asset.chain} ${asset.kind}${asset.id?' · '+asset.id:''}${deposit} · refund after ${deadline}`;};
   return `First lock: ${describe(terms.legs.long)}.\nSecond lock: ${describe(terms.legs.short)}.`;
  }
  async function templates(){
@@ -162,14 +178,26 @@ export function initSessionWizard(d){
  }
  async function fund(record){
   const own=record.role==='owner'?'long':'short',asset=record.snapshot.terms.legs[own].asset,chain=asset.chain;
-  if(!((chain==='ethereum'&&asset.kind==='eth')||(chain==='cardano'&&['ada','native'].includes(asset.kind)))){const panel=screen('Not yet available','Ethereum token funding is not ready','This guided funding step currently supports ADA, Cardano native tokens and ETH. Do not fund an Ethereum token escrow from this screen.');refreshButton(panel);return;}
+  if(!((chain==='bitcoin'&&asset.kind==='btc')||(chain==='ethereum'&&asset.kind==='eth')||(chain==='cardano'&&['ada','native'].includes(asset.kind)))){const panel=screen('Not yet available','Token funding is not ready','This guided funding step cannot fund this asset yet. Do not fund an escrow from this screen.');refreshButton(panel);return;}
   const attempt=record.snapshot.actions[own].fund.at(-1);
   if(!attempt||attempt.state==='declined'){
    const panel=screen('You','Prepare your funding action',termsSummary(record.snapshot.terms)+' The page will save a recovery record before opening your wallet.');
    panel.append(button('Prepare funding',async()=>{await verifyTerms(record,record.role==='owner'?'fund_first':'fund_second');await prepareFundingAttempt({session:record.session,role:record.role,outbox:starter.outbox});await advance();}));return;
   }
+  if(chain==='bitcoin'&&attempt.state==='prepared'){
+   const opts={session:record.session,role:record.role,attemptId:attempt.id,outbox:starter.outbox,readFrames:args=>readSessionFrames({...args,api:d.api}),readers:d.readers,config:await d.loadTiming(),templates:await templates()};
+   let handoff;try{handoff=await bitcoinSessionFundDraft(opts);}catch(error){const panel=screen('You','Check the Bitcoin funding action',error.message);refreshButton(panel);return;}
+   const panel=screen('You','Sign the Bitcoin transaction','Copy this unsigned transaction to your testnet wallet, review it there, and paste the signed PSBT below. The page will check it again before broadcasting.');
+   const summary=el('p',handoff.lines.join('\n')),outLabel=el('label','Unsigned Bitcoin PSBT'),out=el('textarea');out.value=handoff.psbt;out.readOnly=true;out.rows=5;outLabel.append(out);
+   const inLabel=el('label','Signed Bitcoin PSBT'),input=el('textarea');input.rows=5;inLabel.append(input);panel.append(summary,outLabel,inLabel,button('Check and broadcast',async()=>{const signedPsbt=input.value.trim();input.value='';const result=await broadcastBitcoinSessionFund({...opts,signedPsbt});msg(status,'Bitcoin funding submitted. Save the updated recovery backup and wait for confirmations.');await advance();}));return;
+  }
   if(attempt.state!=='intent'||!actionArmed(record.session,record.role,attempt.id)){
    const panel=screen('You','Check the previous wallet action','This funding attempt may already have reached your wallet. Check the wallet and action journal before trying again.');refreshButton(panel);return;
+  }
+  if(chain==='bitcoin'){
+   const panel=screen('You','Prepare your Bitcoin transaction','Enter the testnet4 address that holds your bitcoin and a fee rate. Your wallet will sign a checked PSBT in the next step.');
+   const addressLabel=el('label','Bitcoin testnet4 address'),address=el('input');address.autocomplete='off';addressLabel.append(address);
+   const rateLabel=el('label','Fee rate (sat/vB)'),rate=el('input');rate.type='number';rate.min='1';rate.max='200';rate.value='2';rateLabel.append(rate);panel.append(addressLabel,rateLabel,button('Prepare Bitcoin PSBT',async()=>{await prepareBitcoinSessionFund({session:record.session,role:record.role,attemptId:attempt.id,outbox:starter.outbox,readFrames:args=>readSessionFrames({...args,api:d.api}),readers:d.readers,config:await d.loadTiming(),templates:await templates(),address:address.value.trim(),feeRate:Number(rate.value)});await advance();}));return;
   }
   if(chain==='ethereum'&&!d.getEthereum()){const panel=screen('You','Connect your Ethereum wallet','Connect the wallet that will fund this side.');panel.append(button('Connect Ethereum wallet',async()=>{await d.connectEthereum();await advance();}));return;}
   if(chain==='cardano'&&!d.getCardano()){
@@ -182,6 +210,21 @@ export function initSessionWizard(d){
    msg(status,result.uncertain?'The wallet did not confirm submission. Check the transaction before retrying.':'Funding transaction submitted. Save the updated recovery backup and wait for confirmations.');await advance();
   }));
  }
+ async function bitcoinSpend(record,operation,attempt,config,after){
+  const opts={session:record.session,role:record.role,operation,attemptId:attempt.id,outbox:starter.outbox,readFrames:args=>readSessionFrames({...args,api:d.api}),readers:d.readers,config,templates:await templates()};
+  if(attempt.state==='prepared'){
+   let handoff;try{handoff=await bitcoinSessionSpendDraft(opts);}catch(error){const panel=screen('You','Check the Bitcoin wallet action',error.message);refreshButton(panel);return;}
+   const panel=screen('You',operation==='claim'?'Sign your Bitcoin claim':'Sign your Bitcoin refund','Copy this unsigned transaction to your Bitcoin testnet wallet, review and sign it there, then paste the signed PSBT below.');
+   const summary=el('p',handoff.lines.join('\n')),outLabel=el('label','Unsigned Bitcoin PSBT'),out=el('textarea');out.value=handoff.psbt;out.readOnly=true;out.rows=5;outLabel.append(out);
+   const inLabel=el('label','Signed Bitcoin PSBT'),input=el('textarea');input.rows=5;inLabel.append(input);panel.append(summary,outLabel,inLabel);
+   let phrase=null;if(operation==='claim'){const label=el('label','Recovery passphrase');phrase=el('input');phrase.type='password';phrase.autocomplete='off';label.append(phrase);panel.append(label);}
+   panel.append(button('Check and broadcast',async()=>{const signedPsbt=input.value.trim(),passphrase=phrase?.value;input.value='';if(phrase)phrase.value='';await broadcastBitcoinSessionSpend({...opts,signedPsbt,passphrase});msg(status,'Bitcoin transaction submitted. Save the updated recovery backup and wait for confirmations.');await after();}));return;
+  }
+  if(attempt.state!=='intent'||!actionArmed(record.session,record.role,attempt.id)){const panel=screen('You','Check the previous Bitcoin action','This transaction may already have reached your wallet. Check wallet history and the action journal before retrying.');refreshButton(panel);return;}
+  const panel=screen('You',operation==='claim'?'Prepare your Bitcoin claim':'Prepare your Bitcoin refund','Enter the testnet4 address that should receive the bitcoin and a fee rate. You will review and sign the transaction in your wallet.');
+  const addressLabel=el('label','Bitcoin testnet4 destination'),address=el('input');address.autocomplete='off';addressLabel.append(address);
+  const rateLabel=el('label','Fee rate (sat/vB)'),rate=el('input');rate.type='number';rate.min='1';rate.max='200';rate.value='2';rateLabel.append(rate);panel.append(addressLabel,rateLabel,button('Prepare Bitcoin PSBT',async()=>{await prepareBitcoinSessionSpend({...opts,address:address.value.trim(),feeRate:Number(rate.value)});await after();}));
+ }
  async function showRefund(){
   inRefund=true;const index=readIndex(viewId);if(!index)throw Error('The saved swap is unavailable.');
   const session=await deriveSessionId(viewId,index.reservation);
@@ -191,18 +234,20 @@ export function initSessionWizard(d){
   if(!leg||!ref)throw Error('No saved escrow is available to refund.');
   if(!record.backupAcknowledged||!await sessionBackupCurrent(record)){await showBackup(record,showRefund);return;}
   if(reviewRestoredWallets(record,showRefund))return;
-  const config=await d.loadTiming(),seen=await observeSessionLeg({snapshot:record.snapshot,side,readers:d.readers,config});
-  if(seen.state==='claimed'){const panel=screen('Complete','Your escrow was claimed','The other person claimed this escrow. It is no longer available for a refund.');if(!seen.enough)refreshButton(panel);return;}
-  if(seen.state==='refunded'){const panel=screen(seen.enough?'Complete':'Network',seen.enough?'Refund confirmed':'Waiting for refund confirmations',seen.enough?'Your refund was confirmed.':'Your refund was seen on chain. Refresh after more confirmations.');if(!seen.enough)refreshButton(panel);return;}
-  if(seen.state==='pending'){const panel=screen('Network','Checking the escrow spend','The chain service has not indexed the spend yet. Refresh to check again.');refreshButton(panel);return;}
+  const config=await d.loadTiming(),seen=leg.asset.chain==='hegemon'?null:await observeSessionLeg({snapshot:record.snapshot,side,readers:d.readers,config});
+  if(seen?.state==='claimed'){const panel=screen('Complete','Your escrow was claimed','The other person claimed this escrow. It is no longer available for a refund.');if(!seen.enough)refreshButton(panel);return;}
+  if(seen?.state==='refunded'){const panel=screen(seen.enough?'Complete':'Network',seen.enough?'Refund confirmed':'Waiting for refund confirmations',seen.enough?'Your refund was confirmed.':'Your refund was seen on chain. Refresh after more confirmations.');if(!seen.enough)refreshButton(panel);return;}
+  if(seen?.state==='pending'){const panel=screen('Network','Checking the escrow spend','The chain service has not indexed the spend yet. Refresh to check again.');refreshButton(panel);return;}
   try{await checkSessionRefund({snapshot:record.snapshot,role,readers:d.readers,config});}
-  catch(error){const panel=screen('Network or time','Refund not ready',`${error.message} Refund deadline: ${new Date(leg.expiry*1000).toLocaleString()}. Refresh to check again.`);refreshButton(panel);return;}
+  catch(error){const deadline=['bitcoin','hegemon'].includes(leg.asset.chain)?`block ${leg.expiry}`:new Date(leg.expiry*1000).toLocaleString();const panel=screen('Network or time','Refund not ready',`${error.message} Refund deadline: ${deadline}. Refresh to check again.`);refreshButton(panel);return;}
+  if(leg.asset.chain==='hegemon'){const panel=screen('Not yet available','Hegemon refund coordination is not ready','The local wallet verified this refund note, but this wizard cannot yet prepare the refund.');refreshButton(panel);return;}
   const attempt=record.snapshot.actions[side].refund.at(-1);
   if(!attempt||attempt.state==='declined'){
    const panel=screen('You','Prepare your refund','The deadline has passed. Prepare a recovery record before requesting a refund from your wallet.');
    panel.append(button('Prepare refund',async()=>{await checkSessionRefund({snapshot:record.snapshot,role,readers:d.readers,config});await prepareSpendAttempt({session,role,operation:'refund',outbox:starter.outbox});await showRefund();}));return;
   }
   if(attempt.state==='submitted'){const panel=screen('Network','Waiting for your refund','Your refund was submitted. Refresh to check for confirmation.');refreshButton(panel);return;}
+  if(leg.asset.chain==='bitcoin'&&['intent','prepared'].includes(attempt.state)){await bitcoinSpend(record,'refund',attempt,config,showRefund);return;}
   if(attempt.state!=='intent'||!actionArmed(session,role,attempt.id)){const panel=screen('You','Check the previous refund','This refund may already have reached your wallet. Check the wallet and action journal before retrying.');refreshButton(panel);return;}
   if(leg.asset.chain==='ethereum'&&!d.getEthereum()){const panel=screen('You','Connect your Ethereum wallet','Connect the wallet that funded this escrow.');panel.append(button('Connect Ethereum wallet',async()=>{await d.connectEthereum();await showRefund();}));return;}
   if(leg.asset.chain==='cardano'&&!d.getCardano()){
@@ -224,14 +269,15 @@ export function initSessionWizard(d){
   }
   if(seen.state==='refunded'){const panel=screen('You','This escrow was refunded','The asset you expected to claim was refunded. Check your own escrow and its refund deadline.');refreshButton(panel);return;}
   if(seen.state==='pending'){const panel=screen('Network','Checking the escrow spend','The chain service has not indexed the spend yet. Refresh to check again.');refreshButton(panel);return;}
+  if(seen.state==='secret-revealed'){const panel=screen('Network','Checking the Hegemon note','A matching secret was revealed, but this alone does not prove this particular note was spent. Check the local wallet.');refreshButton(panel);return;}
   if(role==='taker'){
    const other=await observeSessionLeg({snapshot:record.snapshot,side:'short',readers:d.readers,config});
-   if(other.state!=='claimed'||!other.enough){const panel=screen(other.state==='claimed'?'Network':'The other person',other.state==='claimed'?'Waiting for their claim confirmations':'Waiting for their claim','Refresh to check whether the maker has claimed your locked asset.');refreshButton(panel);return;}
+   if(!['claimed','secret-revealed'].includes(other.state)||!other.enough){const panel=screen(other.state==='claimed'?'Network':'The other person',other.state==='claimed'?'Waiting for their claim confirmations':'Waiting for their claim','Refresh to check whether the maker has claimed your locked asset.');refreshButton(panel);return;}
    if(!record.snapshot.secretEnvelope){
     const panel=screen('You','Save the claim recovery data','The other person’s confirmed claim revealed the swap secret. Enter a recovery passphrase to encrypt it locally before claiming.');
     const label=el('label','Recovery passphrase'),phrase=el('input');phrase.type='password';phrase.autocomplete='off';label.append(phrase);panel.append(label,button('Protect claim recovery',async()=>{
      const passphrase=phrase.value;phrase.value='';const checked=await observeSessionLeg({snapshot:record.snapshot,side:'short',readers:d.readers,config});
-     if(checked.state!=='claimed'||!checked.enough)throw Error('The other claim is no longer confirmed. Refresh to check again.');
+     if(!['claimed','secret-revealed'].includes(checked.state)||!checked.enough)throw Error('The other secret is no longer confirmed. Refresh to check again.');
      const secret=fromHex(checked.preimage);try{const envelope=await encryptRecovery(secret,passphrase);await updateSession(record.session,role,record.revision,{...record.snapshot,secretEnvelope:envelope});}finally{secret.fill(0);}await advance();
     }));return;
    }
@@ -244,6 +290,7 @@ export function initSessionWizard(d){
    const panel=screen('You','Prepare your claim','The page will check the swap and save a recovery record before opening your wallet.');
    panel.append(button('Prepare claim',async()=>{await verifyTerms(record,role==='owner'?'claim_short':'claim_long');await prepareSpendAttempt({session:record.session,role,operation:'claim',outbox:starter.outbox});await advance();}));return;
   }
+  if(chain==='bitcoin'&&['intent','prepared'].includes(attempt.state)){await bitcoinSpend(record,'claim',attempt,config,advance);return;}
   if(attempt.state!=='intent'||!actionArmed(record.session,role,attempt.id)){
    const panel=screen('You','Check the previous wallet action','This claim may already have reached your wallet. Check your wallet and the action journal before trying again.');refreshButton(panel);return;
   }

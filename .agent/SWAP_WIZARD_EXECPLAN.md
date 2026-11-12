@@ -16,8 +16,10 @@ A person swapping native BTC, ETH, ADA or HGN on their testnets should see one n
 - [x] (2026-11-11 21:57Z) Start matching maker and taker sessions with a pinned offer, durable channel handshake and encrypted session backup; exercise two browser contexts, a lost response and reload.
 - [x] Connect the session setup, identity, terms, native-asset funding, on-chain observation and explicit claims to the browser wizard. A two-context browser simulation exercised both claims.
 - [x] Exercise simulated ADA–ETH claims in both funding orders, relay-independent refunds on both chains, and encrypted-backup restoration in another browser. The refund tests reload while the relay is unavailable.
-- [x] Add Bitcoin testnet term translation, on-chain spend observation, signed-participant planning and the independently verified Bitcoin funding gate. Bitcoin funding, claim, refund and wallet handoff are not yet wired into the wizard.
+- [x] Add Bitcoin testnet terms, on-chain observation and PSBT handoff for funding, claims and refunds. A two-browser simulated BTC–ETH swap completed, and separate simulated tests cover a relay-independent refund and a refused claim when the other escrow changed.
 - [ ] Implement and test guided Bitcoin PSBT signing, recovery, funding, claims and refunds for each supported pairing.
+- [x] Add an opt-in local Hegemon swap companion mode, explicit local approvals, chain and wallet checks, private-note verification, canonical-action checks, bounded secret observation, available-note selection, and a wallet-side exact HTLC lookup. These are building blocks, not yet a complete wizard flow.
+- [x] Exercise Hegemon funding preparation and separate local submission in browser tests with mocked chain data, including lost proof and submission responses. Version-4 encrypted recovery retains append-only candidate and handoff references; the actual handoff file must also remain available on the user's machine. These actions are not yet wired into the wizard.
 - [ ] Implement and test Hegemon public-pre-mainnet coordination with the local companion, including private note verification, refund handoff, secret release, recovery and explicit local approval.
 - [ ] Finish and test the refund and recovery paths, including loss of the relay and uncertain wallet submissions. Add a way to restore an encrypted backup in a fresh browser.
 - [ ] Keep unsupported token paths visibly blocked where they are not complete; the user currently needs native BTC, ETH, ADA and HGN only.
@@ -36,7 +38,7 @@ The offer wizard and the standalone guided swap reviewer are separate. The latte
 
 ## Outcomes & Retrospective
 
-The local wizard connects signed session coordination to ADA/ETH funding, claims, refunds and backup restoration. Browser tests with simulated chains completed claims in both directions and refunds with the relay offline, with separate wallet approval for each transaction. These are not public-testnet tests. Bitcoin planning and verification are partially implemented, while Bitcoin wallet actions and Hegemon sessions remain incomplete. Interrupted-action reconciliation and final validation remain in progress. The user explicitly asked us to wait for all four chains before publishing; no work from this branch has been pushed or deployed.
+The local wizard connects signed session coordination to ADA/ETH funding, claims, refunds and backup restoration. Browser tests with simulated chains completed claims in both directions and refunds with the relay offline, with separate wallet approval for each transaction. A simulated BTC–ETH swap also completed with external PSBT signing; other Bitcoin combinations still need full-flow tests. Hegemon companion and wallet verification primitives, and a simulated funding preparation/submission module, are implemented, but the Hegemon funding, claim, refund and recovery wizard remains incomplete. These are simulations, not public-testnet tests. Interrupted-action reconciliation and final validation remain in progress. The user explicitly asked us to wait for all four chains before publishing; no work from this branch has been pushed or deployed.
 
 ## Context and Orientation
 
