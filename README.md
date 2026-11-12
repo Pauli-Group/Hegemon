@@ -429,6 +429,8 @@ Operators follow [runbooks/security_testing.md](runbooks/security_testing.md) wh
 
 ## Getting started
 
+For native HGN, BTC, ETH and ADA testnet swaps, see the [illustrated HTLC user guide](htlc-docs/README.md). It covers companion setup, making and accepting offers, wallet approvals, recovery and refunds.
+
 ### Join the public v0.11 pre-mainnet
 
 Download the [v0.11.1 release](https://github.com/Pauli-Group/Hegemon/releases/tag/v0.11.1)
