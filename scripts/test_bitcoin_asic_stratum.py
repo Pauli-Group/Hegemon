@@ -391,7 +391,7 @@ class StratumTCPTest(unittest.TestCase):
         stalled_sock.setblocking(False)
         while True:
             try:
-                stalled_sock.send(b"x" * 4096, socket.MSG_DONTWAIT)
+                stalled_sock.send(b"x" * 4096)
             except BlockingIOError:
                 break
         stalled_sock.setblocking(True)

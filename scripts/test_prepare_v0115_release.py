@@ -224,7 +224,10 @@ class FastWindowsWorkflowTests(unittest.TestCase):
         with:
           persist-credentials: false
           fetch-depth: 0
-''' + preparation.WINDOWS_OWNERSHIP_STEP + preparation.PROOF_EXECUTION_TEST_STEP
+''' + preparation.WINDOWS_OWNERSHIP_STEP + preparation.PROOF_EXECUTION_TEST_STEP + '''      - name: Exercise real Stratum TCP submissions on Windows
+        shell: bash
+        run: python3 -I -B scripts/test_bitcoin_asic_stratum.py
+'''
         self.assertEqual(body.rstrip('\n'), expected.rstrip('\n'))
         self.assertNotIn('needs:', body)
         self.assertNotIn('continue-on-error:', body)

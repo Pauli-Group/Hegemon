@@ -78,6 +78,9 @@ jobs:
       - name: Verify v0.11.5 proof execution source and attribution
         shell: bash
         run: python3 -I -B scripts/test_check_v0115_current_binary_proofs.py
+      - name: Exercise real Stratum TCP submissions on Windows
+        shell: bash
+        run: python3 -I -B scripts/test_bitcoin_asic_stratum.py
   consensus:
     runs-on: ubuntu-latest
     timeout-minutes: 20

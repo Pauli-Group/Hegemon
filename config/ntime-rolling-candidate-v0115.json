@@ -9,9 +9,9 @@
     "public_cutover_authorized": false
   },
   "independent_review": {
-    "bytes": 7225,
+    "bytes": 8183,
     "path": "release-evidence/ntime-rolling-v0115/independent-review.json",
-    "sha256": "b44dd1d8db29da966ed5b2c2a5b2a6e7fb7ac3d1858cf6770674d27ef274ee65"
+    "sha256": "e9371926a3b8cb002be73fc5983281d118f79543ed7dcc3345325d9311bb944f"
   },
   "kind": "ntime-rolling-software-candidate",
   "proof_identity": {
@@ -317,10 +317,10 @@
     },
     {
       "after_mode": "100644",
-      "after_sha256": "9155e7669acba532cfe6495e28108d378b47b5381cc2b54f17855ecefa70a135",
+      "after_sha256": "367f2268140cc1ccf72afd38d4317632bfb6efe70165929f434793ba7525a61e",
       "before_mode": null,
       "before_sha256": null,
-      "bytes": 5277,
+      "bytes": 5424,
       "path": ".github/workflows/ntime-rolling.yml"
     },
     {
@@ -645,10 +645,10 @@
     },
     {
       "after_mode": "100644",
-      "after_sha256": "89e3033df7907e5bff24e55b59895820e7b91c94f1b800bf16fc35dfe2979811",
+      "after_sha256": "1bf600a5625780c44921ca01c11d4cfb9ddffd6f61bd3ad35a0028f48631ad7f",
       "before_mode": "100644",
       "before_sha256": "c3c9db6ce7864dce553a7a36d7bf76a09a9911d3d8449a2172237024078635a4",
-      "bytes": 55515,
+      "bytes": 55494,
       "path": "scripts/test_bitcoin_asic_stratum.py"
     },
     {
@@ -741,10 +741,10 @@
     },
     {
       "after_mode": "100644",
-      "after_sha256": "2f489db5a37e5aabad081d8f24d148cf9257519b2fcd2d14ddb7868f66b0b071",
+      "after_sha256": "af4cfca2320fa078804fa9419919f0541593d0307a5dfb74c2245a031fca7cbd",
       "before_mode": null,
       "before_sha256": null,
-      "bytes": 23803,
+      "bytes": 23959,
       "path": "scripts/test_prepare_v0115_release.py"
     },
     {
@@ -12899,10 +12899,10 @@
       "sha256": "401e43edf1b597facd6a9362f2c5f042f2f82159143784941659b561e06eba27"
     },
     {
-      "bytes": 5277,
+      "bytes": 5424,
       "mode": "100644",
       "path": ".github/workflows/ntime-rolling.yml",
-      "sha256": "9155e7669acba532cfe6495e28108d378b47b5381cc2b54f17855ecefa70a135"
+      "sha256": "367f2268140cc1ccf72afd38d4317632bfb6efe70165929f434793ba7525a61e"
     },
     {
       "bytes": 42589,
@@ -41399,10 +41399,10 @@
       "sha256": "aeb20bcc43d288eae7bedde4ea5151e1fac5bbeb091b48e418bb09ec42c1d3f7"
     },
     {
-      "bytes": 55515,
+      "bytes": 55494,
       "mode": "100644",
       "path": "scripts/test_bitcoin_asic_stratum.py",
-      "sha256": "89e3033df7907e5bff24e55b59895820e7b91c94f1b800bf16fc35dfe2979811"
+      "sha256": "1bf600a5625780c44921ca01c11d4cfb9ddffd6f61bd3ad35a0028f48631ad7f"
     },
     {
       "bytes": 77868,
@@ -41693,10 +41693,10 @@
       "sha256": "1a79aef6c7ff6821891f2a0e9280e4b47a1e40bf9b0905cdbf1ba5a814d081d2"
     },
     {
-      "bytes": 23803,
+      "bytes": 23959,
       "mode": "100644",
       "path": "scripts/test_prepare_v0115_release.py",
-      "sha256": "2f489db5a37e5aabad081d8f24d148cf9257519b2fcd2d14ddb7868f66b0b071"
+      "sha256": "af4cfca2320fa078804fa9419919f0541593d0307a5dfb74c2245a031fca7cbd"
     },
     {
       "bytes": 24205,
@@ -43127,6 +43127,6 @@
       "sha256": "2979ff748a39a72e0181c8f82aff4f2da29f69ced72d6dd5e49ddf0c9cd27b64"
     }
   ],
-  "source_inventory_sha256": "ece41acfccd04d079fe4083f2dba14c2466a0e836a1d4debfa3305d0766dc27d",
+  "source_inventory_sha256": "09f6082664bb55a77b630ad5758d2066b4978d5a2c4c9da08aafd319b15f3ee5",
   "status": "frozen"
 }

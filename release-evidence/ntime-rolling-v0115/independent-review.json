@@ -1,7 +1,7 @@
 {
   "activation_authorized": false,
   "baseline_commit": "ad77c8d564944972b6ae5e7cab26fcf500972aff",
-  "candidate_binding_sha256": "2bf9ad53ba70048d56ebbc20034bd77ef19a0758586781e686ea6395de370938",
+  "candidate_binding_sha256": "150adf84f9175f734a3f4d87ec1e06aa91b62d3146397b25be98bfc4c09c6943",
   "component_reviews": [
     {
       "bytes": 9176,
@@ -82,6 +82,11 @@
       "bytes": 7436,
       "path": "release-evidence/ntime-rolling-v0115/windows-elan-auth-independent-review.json",
       "sha256": "817dde6ad3c0195e0d6a48f1aaa54ae3b656fc3085e1af3ac1a86407fbf99462"
+    },
+    {
+      "bytes": 6000,
+      "path": "release-evidence/ntime-rolling-v0115/windows-socket-portability-independent-review.json",
+      "sha256": "3efd75a279325d4ccd32eb436eaf075b088ad83b97c2d139c7c006414fa4dbe1"
     }
   ],
   "decision": "ACCEPT_SOFTWARE_CANDIDATE_SCOPE",
@@ -97,27 +102,28 @@
     "The failed 1bcfa01 Windows preparation attempt is retained and grants no artifact acceptance. Formal policy files and their declared input fingerprints remain byte-identical; no unrelated review or execution record was renewed.",
     "The 2a40080796 native Windows ownership controls failed and grant no qualification. This incremental review covers only the cleanup wait and its fail-closed diagnostic controls; all other source rows match the prior reviewed candidate. Fresh Windows and four-platform CI remain mandatory.",
     "The a0bbc32c40 native Windows ownership controls failed and grant no qualification. This incremental review covers only the owned-process cleanup and its fail-closed controls; all other source rows match the prior reviewed candidate. Fresh Windows and four-platform CI remain mandatory.",
-    "The 5833985c31 Windows preparation stopped on a rate-limited unauthenticated Lean-installer metadata request, before final proof/H0/lifecycle execution. This incremental review covers only authentication of that CI metadata request and generated workflow controls; all other source rows match the prior reviewed candidate. Prior successful source/focused runs retain their original attribution; fresh full CI and four-platform qualification remain required."
+    "The 5833985c31 Windows preparation stopped on a rate-limited unauthenticated Lean-installer metadata request, before final proof/H0/lifecycle execution. This incremental review covers only authentication of that CI metadata request and generated workflow controls; all other source rows match the prior reviewed candidate. Prior successful source/focused runs retain their original attribution; fresh full CI and four-platform qualification remain required.",
+    "The a0179fe4a1 Windows preparation passed its authenticated Lean setup and reached affected adapter checks after H0 and owned current-binary proof verification returned successfully, then failed because the test referenced socket.MSG_DONTWAIT, which is absent on Windows. No completed Windows final receipt was emitted. This incremental review covers only removal of the redundant flag from an already nonblocking test socket, early native Windows execution of all adapter tests, and the corresponding existing exact workflow-contract expectation; all other source rows match the prior reviewed candidate. Prior CI and Linux qualifications retain their original attribution; fresh full CI and four-platform qualification remain required."
   ],
   "mainnet_authorized": false,
   "physical_asic_qualified": false,
   "prior_candidate_review": {
-    "bytes": 6604,
-    "path": "release-evidence/ntime-rolling-v0115/independent-review-5833985c31.json",
-    "sha256": "d4eedd63f6f00e9342e1f3f0c7d217a23955a9fcbd2e9763ec5e817a8669d045"
+    "bytes": 7225,
+    "path": "release-evidence/ntime-rolling-v0115/independent-review-a0179fe4a1.json",
+    "sha256": "b44dd1d8db29da966ed5b2c2a5b2a6e7fb7ac3d1858cf6770674d27ef274ee65"
   },
   "production_authorized": false,
   "public_cutover_authorized": false,
   "qualification_commands_sha256": "8de8ed193d36e3f2d12bf9a7e6287665f18758d5e3e262eaf9167b5c54c8db36",
   "review_kind": "independent_model_review",
-  "reviewed_at_utc": "2026-11-14T21:34:21.090072+00:00",
+  "reviewed_at_utc": "2026-11-14T23:44:31.308042+00:00",
   "reviewer": "Codex independent reviewers /root/prior_asic_context and /root/ntime_native; original component reviews retained for unchanged source, scoped Windows/process/workflow/document review aggregated by coordinator",
   "schema": "hegemon.ntime-rolling.independent-review.v1",
-  "source_inventory_sha256": "ece41acfccd04d079fe4083f2dba14c2466a0e836a1d4debfa3305d0766dc27d",
-  "supplemental_review_base": "5833985c31a0eae841bb87687e24f91a9ace8e86",
+  "source_inventory_sha256": "09f6082664bb55a77b630ad5758d2066b4978d5a2c4c9da08aafd319b15f3ee5",
+  "supplemental_review_base": "a0179fe4a115cbd4b888e0d5d76bdc9108c2ade7",
   "supplemental_reviewed_paths": [
-    ".github/workflows/prepare-premainnet-release.yml",
-    "scripts/prepare_v0115_release.py",
+    ".github/workflows/ntime-rolling.yml",
+    "scripts/test_bitcoin_asic_stratum.py",
     "scripts/test_prepare_v0115_release.py"
   ]
 }
