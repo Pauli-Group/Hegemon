@@ -6410,7 +6410,9 @@ impl NativeNode {
         {
             return None;
         }
-        if validate_native_fresh_timestamp_at(entry.work.timestamp_ms, native_admission_time_ms()).is_err() {
+        if validate_native_fresh_timestamp_at(entry.work.timestamp_ms, native_admission_time_ms())
+            .is_err()
+        {
             return None;
         }
         let state = self.state.read();
@@ -6832,11 +6834,14 @@ impl NativeNode {
         })
         .map_err(native_work_template_admission_error)?;
         let cumulative_work = cumulative_work.map_err(native_work_template_admission_error)?;
-        // Native ordering is in milliseconds. Bitcoin80 commits the complete
-        // native timestamp through its work prehash and projects nTime to seconds;
-        // fixed job time does not require adding one second for every block.
-        let template_timestamp_ms =
-            native_next_work_timestamp_ms(best.timestamp_ms, native_admission_time_ms())?;
+        // Historical profiles bind the full millisecond timestamp in the
+        // prehash. Time-rolling blocks instead use exact whole-second nTime.
+        let template_timestamp_ms = native_next_work_timestamp_ms_at_height(
+            &self.config.chain_id(),
+            height,
+            best.timestamp_ms,
+            native_admission_time_ms(),
+        )?;
         self.retain_current_asset_reference_candidates(&mut pending_actions, &best, height)?;
         retain_one_native_controlled_asset_action(&mut pending_actions);
         let v8_actions = pending_actions
@@ -7068,7 +7073,11 @@ impl NativeNode {
         ) {
             Ok(supply_digest) => supply_digest,
             Err(err) => {
-                if self.treasury_reward_policy().entitlement(height).is_some_and(|e| e.payout > 0) {
+                if self
+                    .treasury_reward_policy()
+                    .entitlement(height)
+                    .is_some_and(|e| e.payout > 0)
+                {
                     return Err(err.context("mandatory treasury template supply accounting"));
                 }
                 cacheable = false;
@@ -7373,6 +7382,12 @@ impl NativeNode {
         {
             return Ok(None);
         }
+        validate_native_rolling_timestamp(
+            &self.config.chain_id(),
+            work.height,
+            snapshot.best.timestamp_ms,
+            work.timestamp_ms,
+        )?;
         validate_native_fresh_timestamp_at(work.timestamp_ms, native_admission_time_ms())?;
         let expected_pow_bits = self.expected_child_pow_bits(&snapshot.best)?;
         if work.pow_bits != expected_pow_bits {
@@ -7432,7 +7447,11 @@ impl NativeNode {
             }
             Err(_) => return Ok(None),
         }
-        let (fee_total, has_coinbase) = native_block_replay_supply_parts_with_policy(&actions, work.height, self.treasury_reward_policy())?;
+        let (fee_total, has_coinbase) = native_block_replay_supply_parts_with_policy(
+            &actions,
+            work.height,
+            self.treasury_reward_policy(),
+        )?;
         evaluate_native_block_replay_refinement_for_actions(
             "native mined block replay refinement failed",
             &self.da_ciphertext_tree,
@@ -7719,7 +7738,11 @@ impl NativeNode {
         let message_root = bridge_message_root(&bridge_messages);
         let message_count = u32::try_from(bridge_messages.len())
             .map_err(|_| anyhow!("native bridge message count overflow"))?;
-        let (fee_total, has_coinbase) = native_block_replay_supply_parts_with_policy(&actions, meta.height, self.treasury_reward_policy())?;
+        let (fee_total, has_coinbase) = native_block_replay_supply_parts_with_policy(
+            &actions,
+            meta.height,
+            self.treasury_reward_policy(),
+        )?;
         evaluate_native_block_replay_refinement_for_actions(
             "announced block replay refinement failed",
             &self.da_ciphertext_tree,
@@ -8199,7 +8222,7 @@ impl NativeNode {
                     validate_native_fresh_timestamp_at(meta.timestamp_ms, admission_now_ms)
                         .map_err(NativeChainLoadError::Corrupt)?;
                     missing.push(meta);
-                },
+                }
             }
         }
 
@@ -9586,7 +9609,11 @@ impl NativeNode {
             .map_err(|_| anyhow!("native bridge message count overflow"))?;
         let (expected_header_mmr_root, expected_header_mmr_len) =
             header_mmr_commitment_after_best(&state.best, &state.header_mmr_peaks)?;
-        let (fee_total, has_coinbase) = native_block_replay_supply_parts_with_policy(&actions, meta.height, self.treasury_reward_policy())?;
+        let (fee_total, has_coinbase) = native_block_replay_supply_parts_with_policy(
+            &actions,
+            meta.height,
+            self.treasury_reward_policy(),
+        )?;
         evaluate_native_block_replay_refinement_for_actions(
             "native replay refinement failed",
             &self.da_ciphertext_tree,
@@ -9786,7 +9813,11 @@ impl NativeNode {
             .map_err(|_| anyhow!("native bridge message count overflow"))?;
         let (expected_header_mmr_root, expected_header_mmr_len) =
             header_mmr_commitment_after_best(&state.best, &state.header_mmr_peaks)?;
-        let (fee_total, has_coinbase) = native_block_replay_supply_parts_with_policy(&actions, meta.height, self.treasury_reward_policy())?;
+        let (fee_total, has_coinbase) = native_block_replay_supply_parts_with_policy(
+            &actions,
+            meta.height,
+            self.treasury_reward_policy(),
+        )?;
         evaluate_native_block_replay_refinement_for_actions(
             "native replay refinement failed",
             &self.da_ciphertext_tree,
@@ -14065,13 +14096,17 @@ impl NativeNode {
     > {
         if let Some(permit) = public_permit {
             if !self.public_rpc_admission.owns_submission(permit) {
-                return Err(anyhow!("public submission reservation belongs to another node"));
+                return Err(anyhow!(
+                    "public submission reservation belongs to another node"
+                ));
             }
             return Ok(None);
         }
         let local_permit = Arc::clone(&self.local_pending_proof_admission_semaphore)
             .try_acquire_owned()
-            .map_err(|_| anyhow!("native local pending proof verifier at capacity; retry submission"))?;
+            .map_err(|_| {
+                anyhow!("native local pending proof verifier at capacity; retry submission")
+            })?;
         let permit = Arc::clone(&self.pending_proof_admission_semaphore)
             .try_acquire_owned()
             .map_err(|_| anyhow!("native pending proof verifier at capacity; retry submission"))?;

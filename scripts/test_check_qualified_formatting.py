@@ -82,6 +82,13 @@ class FormattingTests(unittest.TestCase):
         with self.assertRaises(gate.Rejected): gate.load_baseline(file, hashlib.sha256(raw).hexdigest())
 
     def test_all_checked_in_migrations_bind_exact_current_files_and_old_debt(self):
+        if (gate.ROOT/'config/ntime-rolling-v0115.json').is_file():
+            # This successor has a formatting-only immutable Git predecessor;
+            # historical release/artifact authority does not apply to its source.
+            spec=importlib.util.spec_from_file_location('ntime_formatting_controls',gate.ROOT/'scripts/check_ntime_candidate_formatting.py')
+            candidate=importlib.util.module_from_spec(spec);spec.loader.exec_module(candidate)
+            candidate.policy(gate.ROOT)
+            return
         candidate_config=gate.ROOT/'config/combined-upgrade-candidate-20261108.json'
         if candidate_config.is_file():
             # A source-selected candidate has its own exact predecessor/delta

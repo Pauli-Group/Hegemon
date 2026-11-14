@@ -70,6 +70,10 @@ else
   AUDIT_STATUS=0
 fi
 
+# These four exact exceptions are justified only for the pinned packaged graphs.
+# A policy cannot accept them by removing their source-binding metadata.
+python3 "$ROOT/scripts/check_release_dependency_reachability.py" --policy "$POLICY"
+
 python3 - "$AUDIT_JSON" "$POLICY" "$AUDIT_STATUS" <<'PY'
 import json
 import re

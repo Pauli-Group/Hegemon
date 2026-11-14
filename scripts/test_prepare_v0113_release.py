@@ -24,9 +24,16 @@ class V0113PreparationTests(unittest.TestCase):
 
     def test_checked_in_current_lane_is_exact(self):
         preparation.verify_preparation(self.release, self.workflow, v0113=True)
-        self.assertEqual(preparation.expected_workflow(self.release, v0113=True,
-                             combined=(ROOT / "config/combined-upgrade-candidate-20261108.json").is_file()),
-                         (ROOT / ".github/workflows/prepare-premainnet-release.yml").read_text())
+        if (ROOT / "config/ntime-rolling-v0115.json").is_file():
+            spec = importlib.util.spec_from_file_location("v0115_current_lane",
+                    ROOT / "scripts/prepare_v0115_release.py")
+            current = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(current)
+            expected = current.expected_workflow(self.release)
+        else:
+            expected = preparation.expected_workflow(self.release, v0113=True,
+                    combined=(ROOT / "config/combined-upgrade-candidate-20261108.json").is_file())
+        self.assertEqual(expected, (ROOT / ".github/workflows/prepare-premainnet-release.yml").read_text())
         self.assertNotIn("contents: write", self.workflow)
         self.assertNotIn("softprops/action-gh-release", self.workflow)
         self.assertEqual((ROOT / ".github/workflows/release.yml").read_text(), self.release)

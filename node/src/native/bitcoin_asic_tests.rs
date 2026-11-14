@@ -619,3 +619,316 @@ fn combined_mining_version_boundary_import_restart_reorg_and_fresh_sync() {
     }
     assert_eq!(fresh.best_meta(), fork.best_meta());
 }
+
+#[cfg(feature = "combined-upgrade-rehearsal")]
+fn solve_ntime_asic_job(node: &NativeNode, job: &Value, ntime: u32) -> (Value, [u8; 32]) {
+    let id = job["job_id"].as_str().unwrap();
+    let work = node
+        .bitcoin_asic_jobs
+        .lock()
+        .jobs
+        .get(id)
+        .unwrap()
+        .work
+        .clone();
+    let version = consensus_light_client::BITCOIN80_VERSION | 0x20;
+    for candidate in 0..1_000_000u32 {
+        let mut nonce = [0; 32];
+        nonce[..4].copy_from_slice(&candidate.to_le_bytes());
+        let hash = consensus_light_client::bitcoin80_work_hash_with_version(
+            &work.pre_hash,
+            &work.parent_hash,
+            u64::from(ntime) * 1_000,
+            work.pow_bits,
+            nonce,
+            version,
+        )
+        .unwrap();
+        if native_seal_meets_target(&hash, work.pow_bits) {
+            return (
+                json!({"job_id": id, "nonce": format!("{candidate:08x}"),
+                "extranonce": "00".repeat(28), "ntime": format!("{ntime:08x}"),
+                "mining_version": format!("{version:08x}")}),
+                hash,
+            );
+        }
+    }
+    panic!("bounded real easy-target nTime job must have a solution");
+}
+
+/// Real native imports, persistence, sync and reorg through the source-pinned
+/// disposable activation. This finite software test makes no hardware claim.
+#[cfg(feature = "combined-upgrade-rehearsal")]
+#[test]
+fn ntime_rolling_boundary_solved_offsets_clock_rollback_expiry_restart_sync_and_reorg() {
+    let directory = tempfile::tempdir().unwrap();
+    let peer_directory = tempfile::tempdir().unwrap();
+    let config = combined_asic_test_config(directory.path());
+    let node = NativeNode::open(config.clone()).unwrap();
+    let peer = NativeNode::open(combined_asic_test_config(peer_directory.path())).unwrap();
+    let activation =
+        consensus_light_client::native_time_rolling_activation_height(&config.chain_id()).unwrap();
+    assert_eq!(activation, 180);
+    let genesis_time = node.best_meta().timestamp_ms;
+    let clock = |height| genesis_time + height * COMBINED_HISTORICAL_BLOCK_INTERVAL_MS;
+    let mut common = Vec::new();
+    for height in 1..activation - 1 {
+        let work = with_native_admission_time(clock(height), || node.prepare_work()).unwrap();
+        let seal = mine_native_round(work.clone(), 0).unwrap();
+        let meta =
+            with_native_admission_time(clock(height), || node.import_mined_block(&work, seal))
+                .unwrap()
+                .unwrap();
+        with_native_admission_time(clock(height), || peer.import_announced_block(meta.clone()))
+            .unwrap();
+        common.push(meta);
+    }
+    let before =
+        with_native_admission_time(clock(activation - 1), || node.bitcoin_asic_work()).unwrap();
+    assert_eq!(before["ntime_rolling"], false);
+    assert_eq!(before["ntime_activation_height"], activation);
+    assert_eq!(before["min_ntime"], before["ntime"]);
+    assert_eq!(before["max_ntime"], before["ntime"]);
+    let mut premature =
+        solve_combined_asic_job(&node, &before, consensus_light_client::BITCOIN80_VERSION);
+    premature["ntime"] = json!(format!("{:08x}", clock(activation - 1) / 1_000 - 1));
+    assert!(with_native_admission_time(clock(activation - 1), || node
+        .bitcoin_asic_submit(premature))
+    .unwrap_err()
+    .to_string()
+    .contains("ntime differs"));
+    let solution =
+        solve_combined_asic_job(&node, &before, consensus_light_client::BITCOIN80_VERSION);
+    with_native_admission_time(clock(activation - 1), || node.bitcoin_asic_submit(solution))
+        .unwrap();
+    with_native_admission_time(clock(activation - 1), || {
+        peer.import_announced_block(node.best_meta())
+    })
+    .unwrap();
+    common.push(node.best_meta());
+
+    let now = clock(activation);
+    let parent = node.best_meta();
+    let job = with_native_admission_time(now, || node.bitcoin_asic_work()).unwrap();
+    let id = job["job_id"].as_str().unwrap();
+    assert_eq!(job["height"], activation);
+    assert_eq!(job["ntime_rolling"], true);
+    assert_eq!(job["version_rolling_mask"], "1fffffe0");
+    assert_eq!(
+        job["min_ntime"],
+        format!("{:08x}", parent.timestamp_ms / 1_000 + 1)
+    );
+    assert_eq!(job["max_ntime"], format!("{:08x}", now / 1_000 + 90));
+    assert_eq!(job["server_time"], format!("{:08x}", now / 1_000));
+    assert_eq!(job["max_future_skew_seconds"], 90);
+    let original = node.bitcoin_asic_jobs.lock().jobs.get(id).unwrap().clone();
+    let suggested = u32::from_str_radix(job["ntime"].as_str().unwrap(), 16).unwrap();
+    for (ntime, text) in [
+        (parent.timestamp_ms / 1_000, "greater than"),
+        (now / 1_000 + 91, "future-dated"),
+    ] {
+        let invalid = json!({"job_id": id, "nonce": "00000000", "extranonce": "00".repeat(28), "ntime": format!("{ntime:08x}")});
+        assert!(
+            with_native_admission_time(now, || node.bitcoin_asic_submit(invalid))
+                .unwrap_err()
+                .to_string()
+                .contains(text)
+        );
+    }
+    let mut subsecond = original.work.clone();
+    subsecond.timestamp_ms += 1;
+    let seal = mine_native_round(subsecond.clone(), 0).unwrap();
+    assert!(
+        with_native_admission_time(now, || node.import_mined_block(&subsecond, seal))
+            .unwrap_err()
+            .to_string()
+            .contains("exact 32-bit nTime")
+    );
+    let rolled_back =
+        with_native_admission_time(now - 120_000, || node.bitcoin_asic_work()).unwrap();
+    assert_eq!(rolled_back["job_id"], job["job_id"]);
+    assert_eq!(rolled_back["ntime"], job["ntime"]);
+    assert_eq!(rolled_back["max_ntime"], format!("{:08x}", suggested - 30));
+    assert!(rolled_back["expires_in"].as_u64().unwrap() <= job["expires_in"].as_u64().unwrap());
+    let unavailable =
+        with_native_admission_time(now - 160_000, || node.bitcoin_asic_work()).unwrap();
+    assert_eq!(unavailable["available"], false);
+    assert!(unavailable["retained_job_ids"]
+        .as_array()
+        .unwrap()
+        .contains(&job["job_id"]));
+    let unchanged = node.bitcoin_asic_jobs.lock().jobs.get(id).unwrap().clone();
+    assert_eq!(unchanged.created_at, original.created_at);
+    assert_eq!(unchanged.work.timestamp_ms, original.work.timestamp_ms);
+    assert_eq!(unchanged.work.pre_hash, original.work.pre_hash);
+
+    // An actually solved header sixty seconds below the suggestion remains
+    // above the canonical parent and imports with precisely that timestamp.
+    let (backward_solution, backward_hash) = solve_ntime_asic_job(&node, &job, suggested - 60);
+    let accepted =
+        with_native_admission_time(now, || node.bitcoin_asic_submit(backward_solution)).unwrap();
+    assert_eq!(accepted["block_hash"], hex32(&backward_hash));
+    let backward = node.best_meta();
+    assert_eq!(backward.timestamp_ms, u64::from(suggested - 60) * 1_000);
+    assert_eq!(
+        pow_header_from_meta(&backward).pre_hash(),
+        original.work.pre_hash
+    );
+    with_native_admission_time(now, || peer.import_announced_block(backward.clone())).unwrap();
+    let next_now = clock(activation + 1);
+    let next = with_native_admission_time(next_now, || node.bitcoin_asic_work()).unwrap();
+    assert_eq!(next["ntime_rolling"], true);
+    let next_ntime = u32::from_str_radix(next["ntime"].as_str().unwrap(), 16).unwrap();
+    let (forward_solution, forward_hash) = solve_ntime_asic_job(&node, &next, next_ntime + 70);
+    let response =
+        with_native_admission_time(next_now, || node.bitcoin_asic_submit(forward_solution))
+            .unwrap();
+    assert_eq!(response["block_hash"], hex32(&forward_hash));
+    let forward = node.best_meta();
+    assert_eq!(forward.timestamp_ms, u64::from(next_ntime + 70) * 1_000);
+    with_native_admission_time(next_now, || peer.import_announced_block(forward.clone())).unwrap();
+    assert_eq!(peer.best_meta(), forward);
+    drop(node);
+    // Historical reconstruction is deterministic even when the current clock
+    // is earlier than the accepted timestamp. Fresh admissions remain bounded.
+    let reopened =
+        with_native_admission_time(genesis_time, || NativeNode::open(config.clone())).unwrap();
+    assert_eq!(reopened.best_meta(), forward);
+    assert_eq!(
+        reopened
+            .verify_canonical_checkpoints_after_restart_for_test(forward.hash)
+            .unwrap()
+            .best,
+        forward
+    );
+    assert_eq!(
+        pow_header_from_meta(&reopened.best_meta()).pow_hash(),
+        forward_hash
+    );
+
+    // A fresh database consumes the actual bounded range-response and atomic
+    // batch import paths, including a batch spanning the activation boundary.
+    let fresh_directory = tempfile::tempdir().unwrap();
+    let fresh_config = combined_asic_test_config(fresh_directory.path());
+    let fresh = NativeNode::open(fresh_config.clone()).unwrap();
+    let mut from = 1;
+    while from <= forward.height {
+        let rows = reopened
+            .block_range(
+                from,
+                (from + MAX_NATIVE_SYNC_IMPORT_BATCH_BLOCKS as u64 - 1).min(forward.height),
+            )
+            .unwrap();
+        assert_eq!(rows.first().unwrap().height, from);
+        assert_eq!(
+            with_native_admission_time(next_now, || fresh.commit_sync_tip_extension_batch(&rows))
+                .unwrap(),
+            rows.len()
+        );
+        from = rows.last().unwrap().height + 1;
+    }
+    assert_eq!(fresh.best_meta(), forward);
+    assert_eq!(
+        fresh.header_by_hash(&backward_hash).unwrap().unwrap(),
+        backward
+    );
+    assert_eq!(
+        pow_header_from_meta(&fresh.best_meta()).pow_hash(),
+        forward_hash
+    );
+    drop(fresh);
+    let fresh_reopened =
+        with_native_admission_time(genesis_time, || NativeNode::open(fresh_config)).unwrap();
+    assert_eq!(fresh_reopened.best_meta(), forward);
+    assert_eq!(
+        fresh_reopened
+            .header_by_hash(&backward_hash)
+            .unwrap()
+            .unwrap()
+            .timestamp_ms,
+        backward.timestamp_ms
+    );
+
+    // A monotonic expiry cannot be renewed by refreshing the moving range.
+    let third_now = clock(activation + 3);
+    let third = with_native_admission_time(third_now, || peer.bitcoin_asic_work()).unwrap();
+    let third_id = third["job_id"].as_str().unwrap();
+    peer.bitcoin_asic_jobs
+        .lock()
+        .jobs
+        .get_mut(third_id)
+        .unwrap()
+        .created_at = Instant::now() - Duration::from_secs(121);
+    let replacement =
+        with_native_admission_time(third_now + 1_000, || peer.bitcoin_asic_work()).unwrap();
+    assert_ne!(replacement["job_id"], third["job_id"]);
+    let (expired, _) = solve_ntime_asic_job(
+        &peer,
+        &replacement,
+        u32::from_str_radix(replacement["ntime"].as_str().unwrap(), 16).unwrap(),
+    );
+    let mut expired = expired;
+    expired["job_id"] = third["job_id"].clone();
+    assert!(
+        with_native_admission_time(third_now, || peer.bitcoin_asic_submit(expired))
+            .unwrap_err()
+            .to_string()
+            .contains("expired")
+    );
+    // A solved header beyond the original +90s window is retryable unchanged
+    // once a fresh node-clock snapshot admits it, inside the original TTL.
+    let replacement_time = u32::from_str_radix(replacement["ntime"].as_str().unwrap(), 16).unwrap();
+    let replacement_clock = u64::from(replacement_time) * 1_000;
+    let (later_solution, later_hash) =
+        solve_ntime_asic_job(&peer, &replacement, replacement_time + 100);
+    assert!(with_native_admission_time(replacement_clock, || peer
+        .bitcoin_asic_submit(later_solution.clone()))
+    .unwrap_err()
+    .to_string()
+    .contains("temporarily future-dated"));
+    let refreshed =
+        with_native_admission_time(replacement_clock + 20_000, || peer.bitcoin_asic_work())
+            .unwrap();
+    assert_eq!(refreshed["job_id"], replacement["job_id"]);
+    assert_eq!(
+        refreshed["max_ntime"],
+        format!("{:08x}", replacement_time + 110)
+    );
+    assert!(
+        refreshed["expires_in"].as_u64().unwrap() <= replacement["expires_in"].as_u64().unwrap()
+    );
+    let later = with_native_admission_time(replacement_clock + 20_000, || {
+        peer.bitcoin_asic_submit(later_solution)
+    })
+    .unwrap();
+    assert_eq!(later["block_hash"], hex32(&later_hash));
+    assert_eq!(
+        peer.best_meta().timestamp_ms,
+        u64::from(replacement_time + 100) * 1_000
+    );
+
+    // Exercise stored competing branch adoption with the new exact timestamp
+    // profile, then reconstruct that winner on another cold restart.
+    let fork_directory = tempfile::tempdir().unwrap();
+    let fork_config = combined_asic_test_config(fork_directory.path());
+    let fork = NativeNode::open(fork_config).unwrap();
+    for meta in common {
+        with_native_admission_time(clock(meta.height), || fork.import_announced_block(meta))
+            .unwrap();
+    }
+    for height in activation..=activation + 2 {
+        let work = with_native_admission_time(clock(height), || fork.prepare_work()).unwrap();
+        let seal = mine_native_round(work.clone(), 0).unwrap();
+        let meta =
+            with_native_admission_time(clock(height), || fork.import_mined_block(&work, seal))
+                .unwrap()
+                .unwrap();
+        with_native_admission_time(clock(height), || reopened.import_announced_block(meta))
+            .unwrap();
+    }
+    assert_eq!(reopened.best_meta(), fork.best_meta());
+    let winner = reopened.best_meta();
+    drop(reopened);
+    let restarted = NativeNode::open(config).unwrap();
+    assert_eq!(restarted.best_meta(), winner);
+}

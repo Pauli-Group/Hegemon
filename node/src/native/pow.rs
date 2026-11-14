@@ -339,10 +339,10 @@ pub(crate) fn checkpoint_from_meta(meta: &NativeBlockMeta) -> TrustedCheckpointV
     }
 }
 
-/// Only the combined rules interpret the native-unused V2 version commitment
-/// as a mining payload. All historical commitment semantics remain unchanged.
+/// The combined profile and its time-rolling successor carry the V2 mining
+/// payload. All earlier commitment semantics remain unchanged.
 pub(crate) fn native_mining_version_commitment(rules_hash: &[u8; 32], version: u32) -> [u8; 48] {
-    if *rules_hash == consensus_light_client::HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_COMBINED {
+    if consensus_light_client::is_combined_rules(rules_hash) {
         consensus_light_client::bitcoin80_mining_version_payload(version)
     } else {
         NATIVE_EMPTY_DIGEST48

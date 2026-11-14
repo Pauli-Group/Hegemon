@@ -1,0 +1,113 @@
+{
+  "schema": "hegemon.v0115.independent-implementation-review.v1",
+  "review_kind": "independent_model_review",
+  "reviewer": "Codex independent subagent /root/prior_asic_context",
+  "reviewed_at_utc": "2026-11-14T16:18:47.952767+00:00",
+  "decision": "ACCEPT_CHECKER_AND_RUNNER_IMPLEMENTATION_SCOPE",
+  "status": "PASS_READ_ONLY_IMPLEMENTATION_REVIEW",
+  "scope": "scripts/check_ntime_rolling_candidate.py and scripts/qualify_ntime_rolling.py plus their tests, pending config, and evidence namespace contract; observed packaging/workflow integration only",
+  "source_files": [
+    {
+      "path": "scripts/check_ntime_rolling_candidate.py",
+      "bytes": 40143,
+      "sha256": "c420bdf3ffea8794bd142f52111135fd52c81c60bc1ec73176bdaf5eebbcc0d2"
+    },
+    {
+      "path": "scripts/qualify_ntime_rolling.py",
+      "bytes": 17251,
+      "sha256": "5c9940197b6a7277d04b009796c169da6d82fcd8e3a3f0ffc9991723ad62b974"
+    },
+    {
+      "path": "scripts/test_check_ntime_rolling_candidate.py",
+      "bytes": 19946,
+      "sha256": "d43aee018f469ba669dece926bff90ae282b0e9c89e87080ca24f1617f8e234c"
+    },
+    {
+      "path": "scripts/test_qualify_ntime_rolling.py",
+      "bytes": 15533,
+      "sha256": "0709443d37b47ddf04f7f1e37d5428b2d93d300c85ff8a00c36d999eec75d265"
+    },
+    {
+      "path": "config/ntime-rolling-candidate-v0115.json",
+      "bytes": 8943,
+      "sha256": "b8fe3dbdeb94506017a72809a04841c6f5bf17df644575d9d139a5884f9fbd5e"
+    },
+    {
+      "path": "release-evidence/ntime-rolling-v0115/README.txt",
+      "bytes": 670,
+      "sha256": "f8bfd1ff5ce4a1421e57b0813dfe56bcc1d690b53f8ba2a05e395a53b36f720f"
+    }
+  ],
+  "methods": [
+    "Read-only source and regression inspection; no tests, Cargo commands, builds, node launches, fixture execution, or repository edits by this reviewer.",
+    "Independently verified all19 predecessor-authority hashes against both current files and Git base ad77c8d564944972b6ae5e7cab26fcf500972aff.",
+    "Independently recomputed all41 relation include-byte inputs and SHA512 relation digest; verified exact Cargo.lock SHA256.",
+    "Statically counted59 declared adapter test methods and checked fixed38-command plan:36 exact Rust tests,1complete59-testadapter run,1no-std cargo check."
+  ],
+  "confirmed_open_findings": [],
+  "resolved_during_review": [
+    {
+      "id": "CR-01",
+      "issue": "Outer subprocess.run timeout/SIGTERM could bypass suite cleanup while Cargo children owned separate process groups.",
+      "resolution": "Coordinator now uses owned Popen, signal-unwind handlers, TERM/CTRL_BREAK, bounded35-second cooperative cleanup and bounded forced escalation. Runner handles TERM/INT/SIGBREAK and kills/reaps its child group. Real POSIX timeout and signal process-tree regressions inspected."
+    },
+    {
+      "id": "CR-02",
+      "issue": "strict_json accepted nonstandard NaN and Infinity.",
+      "resolution": "parse_constant now rejects all three nonfinite JSON spellings; duplicate-key and nonfinite mutation controls inspected."
+    },
+    {
+      "id": "CR-03",
+      "issue": "Frozen source_check imported a mutable source helper before comparing frozen inventory.",
+      "resolution": "Frozen complete inventory is checked before source-helper import, followed by semantic checks and another inventory comparison; negative ordering regression inspected."
+    },
+    {
+      "id": "CR-04",
+      "issue": "Portable final receipt predicate omitted emitted H0 versions and proof profile.",
+      "resolution": "validate_identity_smoke now requires exact typed native RPC/wallet/private-spend0.11.5 strings, truthful walletd marker, genesis/H0/zero peers/closure/rejection booleans and all eight unchanged proof-profile fields. Omitted-field, changed-profile and stale-version controls inspected."
+    }
+  ],
+  "accepted_source_properties": [
+    "Candidate and independent-review records bind exact complete source inventory, reviewed delta, fixed qualification commands, immutable Git base and unchanged predecessor authorities. Pending config cannot claim frozen evidence or authorization.",
+    "All41 proof inputs and proof-bound Cargo.lock remain exact. Relation ID Hegemon.PrivateSpend.BoundedPolicy.CompFF01.Packed.v4 and relation digest b9d22c2f0cb49df519b34620c138d7f2d74fa135a76c7b526cd73a60bb5cd6cec2f910dde83b1a848684e123d02ab0bbc8bdb384b1bcaff1b489fd8794c14685 are unchanged.",
+    "Final execution calls byte-pinned historical actual H0 and current-binary proof executors; their execution behavior is retained. New attribution constants do not substitute historical receipts for current execution.",
+    "Exact named Rust test outputs require1passed,0failed,0ignored,0measured; adapter requires exactly59tests and0skips. Fixed complete nonempty execution plans and retained log digests are checked; fresh execution additionally reparses retained raw logs.",
+    "Actual proof receipt validates five frozen proof/statement cases with six negative controls each, exact current node/artifact/fixture/source identity, process closure and explicit cryptographic-only boundaries.",
+    "Before/after source/config/artifact checks reject persistent mutation through qualification. Canonical relative paths, symlink/reparse rejection, executable-evidence rejection and public wire caps constrain the new evidence namespace.",
+    "Source inventory excludes only its own candidate config, the designated generated packaging-profile data and nonexecutable candidate evidence namespace. No runtime Rust or Cargo input consumes the excluded packaging-profile JSON in the inspected source.",
+    "Windows absolute interpreter paths are accepted using PureWindowsPath; process groups and CTRL_BREAK/taskkill paths are explicit. External packaging parser fixes the four target triples/native formats, reuses the full final predicate and pins all four platform receipt identities.",
+    "Every final boundary remains explicitly false for production, mainnet, activation, public cutover, deployment and physical ASIC qualification.",
+    "Final runner feature unification is rehearsal-only and matches the retained combined-upgrade producer; combined chain activation selection precedes standalone legacy ASERT feature behavior. All native suites share one exact compiled feature profile."
+  ],
+  "author_reported_validation_not_reexecuted": [
+    "17checker controls and16runner controls passed, per author /root/ntime_review."
+  ],
+  "limitations": [
+    "This is implementation-scope review, not an accepted frozen whole-candidate source review. The inspected config is pending; its future inventory/delta/review data must be checked against the actual frozen source.",
+    "No current-binary proof verification, H0 startup, source rehearsal, all-platform CI, packaging derivation, deployment, activation or physical ASIC execution was performed by this reviewer.",
+    "Finite source/log checks rely on the approved machine, Python/Cargo/compiler/toolchain and OS process behavior; they are not a hermetic build proof or protection against an arbitrarily hostile machine.",
+    "Portable saved-receipt validation checks fixed plans/counts/log metadata; retained raw log bytes are verified by the source-owned fresh execution path. Packaging attribution additionally depends on successful exact-source CI and artifact archive provenance.",
+    "Historical funded HTLC, recovery and live CPU qualification are deliberately not rerun or relabeled. Existing identity/carrier proof fixtures are reused as public verification inputs, while proof verification itself must execute against each current final binary."
+  ],
+  "production_authorized": false,
+  "activation_authorized": false,
+  "publication_authorized": false,
+  "deployment_verified": false,
+  "physical_asic_qualified": false,
+  "cargo_lock_sha256": "1c243bf3858f4ee22fa4441c7a2ee6d49b16d264147b0f3a2de845e760821719",
+  "final_delta_review": {
+    "scope": "Unify all native rehearsal commands on the existing historical combined-upgrade feature profile; ASERT_FEATURES aliases FEATURES. No test names/counts/receipt authority or ordinary final binary build commands changed.",
+    "reviewed_files": [
+      "scripts/qualify_ntime_rolling.py",
+      "scripts/test_qualify_ntime_rolling.py"
+    ],
+    "verdict": "ACCEPT_WITHIN_EXISTING_IMPLEMENTATION_SCOPE",
+    "evidence": [
+      "FEATURES exactly matches unchanged scripts/qualify_combined_upgrade.py.",
+      "consensus-light-client/src/pow_rules.rs selects source-owned combined activation before standalone ASERT rehearsal: combined fixture retains ASERT120 and time rolling180; pre-mainnet18660/28860 unchanged.",
+      "The separate HEGEMON_CHAIN_ID_V1 asert-rehearsal branch activates at height20 in actual source, not64. Other asert-rehearsal cfg sites inspected are node test modules/cases.",
+      "Updated regression requires all hegemon-node suite commands to use one identical FEATURES string, including both rehearsal flags. Exact38-command inventory and output parsers remain unchanged."
+    ],
+    "validation_boundary": "Read-only delta inspection only; author reports17checker+16runner controls passing. Root executes the exact nTime test separately."
+  }
+}

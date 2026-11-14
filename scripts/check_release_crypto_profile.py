@@ -309,6 +309,91 @@ V0113_AUTHORITY_SHA256 = {
 
 COMBINED_CONFIG = 'config/combined-upgrade-candidate-20261108.json'
 COMBINED_SCOPE = 'combined_upgrade_source_proofs_h0_and_fresh_affected_lifecycle'
+NTIME_CONFIG = 'config/ntime-rolling-candidate-v0115.json'
+NTIME_CHECKER = 'scripts/check_ntime_rolling_candidate.py'
+NTIME_SCOPE = 'exact-v0115-premainnet-source-proof-h0-and-ntime-lifecycle'
+NTIME_FALSE_BOUNDARIES = (
+    'production_authorized', 'deployment_verified', 'mainnet_authorized',
+    'physical_asic_qualified', 'public_cutover_authorized', 'activation_authorized',
+)
+NTIME_ADDITIONAL_FALSE_BOUNDARIES = (
+    'production_authority', 'private_spend_launch_authority',
+    'current_network_G8_qualified', 'cryptographic_security_approved',
+)
+
+
+def ntime_helper(root: Path):
+    """Authenticate the explicit v0.11.5 source/review before fresh execution."""
+    import importlib.util
+    path = root / NTIME_CHECKER
+    if not path.is_file() or path.is_symlink():
+        fail('ntime candidate checker missing or linked')
+    spec = importlib.util.spec_from_file_location('_ntime_candidate_predicate', path)
+    if spec is None or spec.loader is None:
+        fail('cannot import ntime candidate predicate')
+    helper = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(helper)
+    try:
+        config = helper.load_config(root)
+        helper.source_check(root, config)
+        helper.review_check(root, config)
+    except (OSError, ValueError, helper.CandidateError) as error:
+        fail('ntime candidate is not qualified: ' + str(error))
+    return helper
+
+
+def validate_ntime_receipt_boundary(receipt, manifest, manifest_digest):
+    """A software receipt must never acquire any historical launch authority."""
+    artifacts = manifest.get('artifacts') if isinstance(manifest, dict) else None
+    if (not isinstance(artifacts, list) or len(artifacts) != 4
+            or not all(isinstance(row, dict) for row in artifacts)
+            or tuple((row.get('package'), row.get('binary')) for row in artifacts) != PRIVATE_LAUNCH_ARTIFACTS):
+        fail('ntime final receipt requires exactly node/wallet/walletd/private-spend')
+    expected = {
+        'software_version': '0.11.5',
+        'status': 'PASS_SOFTWARE_CANDIDATE_ARTIFACTS_AND_AFFECTED_LIFECYCLE',
+        'final_artifact_scope': NTIME_SCOPE,
+        'artifact_manifest_sha256': manifest_digest,
+        'target_triple': manifest['target_triple'],
+        'actual_new_binary_proof_verification': True,
+        'affected_lifecycle_verified': True,
+        **{field: False for field in NTIME_FALSE_BOUNDARIES},
+    }
+    if (not isinstance(receipt, dict)
+            or not all(type(receipt.get(key)) is type(value) and receipt[key] == value
+                       for key, value in expected.items())):
+        fail('ntime final receipt execution, identity or authority boundary differs')
+    if any(field in receipt and receipt[field] is not False
+           for field in NTIME_ADDITIONAL_FALSE_BOUNDARIES):
+        fail('ntime final receipt adds a contradictory authority claim')
+    for field in ('candidate_binding_sha256', 'source_inventory_sha256',
+                  'artifact_manifest_sha256'):
+        if not isinstance(receipt.get(field), str) or not re.fullmatch('[0-9a-f]{64}', receipt[field]):
+            fail('ntime final receipt digest malformed: ' + field)
+    expected_artifacts = {row['binary']: row['sha256'] for row in artifacts}
+    if (set(expected_artifacts) != {name for _, name in PRIVATE_LAUNCH_ARTIFACTS}
+            or receipt.get('artifact_sha256') != expected_artifacts
+            or not all(isinstance(value, str) and re.fullmatch('[0-9a-f]{64}', value)
+                       for value in expected_artifacts.values())):
+        fail('ntime final receipt artifact set differs')
+
+
+def ntime_execution_receipt(raw: str) -> dict:
+    def pairs(items):
+        result = {}
+        for key, value in items:
+            if key in result:
+                fail('ntime execution returned duplicate receipt key: ' + key)
+            result[key] = value
+        return result
+    try:
+        receipt = json.loads(raw, object_pairs_hook=pairs,
+                             parse_constant=lambda value: fail('non-finite ntime receipt value'))
+    except (ValueError, TypeError) as error:
+        fail('ntime execution returned malformed receipt: ' + str(error))
+    if not isinstance(receipt, dict):
+        fail('ntime execution must return one receipt object')
+    return receipt
 
 def combined_helper(root: Path):
     """Explicit source-selected candidate path; never a production fallback."""
@@ -387,6 +472,15 @@ def private_launch_snapshot(root: Path, manifest_path: Path) -> tuple:
         binary_paths.append(binary)
     if len(set(binary_paths)) != 4:
         fail("private launch artifact paths must be distinct")
+    if (root / NTIME_CONFIG).is_file():
+        helper = ntime_helper(root)
+        config = helper.load_config(root)
+        authority = tuple((str(file), sha256_file(file)) for file in (
+            root / NTIME_CONFIG, root / NTIME_CHECKER,
+            root / 'scripts/check_release_crypto_profile.py',
+            root / 'scripts/security-audit.sh',
+            root / config['independent_review']['path']))
+        return manifest, hashlib.sha256(manifest_bytes).hexdigest(), tuple(binary_paths), authority
     if (root / COMBINED_CONFIG).is_file():
         helper = combined_helper(root)
         config = helper.load_config(root)
@@ -553,6 +647,13 @@ def validate_v011_sync_import_successor_receipt(receipt, manifest, manifest_dige
 
 
 def validate_private_launch_receipt(receipt: object, manifest: dict, manifest_digest: str, registry: dict) -> dict:
+    if isinstance(receipt, dict) and receipt.get('final_artifact_scope') == NTIME_SCOPE:
+        validate_ntime_receipt_boundary(receipt, manifest, manifest_digest)
+        helper = ntime_helper(SOURCE_ROOT)
+        try:
+            return helper.validate_final_receipt(receipt, manifest, manifest_digest, SOURCE_ROOT)
+        except (OSError, ValueError, helper.CandidateError) as error:
+            fail('ntime candidate final receipt rejected: ' + str(error))
     if isinstance(receipt, dict) and receipt.get('final_artifact_scope') == COMBINED_SCOPE:
         helper = combined_helper(SOURCE_ROOT)
         try:
@@ -618,7 +719,13 @@ def private_launch_profile(root: Path, manifest_path: Path) -> dict:
         validate_binary_profile_markers(binary, item["binary"])
         if run_profile(binary, item["binary"], allow_unapproved_profile=True) is not None:
             fail("private launch requires every legacy profile to refuse exactly")
-    if (root / COMBINED_CONFIG).is_file():
+    ntime_selected = (root / NTIME_CONFIG).is_file()
+    if ntime_selected:
+        ntime_helper(root)
+        command = [sys.executable, '-I', '-B', str(root / NTIME_CHECKER),
+                   '--require-authorized', '--artifact-manifest', manifest_path.relative_to(root).as_posix(),
+                   '--require-final-artifact']
+    elif (root / COMBINED_CONFIG).is_file():
         combined_helper(root)
         command = [sys.executable, '-I', '-B', str(root / 'scripts/check_combined_upgrade_candidate.py'),
                    '--require-authorized', '--artifact-manifest', manifest_path.relative_to(root).as_posix(),
@@ -636,17 +743,33 @@ def private_launch_profile(root: Path, manifest_path: Path) -> dict:
             command = [sys.executable, '-I', '-B', str(root / 'scripts/check_v0113_release_successor.py'),
                        '--require-authorized', '--artifact-manifest', manifest_path.relative_to(root).as_posix(),
                        '--require-final-artifact']
-    completed = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=44400 if (root / COMBINED_CONFIG).is_file() else (1300 if (root / "config/v011-release-successor.json").is_file() else 180))
+    completed = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=44400 if ntime_selected or (root / COMBINED_CONFIG).is_file() else (1300 if (root / "config/v011-release-successor.json").is_file() else 180))
     if completed.returncode != 0 or completed.stderr:
         fail("private launch source authorization failed: " + (completed.stderr.strip() or str(completed.returncode)))
     lines = completed.stdout.splitlines()
-    receipt = json.loads(completed.stdout)
-    if len(lines) != 1 and receipt.get("final_artifact_scope") not in ("version_and_exact_platform_shutdown_successor_public_proof_replay", "exact_current_source_current_binary_backend_and_h0", SYNC_IMPORT_SCOPE, V0113_SCOPE, COMBINED_SCOPE):
+    receipt = ntime_execution_receipt(completed.stdout) if ntime_selected else json.loads(completed.stdout)
+    if ntime_selected and receipt.get('final_artifact_scope') != NTIME_SCOPE:
+        fail('ntime execution returned another source scope; historical fallback is forbidden')
+    if len(lines) != 1 and receipt.get("final_artifact_scope") not in ("version_and_exact_platform_shutdown_successor_public_proof_replay", "exact_current_source_current_binary_backend_and_h0", SYNC_IMPORT_SCOPE, V0113_SCOPE, COMBINED_SCOPE, NTIME_SCOPE):
         fail("private launch source authorization must return one JSON receipt")
     registry = json.loads((root / "scripts/private_spend_launch_authorized_registry.json").read_text())
     identity = validate_private_launch_receipt(receipt, manifest, manifest_digest, registry)
     if private_launch_snapshot(root, manifest_path) != before:
         fail("private launch manifest, artifacts or authority changed during validation")
+    if receipt.get('final_artifact_scope') == NTIME_SCOPE:
+        return {'passed': True, 'mode': 'executed-ntime-rolling-software-candidate',
+                'authorization_scope': NTIME_SCOPE,
+                'software_version': '0.11.5',
+                'target_triple': manifest['target_triple'], 'production_authority': False,
+                'private_spend_launch_authority': False, 'current_network_G8_qualified': False,
+                'cryptographic_security_approved': False,
+                **{field: False for field in NTIME_FALSE_BOUNDARIES},
+                'identity': identity, 'artifact_manifest_sha256': manifest_digest,
+                'artifact_sha256': receipt['artifact_sha256'],
+                'actual_new_binary_proof_verification': True,
+                'affected_lifecycle_verified': True, 'fresh_ntime_lifecycle_verified': True,
+                'candidate_binding_sha256': receipt['candidate_binding_sha256'],
+                'source_inventory_sha256': receipt['source_inventory_sha256']}
     if receipt.get('final_artifact_scope') == COMBINED_SCOPE:
         return {'passed': True, 'mode': 'executed-combined-upgrade-software-candidate',
                 'target_triple': manifest['target_triple'], 'production_authority': False,

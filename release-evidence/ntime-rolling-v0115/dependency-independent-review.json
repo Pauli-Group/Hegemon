@@ -1,0 +1,17 @@
+{
+  "reviewer": "Codex fresh subagent /root/stratum_source/review_contract",
+  "base": "5c1d278af03c7bd0b0a61a8383bf4d8aede94e59",
+  "head": "cb3db0addc2d1bca3c8338fca172300fc0855ea3",
+  "finding": "No confirmed finding. Four exact exceptions retain strict tuple/scope/owner/<=31dayexpiry/deadline and source pins; mandatory actual normal/build graph resolution of fourtargets x three exact package/features fails closed and is bracketed by source-pin checks. Ordinary audit policy and separate checker strict audit remain required.",
+  "source_sha256": {
+    "scripts/check_release_dependency_reachability.py": "e08970b74923feb02dadb895116be3da07455aeb616a7da5403c17f2d674e331",
+    "scripts/test_check_release_dependency_reachability.py": "ebd022074b811832f7fc4ad06fd6e14bb9ccc61417176beab8a9ff41dbc229e8",
+    "scripts/dependency-audit-gate.sh": "c8a1ee09d1b47ff0fcc4eebc0c26743b4e7815f0d5cf52defa1be49dea616469",
+    "scripts/test_dependency_audit_gate.py": "f0a2c5e05aa74255cdec993a97273ac3883f8130785a4535df1e7fd57c7d0b29",
+    "config/dependency-audit-waivers.json": "17ec5d2a010595bdd93fe280d9addeed8abfb28c57d1dd3a80c5e536eef2d7d3",
+    "scripts/build_release_artifacts.sh": "91f8c8a1225f3ee9fc88b5755737236cc7b19032caa474873e7a6767bf15d025",
+    "Cargo.lock": "1c243bf3858f4ee22fa4441c7a2ee6d49b16d264147b0f3a2de845e760821719"
+  },
+  "reviewer_execution": "No tests, graphs, audits or builds executed by reviewer;27 negative controls,12 real graphs and cached audit pass are coordinator evidence.",
+  "limitations": "No upstream remediation, advisory completeness or final artifact/production authorization claim."
+}

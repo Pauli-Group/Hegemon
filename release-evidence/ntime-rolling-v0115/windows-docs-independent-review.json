@@ -1,0 +1,71 @@
+{
+  "schema": "hegemon-v0115-windows-document-delta-review-v1",
+  "decision": "PASS_BOUNDED_DOC_DELTA_REVIEW",
+  "base_commit": "1bcfa01a6afd1bda2df7bc6e150c00d1c6b409b8",
+  "observed_at": "2026-11-14T18:39:14.538771+00:00",
+  "scope": [
+    ".agent/V0115_NTIME_ROLLING_EXECPLAN.md",
+    "docs/releases/V0.11.5_PREPARATION.md"
+  ],
+  "file_sha256": {
+    ".agent/V0115_NTIME_ROLLING_EXECPLAN.md": "c34666e6916f4702a64107df815f4f8f4a8120a8cb66c82af4634e58ecced814",
+    "docs/releases/V0.11.5_PREPARATION.md": "9f79b93870fcaab60cd33f7c6e7a55e3026516c2bf89f738d9b6e41d0d6fcbed"
+  },
+  "diff_sha256": "290833a2de477d817f4427264085c2b5eb9675fd04c96ca4914da99884c5d44e",
+  "findings": [],
+  "checks": [
+    {
+      "criterion": "Initial frozen CI attribution",
+      "result": "PASS",
+      "evidence": "ExecPlan:28 attributes the 22/22 push, PR expected skips and three focused passes only to initial 1bcfa01. Prior retained raw run/job report confirms Monorepo facts; no pass is attributed to the edited Windows harness."
+    },
+    {
+      "criterion": "Windows failure and cause uncertainty",
+      "result": "PASS",
+      "evidence": "ExecPlan:29,44 and preparation:106-111 retain cannot assign owned job, explicitly leave precise Win32 cause unknown and reject the failed attempt as release qualification. Static historical runner:172-173 raises without capturing its Win32 error; run_command starts child before constructing WindowsJob."
+    },
+    {
+      "criterion": "Additive scope and immutable proof inputs",
+      "result": "PASS",
+      "evidence": "ExecPlan:63,91 and preparation:96-101 preserve historical proof predicates/fixtures while selecting a separately attributed process executor. Independently compared all 41 fixture-manifest source inputs, Cargo.lock and listed historical executors/generators/packagers/fixture manifests byte-for-byte with 1bcfa01; no changes."
+    },
+    {
+      "criterion": "Creation-time containment contract",
+      "result": "PASS_INTENDED_CONTRACT_ONLY",
+      "evidence": "ExecPlan:63 and preparation:98-101 require a suspended child already inside its kill-on-close job before child code executes, membership checked before primary-thread resume and exact stdio inheritance. This expresses the creation-time JobList contract; current unfinished owner source names PROC_THREAD_ATTRIBUTE_JOB_LIST/CREATE_SUSPENDED/KILL_ON_JOB_CLOSE. No native Windows execution was performed by this review."
+    },
+    {
+      "criterion": "Mandatory typed attribution",
+      "result": "PASS_INTENDED_CONTRACT_ONLY",
+      "evidence": "ExecPlan:63 requires new harness attribution/source snapshots and preparation:100-104 requires containment/cleanup evidence for every positive and negative verification. Current wrapper validation uses exact key sets and type(value) checks for per-run ownership and execution_harness. Implementation remains separately reviewed and unqualified by this document review."
+    },
+    {
+      "criterion": "Native Windows and complete rerun gates",
+      "result": "PASS",
+      "evidence": "ExecPlan:30-33 leaves executor completion, independent review, refreeze and every required CI lane unfinished. Preparation:102-111 describes mandatory native rapid-exit/descendant/timeout CI controls and requires a fresh source freeze/complete preparation; it does not claim those new Windows tests have passed."
+    },
+    {
+      "criterion": "Unpublished and unqualified state",
+      "result": "PASS",
+      "evidence": "Preparation:15-32,74,106-111,119-129 and ExecPlan:10,30-33,68,93 preserve pending final artifacts, no tag/Release, no publication/activation/production grant, and failed-attempt nonacceptance."
+    }
+  ],
+  "unchanged_41_proof_input_count": 41,
+  "changed_proof_inputs": [],
+  "historical_paths_verified_unchanged": [
+    "scripts/check_v011_current_binary_proofs.py",
+    "scripts/prepare_premainnet_release.py",
+    "scripts/package_v011_release.py",
+    "scripts/package_v0114_release.py",
+    "release-evidence/v0.11-current-proof-fixture/manifest.json",
+    "release-evidence/v0.11-current-proof-fixture/generation-receipt.json",
+    "Cargo.lock"
+  ],
+  "limitations": [
+    "Document-delta review only; not an implementation audit or Windows execution qualification.",
+    "New helper and wrapper were still under implementation/review. Contract prose is interpreted as required final behavior, not a claim of completed native Windows execution.",
+    "Failed Windows job literal, Linux platform completion and unknown precise Win32 cause were supplied by the coordinator; no network or fresh log retrieval was performed. Static historical error/source order was independently checked.",
+    "Existing earlier nTime source/native test results remain historical to their stated source; edited source must be refrozen and all required CI/artifact gates rerun.",
+    "No builds, tests, source edits, workflow dispatch, external messages, publication, tag, activation or deployment."
+  ]
+}

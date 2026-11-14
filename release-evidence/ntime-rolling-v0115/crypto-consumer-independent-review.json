@@ -1,0 +1,81 @@
+{
+  "baseline_commit": "ad77c8d564944972b6ae5e7cab26fcf500972aff",
+  "boundaries": {
+    "activation_authorized": false,
+    "cryptographic_security_approved": false,
+    "current_network_G8_qualified": false,
+    "deployment_verified": false,
+    "mainnet_authorized": false,
+    "physical_asic_qualified": false,
+    "private_spend_launch_authority": false,
+    "production_authority": false,
+    "production_authorized": false,
+    "public_cutover_authorized": false
+  },
+  "decision": "ACCEPT_SCOPED_CONSUMER_DELTA",
+  "findings": [],
+  "limitations": [
+    "This is a bounded independent source review, not external cryptographic review or release authorization.",
+    "Consumer mutation tests use synthetic receipts and mocked executors; actual final-artifact proof, H0 and fresh nTime lifecycle qualification remains required.",
+    "No production artifact, deployment, activation, mainnet, public cutover or physical ASIC qualification is established by this review."
+  ],
+  "recorded_at_utc": "2026-11-14T16:21:45.602399+00:00",
+  "recorded_by": "/root/ntime_adapter",
+  "reported_validation": [
+    {
+      "name": "new v0.11.5 consumer mutation tests",
+      "passed": 13
+    },
+    {
+      "name": "historical v0.11 consumer tests",
+      "passed": 12
+    },
+    {
+      "name": "historical security-audit scope tests",
+      "passed": 20
+    },
+    {
+      "name": "private launch adapter synthetic controls",
+      "passed": 29
+    },
+    {
+      "name": "canonical/contradiction profile controls",
+      "status": "PASS"
+    },
+    {
+      "name": "shell syntax and diff whitespace checks",
+      "status": "PASS"
+    }
+  ],
+  "review_kind": "independent_model_review",
+  "reviewed_properties": [
+    "Explicit v0.11.5 source configuration precedes combined and historical consumers.",
+    "Consumer executes the source-owned checker with final-artifact flags rather than accepting a caller receipt.",
+    "Source, authority, manifest and artifact snapshots are checked before and after execution.",
+    "Exactly four ordered node, wallet, walletd and private-spend package/binary rows are required before mapping projection.",
+    "Receipt scope, software version, artifact identity, boolean types and all authority boundaries are checked.",
+    "The nTime software candidate has a distinct audit mode and preserves historical consumer modes.",
+    "Latest ordered artifact-row defense and its missing, duplicate, reordered and wrong-package mutations were independently reviewed."
+  ],
+  "reviewer": "/root/ntime_adapter/crypto_consumer_review",
+  "schema": "hegemon.v0115.independent-consumer-delta-review.v1",
+  "scope": "v0.11.5 crypto-profile consumer routing, receipt rejection boundaries, audit classification and mutation controls",
+  "source_snapshot": [
+    {
+      "bytes": 50759,
+      "path": "scripts/check_release_crypto_profile.py",
+      "sha256": "beb5955b5091990656aa188f8b672bb4516e6e4bd7b0d9c69c11c567a81250c7"
+    },
+    {
+      "bytes": 30051,
+      "path": "scripts/security-audit.sh",
+      "sha256": "1c7dacc37a1f41bcffba2207c0f671433d69e0f033199c2850000ef72eef3b52"
+    },
+    {
+      "bytes": 17983,
+      "path": "scripts/test_check_v0115_crypto_consumer.py",
+      "sha256": "5e3389026cf4f9e87f7d8569ea92ab40107cc2922536b685a2ccf1c5c874e62a"
+    }
+  ],
+  "workspace_head_at_snapshot": "cb3db0addc2d1bca3c8338fca172300fc0855ea3"
+}

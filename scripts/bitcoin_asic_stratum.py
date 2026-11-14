@@ -48,6 +48,8 @@ EXTRANONCE_BYTES = 28
 EXTRANONCE1_BYTES = 20
 EXTRANONCE2_BYTES = 8
 VERSION_ROLLING_MASK = 0x1FFFFFE0
+MAX_NTIME = (1 << 32) - 1
+MAX_FUTURE_SKEW_SECONDS = 90
 ShareKey = tuple[str, bytes, str, str, str]
 
 
@@ -114,9 +116,36 @@ class Job:
     coinbase_suffix: bytes
     expires_at: float
     expires_monotonic: float
+    ntime_rolling: bool
+    ntime_activation_height: int | None
+    min_ntime: int
+    max_ntime: int
+    server_time: int
+    max_future_skew_seconds: int
+    time_observed_monotonic: float
 
     def expired(self) -> bool:
         return self.expires_monotonic <= time.monotonic()
+
+    def current_max_ntime(self) -> int:
+        if not self.ntime_rolling:
+            return self.max_ntime
+        # The node's clock snapshot, advanced by local elapsed time, is a
+        # best-effort precheck. Local wall-clock changes cannot widen it. The
+        # node checks its current clock again when admitting a solution.
+        elapsed = max(0, int(time.monotonic() - self.time_observed_monotonic))
+        return min(MAX_NTIME, self.max_ntime + elapsed)
+
+    def validate_ntime(self, ntime: str) -> None:
+        if not self.ntime_rolling:
+            if ntime != self.ntime:
+                raise ValueError("ntime rolling is disabled")
+            return
+        value = int(ntime, 16)
+        if value < self.min_ntime:
+            raise ValueError("ntime is below parent minimum")
+        if value > self.current_max_ntime():
+            raise ValueError("ntime exceeds node clock bound")
 
     @classmethod
     def from_rpc(cls, obj: Any, now: float) -> "Job | None":
@@ -150,6 +179,30 @@ class Job:
         if version_mask & ~VERSION_ROLLING_MASK:
             raise ValueError("unsupported version rolling bits")
         ntime = fixed_hex(obj.get("ntime"), 8, "ntime")
+        ntime_rolling = obj.get("ntime_rolling", False)
+        if type(ntime_rolling) is not bool:
+            raise ValueError("ntime_rolling must be boolean")
+        activation = obj.get("ntime_activation_height")
+        if activation is not None and (type(activation) is not int or activation < 0):
+            raise ValueError("invalid ntime_activation_height")
+        if "ntime_rolling" in obj:
+            min_ntime = int(fixed_hex(obj.get("min_ntime"), 8, "min_ntime"), 16)
+            max_ntime = int(fixed_hex(obj.get("max_ntime"), 8, "max_ntime"), 16)
+            server_time = int(fixed_hex(obj.get("server_time"), 8, "server_time"), 16)
+            skew = obj.get("max_future_skew_seconds")
+            if type(skew) is not int or skew != MAX_FUTURE_SKEW_SECONDS:
+                raise ValueError("unsupported max_future_skew_seconds")
+            if min_ntime > max_ntime or int(ntime, 16) < min_ntime:
+                raise ValueError("invalid ntime range")
+            if ntime_rolling:
+                if max_ntime != min(MAX_NTIME, server_time + skew):
+                    raise ValueError("ntime maximum does not match node clock bound")
+            elif min_ntime != int(ntime, 16) or max_ntime != min_ntime:
+                raise ValueError("fixed ntime range must equal job ntime")
+        else:
+            # Older nodes do not advertise mutable-time authority.
+            min_ntime = max_ntime = server_time = int(ntime, 16)
+            skew = MAX_FUTURE_SKEW_SECONDS
         nbits = fixed_hex(obj.get("nbits"), 8, "nbits")
         parent_hex = obj.get("parent_hash")
         if not isinstance(parent_hex, str):
@@ -166,9 +219,11 @@ class Job:
                 or not math.isfinite(expires) or expires <= 0):
             raise ValueError("invalid work expiry")
         # The RPC expiry is a TTL in seconds, capped locally to bound stale work.
+        observed = time.monotonic()
         job = cls(jid, parent, version, version_mask, ntime, nbits, target, prefix_bytes,
                   suffix_bytes, now + min(float(expires), 120.0),
-                  time.monotonic() + min(float(expires), 120.0))
+                  observed + min(float(expires), 120.0), ntime_rolling, activation,
+                  min_ntime, max_ntime, server_time, skew, observed)
         if job.header(bytes(28), "00000000").hex() != reference_header:
             raise ValueError("header80 does not match independent Bitcoin header")
         return job
@@ -178,16 +233,18 @@ class Job:
                 self.coinbase_prefix.hex(), self.coinbase_suffix.hex(), [],
                 self.version, self.nbits, self.ntime, clean_jobs]
 
-    def header(self, extranonce: bytes, nonce: str, mining_version: str | None = None) -> bytes:
+    def header(self, extranonce: bytes, nonce: str, mining_version: str | None = None,
+               ntime: str | None = None) -> bytes:
         if len(extranonce) != 28:
             raise ValueError("extranonce must be 28 bytes")
         merkle_root = sha256d(self.coinbase_prefix + extranonce + self.coinbase_suffix)
         version = self.version if mining_version is None else fixed_hex(mining_version, 8, "mining_version")
         if (int(version, 16) ^ int(self.version, 16)) & ~self.version_rolling_mask:
             raise ValueError("version changes bits outside job mask")
+        submitted_time = self.ntime if ntime is None else fixed_hex(ntime, 8, "ntime")
         header = (int(version, 16).to_bytes(4, "little")
                   + bytes.fromhex(self.parent_hash)[::-1] + merkle_root
-                  + int(self.ntime, 16).to_bytes(4, "little")
+                  + int(submitted_time, 16).to_bytes(4, "little")
                   + int(self.nbits, 16).to_bytes(4, "little")
                   + int(nonce, 16).to_bytes(4, "little"))
         assert len(header) == 80
@@ -398,13 +455,9 @@ class Pool:
                     client.job_ids.clear()
             existing = self.jobs.get(new.job_id)
             if existing is not None and existing != new:
-                # Expiry changes as the node's remaining TTL counts down. All
-                # other bytes must stay immutable for a given job identifier.
-                if (existing.parent_hash, existing.version, existing.version_rolling_mask, existing.ntime,
-                    existing.nbits, existing.network_target, existing.coinbase_prefix,
-                    existing.coinbase_suffix) != (
-                    new.parent_hash, new.version, new.version_rolling_mask, new.ntime, new.nbits,
-                    new.network_target, new.coinbase_prefix, new.coinbase_suffix):
+                # Time bounds and expiry are fresh node snapshots. The
+                # committed work and its time-rolling authority are immutable.
+                if self._work_bytes(existing) != self._work_bytes(new):
                     raise ValueError("job_id reused for different work")
             if existing is not None:
                 new = replace(new, expires_at=min(existing.expires_at, new.expires_at),
@@ -414,6 +467,12 @@ class Pool:
             for jid, job in tuple(self.jobs.items()):
                 if job.expired():
                     del self.jobs[jid]
+                elif job.ntime_rolling and new.ntime_rolling:
+                    # A node clock rollback applies to retained older work as
+                    # well as the current template, without renewing its TTL.
+                    self.jobs[jid] = replace(job, max_ntime=new.max_ntime,
+                                             server_time=new.server_time,
+                                             time_observed_monotonic=new.time_observed_monotonic)
             self.jobs[new.job_id] = new
             while len(self.jobs) > MAX_JOBS:
                 self.jobs.pop(next(iter(self.jobs)))
@@ -443,7 +502,9 @@ class Pool:
     @staticmethod
     def _work_bytes(job: Job) -> tuple[Any, ...]:
         return (job.parent_hash, job.version, job.version_rolling_mask, job.ntime, job.nbits,
-                job.network_target, job.coinbase_prefix, job.coinbase_suffix)
+                job.network_target, job.coinbase_prefix, job.coinbase_suffix,
+                job.ntime_rolling, job.ntime_activation_height, job.min_ntime,
+                job.max_future_skew_seconds)
 
     def _submit_network_solution(self, key: ShareKey,
                                  job: Job, token: object, epoch: int,
@@ -582,8 +643,10 @@ class Pool:
                 if (job is None or job_id != job.job_id or job_id not in client.job_ids
                         or job.expired()):
                     return reply(False, "stale job")
-                if ntime != job.ntime:
-                    return reply(False, "ntime rolling is disabled")
+                try:
+                    job.validate_ntime(ntime)
+                except ValueError as exc:
+                    return reply(False, str(exc))
                 if bits & ~client.version_rolling_mask:
                     return reply(False, "version bits exceed negotiated mask")
                 mask = client.version_rolling_mask if client.version_rolling else 0
@@ -591,7 +654,7 @@ class Pool:
                 extranonce = client.extranonce1 + bytes.fromhex(ex2)
                 key = (job_id, extranonce, ntime, nonce, mining_version)
                 try:
-                    header = job.header(extranonce, nonce, mining_version)
+                    header = job.header(extranonce, nonce, mining_version, ntime)
                 except ValueError as exc:
                     return reply(False, str(exc))
                 value = int.from_bytes(sha256d(header), "little")

@@ -1,0 +1,70 @@
+{
+  "schema": "hegemon.v0115.formal-renewal-validation.v1",
+  "recorded_at_utc": "2026-11-14T16:26:16Z",
+  "governance_focused_tests": {
+    "passed": 14,
+    "failed": 0,
+    "ignored": 0,
+    "exit_code": 0
+  },
+  "exact_governance_inventory": "14 names matched",
+  "cli_inventory_negative_controls": "passed",
+  "claims": "passed",
+  "blueprint": {
+    "edges": 521,
+    "falsification_cases": 686,
+    "full_claim_order_constraint_theorem_refs": 1560,
+    "full_claim_order_constraints": 77,
+    "implementation_bindings": 271,
+    "implementation_dominance_constraints": 128,
+    "implementation_dominance_edges": 301,
+    "implementation_order_constraints": 153,
+    "implementation_order_edges": 355,
+    "implementation_result_obligations": 207,
+    "implementation_theorem_indexed_dominance_constraints": 128,
+    "implementation_theorem_indexed_dominance_edges": 301,
+    "implementation_theorem_indexed_order_constraints": 153,
+    "implementation_theorem_indexed_order_edges": 355,
+    "nodes": 122,
+    "passed": true,
+    "pending_external_review_nodes": 122,
+    "production_nodes": 107
+  },
+  "formal_inventory": "passed",
+  "system_model_gates": "passed",
+  "bridge_vectors": "2 passed",
+  "all_recorded_governance_fingerprints_match": true,
+  "receipts": {
+    "config/formal-security-claims.json": {
+      "policy_inputs_blake3": "17f4f6ad824329e00f9f91d041b2f2a6ba0576c34aac22f13521f67dfed68f2d",
+      "executed_at": "2026-11-14T16:16:26Z",
+      "sha256": "1226cb54f5a5c5e90b2ff2815117525b43e7de167cdd4dc3acf2824dd8a5e363"
+    },
+    "config/formal-security-blueprint.json": {
+      "policy_inputs_blake3": "98ecf3a9e9319fa2da6593defe1b3b20447047f86e3f7944e7c50cf93cf7ec20",
+      "executed_at": "2026-11-14T16:16:26Z",
+      "sha256": "25a39817c728dfb10534e92447024444560f8d330c00f5e1d4d70faed20e29d0"
+    },
+    "config/active-goal-progress.json": {
+      "policy_inputs_blake3": "b9e79da2ae7daf8df5ea1b84292e4349037282814ebc30b595cc464b94a48fe1",
+      "executed_at": "2026-11-14T16:16:26Z",
+      "sha256": "e32243f8b12f1f09c51384a0c4380d6d8d668fb02e1d86660708a1b8cb05101e"
+    }
+  },
+  "immutable_scoped_review_receipt": {
+    "path": "/private/tmp/hegemon-v0115-governance-review-20261114/final-scoped-review-receipt.json",
+    "sha256": "952002962f8f3cf5b686c77c3335e0532ca235eb094ad6d1ad09c979de3b73f7"
+  },
+  "optimized_checker_build": {
+    "status": "stopped as unnecessary after complete debug checker passed",
+    "exit_code": 130,
+    "not_validation_evidence": true
+  },
+  "not_claimed": [
+    "Local full formal-policy wrapper rerun after renewal",
+    "Active-goal Lean/proposition/axiom check",
+    "Exact-head full CI",
+    "Actual final four-platform artifact qualification"
+  ],
+  "authority_and_review_status_fields": "unchanged;122 external reviews remain pending"
+}

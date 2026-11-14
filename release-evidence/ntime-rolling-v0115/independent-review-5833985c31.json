@@ -1,0 +1,118 @@
+{
+  "activation_authorized": false,
+  "baseline_commit": "ad77c8d564944972b6ae5e7cab26fcf500972aff",
+  "candidate_binding_sha256": "9bf3a3f4b190fada6ed414ddceb25c633e322462be4bc0b78b0031940047dce6",
+  "component_reviews": [
+    {
+      "bytes": 9176,
+      "path": "release-evidence/ntime-rolling-v0115/checker-runner-independent-review.json",
+      "sha256": "4f8c6604703ca580cd780ddda89f0048676cd58f4ca4d268608b75a36a4c8387"
+    },
+    {
+      "bytes": 2080,
+      "path": "release-evidence/ntime-rolling-v0115/consensus-mining-independent-review.json",
+      "sha256": "acc080c2ac3599f5db580fb9d4c05d84a5578c590a3403dfddf5ddbe0fd871e2"
+    },
+    {
+      "bytes": 3376,
+      "path": "release-evidence/ntime-rolling-v0115/crypto-consumer-independent-review.json",
+      "sha256": "7a692d96b51df7fccc00cd5cc5ebffbf724d12900524c54f984ef4ecb1c97721"
+    },
+    {
+      "bytes": 1627,
+      "path": "release-evidence/ntime-rolling-v0115/dependency-independent-review.json",
+      "sha256": "123d9b5864df490a1c79ee46085b6fbbc197b3e91f1c4f22d91028a6ee3dbb99"
+    },
+    {
+      "bytes": 2190,
+      "path": "release-evidence/ntime-rolling-v0115/docs-policy-internal-review.json",
+      "sha256": "5796b707d85887e4de79b50445ae98c757a29c58dde500a07601e2f48d6fe01c"
+    },
+    {
+      "bytes": 10063,
+      "path": "release-evidence/ntime-rolling-v0115/final-scoped-review.json",
+      "sha256": "952002962f8f3cf5b686c77c3335e0532ca235eb094ad6d1ad09c979de3b73f7"
+    },
+    {
+      "bytes": 822,
+      "path": "release-evidence/ntime-rolling-v0115/governance-execution.json",
+      "sha256": "fa2686c49f38f0465487fc6c13c7abde108e6399f9f97a445a95b87d1e3f7e86"
+    },
+    {
+      "bytes": 2812,
+      "path": "release-evidence/ntime-rolling-v0115/governance-validation-summary.json",
+      "sha256": "65c2a75e64a7cecc00140eabc4550af798474e63ddaf9b83481a7e128f7ac604"
+    },
+    {
+      "bytes": 3106,
+      "path": "release-evidence/ntime-rolling-v0115/packaging-preparation-independent-review.json",
+      "sha256": "30105523c6244532c06c39c37e93cc026edf3f6ff07eec919ee55bb493ae2658"
+    },
+    {
+      "bytes": 2745,
+      "path": "release-evidence/ntime-rolling-v0115/sync-rpc-ci-independent-review.json",
+      "sha256": "2319d0460d45776260526e84adccac5709f3b97a0de6e055ec3bd089666f7d54"
+    },
+    {
+      "bytes": 11389,
+      "path": "release-evidence/ntime-rolling-v0115/windows-process-independent-review.json",
+      "sha256": "d81d5ea7e4afc20d1cd3bc13fd663ebeab4b836bb5ca216e39bfd5d719763c2c"
+    },
+    {
+      "bytes": 4975,
+      "path": "release-evidence/ntime-rolling-v0115/windows-docs-independent-review.json",
+      "sha256": "7bb527dfcc6084ff6c85d153decdb81299085a5bc6e9aee3e48f43a3e0a49484"
+    },
+    {
+      "bytes": 4515,
+      "path": "release-evidence/ntime-rolling-v0115/windows-formal-binding-impact.json",
+      "sha256": "543fc4ad0d658502fd9d58d3aa7f6da32408a2170261502e8c03cfd8280ccfea"
+    },
+    {
+      "bytes": 6553,
+      "path": "release-evidence/ntime-rolling-v0115/windows-cleanup-independent-review.json",
+      "sha256": "9e0e940f673a0c6764451c9ebd55b81bd645d184e19650769c9dfe896345a91f"
+    },
+    {
+      "bytes": 10084,
+      "path": "release-evidence/ntime-rolling-v0115/windows-descendant-wait-independent-review.json",
+      "sha256": "c9850aea0cc4844912790d796745ba5bca0d4690b8e58eabde07d82ea44d5ec0"
+    }
+  ],
+  "decision": "ACCEPT_SOFTWARE_CANDIDATE_SCOPE",
+  "deployment_verified": false,
+  "inherited_review_base": "5c1d278af03c7bd0b0a61a8383bf4d8aede94e59",
+  "limitations": [
+    "Independent internal model/source review and finite local execution only; all 122 external reviews remain pending.",
+    "Actual four-platform current-binary proof/H0 and affected lifecycle qualification remain mandatory CI gates; no prior receipt is relabeled as their execution.",
+    "Historical funded HTLC/recovery/live-CPU observations retain original source and attribution; no fresh funded new-profile or physical ASIC/MRR success is claimed.",
+    "No production, mainnet, publication, activation, public cutover or deployment authority is granted.",
+    "The 1bcfa01 source/review records remain historical for changed paths; the new Windows/process/workflow/document delta supersedes those path rows. All other frozen source rows are byte-identical to that reviewed candidate.",
+    "Native Windows ownership tests and all four final-binary proof/H0/lifecycle checks must execute in fresh CI; local portable controls and static review do not establish Windows qualification.",
+    "The failed 1bcfa01 Windows preparation attempt is retained and grants no artifact acceptance. Formal policy files and their declared input fingerprints remain byte-identical; no unrelated review or execution record was renewed.",
+    "The 2a40080796 native Windows ownership controls failed and grant no qualification. This incremental review covers only the cleanup wait and its fail-closed diagnostic controls; all other source rows match the prior reviewed candidate. Fresh Windows and four-platform CI remain mandatory.",
+    "The a0bbc32c40 native Windows ownership controls failed and grant no qualification. This incremental review covers only the owned-process cleanup and its fail-closed controls; all other source rows match the prior reviewed candidate. Fresh Windows and four-platform CI remain mandatory."
+  ],
+  "mainnet_authorized": false,
+  "physical_asic_qualified": false,
+  "prior_candidate_review": {
+    "bytes": 5981,
+    "path": "release-evidence/ntime-rolling-v0115/independent-review-a0bbc32c40.json",
+    "sha256": "965796bf90453ba159c74301f194948aec2cbe80e548cd7037951b30aefb71a8"
+  },
+  "production_authorized": false,
+  "public_cutover_authorized": false,
+  "qualification_commands_sha256": "8de8ed193d36e3f2d12bf9a7e6287665f18758d5e3e262eaf9167b5c54c8db36",
+  "review_kind": "independent_model_review",
+  "reviewed_at_utc": "2026-11-14T19:13:33.483009+00:00",
+  "reviewer": "Codex independent reviewers /root/prior_asic_context and /root/ntime_native; original component reviews retained for unchanged source, scoped Windows/process/workflow/document review aggregated by coordinator",
+  "schema": "hegemon.ntime-rolling.independent-review.v1",
+  "source_inventory_sha256": "3ccfa78295b8106b194700664807c180981b4d485584524cb7047d7ab921c12b",
+  "supplemental_review_base": "a0bbc32c4013bebf453044198bbe686744530203",
+  "supplemental_reviewed_paths": [
+    "scripts/check_v0115_current_binary_proofs.py",
+    "scripts/test_check_v0115_current_binary_proofs.py",
+    "scripts/test_v0115_process_ownership.py",
+    "scripts/v0115_process_ownership.py"
+  ]
+}

@@ -1,0 +1,111 @@
+{
+  "schema": "hegemon.v0115.windows-cleanup.independent-source-review.v1",
+  "reviewer": "/root/prior_asic_context",
+  "reviewed_at_utc": "2026-11-14T19:04:11.504908+00:00",
+  "base_commit": "2a40080796e23c9e3327ec13108a31ceb9e1464e",
+  "worktree": "/private/tmp/hegemon-v0115-ntime-20261113",
+  "status": "PASS_NARROW_SOURCE_REVIEW_NATIVE_CAUSE_UNCONFIRMED",
+  "scope": "Only the Windows abort root-wait and failure-diagnostic delta in the two exact source paths below, relative to the failed 2a400807 candidate.",
+  "reviewed_source": [
+    {
+      "path": "scripts/v0115_process_ownership.py",
+      "bytes": 25598,
+      "sha256": "2cab7708f4f1f1e55b5d377a3d142b93ef43b559082239565d7a7bdf100aed79"
+    },
+    {
+      "path": "scripts/test_v0115_process_ownership.py",
+      "bytes": 28087,
+      "sha256": "8519b1885096492386e479df5371ba9ec32e4c22a7d76f0f895bcaa6a6758572"
+    }
+  ],
+  "unresolved_findings": [],
+  "confirmed_properties": [
+    "A successful TerminateJobObject request suppresses a redundant TerminateProcess request against the same root.",
+    "For every retained root process HANDLE, the bounded WaitForSingleObject path runs in a separate try even when job or fallback per-process termination requests raise.",
+    "Root exit-code retrieval remains after the signaled-handle wait. Root/thread handle closing remains after the bounded wait attempt; job drainage and final job close remain unchanged.",
+    "Request/wait/close/drain errors are accumulated and remain fatal cleanup failures. Successful job termination is not treated as proof of completion.",
+    "Two new portable fault controls check no redundant per-root termination after job request success, and guaranteed retained-root wait after job and fallback request errors, with original diagnostics retained.",
+    "Native expected-failure controls now reject appended cleanup errors instead of letting an expected timeout/descendant regex hide them.",
+    "Best-effort typed Win32 PID, wait status, exit code, image and creation/exit-time diagnostics collect pre/post cleanup identity evidence. Temporary diagnostic HANDLEs close before termination requests.",
+    "Immediate strict PID liveness assertions, timeout limits, native Windows requirements, creation-time containment, proof predicates and authority boundaries are preserved; no polling/skip/acceptance relaxation was added."
+  ],
+  "observed_ci_evidence": {
+    "log_path": "/private/tmp/hegemon-v0115-ci-2a40080796/process-ownership-windows-132551558489-failure.log",
+    "log_sha256": "8d31c6666eef0a88bf83149b66f9b43fc118dc1b7294602c0738960aaec29b8a",
+    "job_id": 132551558489,
+    "facts": "Failed 22-control Windows run had four immediate PID liveness assertion failures after expected timeout/descendant errors. The traceback did not expose appended cleanup diagnostics.",
+    "causal_conclusion": "The skipped-wait exception path is a concrete source cleanup gap. This review does not establish that it caused any or all four native failures; the descendant case may still fail and requires new native evidence."
+  },
+  "validation": {
+    "independently_performed": [
+      "Read exact two-file diff against source base.",
+      "Read original CI failure assertions and author diagnosis.",
+      "Inspect full affected abort branch and new diagnostic/portable control definitions.",
+      "Independently SHA256 exact final source/test bytes.",
+      "Verify asynchronous termination and retained-handle wait semantics against Microsoft docs."
+    ],
+    "reviewer_executed_tests": [],
+    "reviewer_native_windows_qualified": false,
+    "author_reported": [
+      {
+        "command": "python3 -I -B scripts/test_v0115_process_ownership.py",
+        "result": "PASS",
+        "reported_tests": 24,
+        "executed": 15,
+        "explicit_windows_skips": 9,
+        "host_scope": "macOS portable/policy controls only"
+      },
+      {
+        "command": "python3 -I -B scripts/test_check_v0115_crypto_consumer.py",
+        "result": "PASS",
+        "reported_tests": 13
+      },
+      {
+        "command": "git diff --check -- scripts/v0115_process_ownership.py scripts/test_v0115_process_ownership.py",
+        "result": "PASS"
+      }
+    ],
+    "coordinator_reported_wrapper_controls": {
+      "passed": 8,
+      "independently_executed_by_this_reviewer": false
+    },
+    "author_report": {
+      "path": "/private/tmp/hegemon-v0115-windows-native-failure2/diagnosis-and-fix.json",
+      "bytes": 4118,
+      "sha256": "209d51c797a4e8f8e3db4935cd188686ea3daba24b92e8dfa3231bb3e614a746"
+    }
+  },
+  "primary_sources": [
+    {
+      "url": "https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-terminateprocess",
+      "supports": "External termination is asynchronous; completion requires waiting on the process HANDLE. Repeated termination of an exited process may fail with access denied."
+    },
+    {
+      "url": "https://learn.microsoft.com/en-us/windows/win32/api/jobapi2/nf-jobapi2-terminatejobobject",
+      "supports": "Job termination applies to associated processes and nested children, with behavior as individual process termination."
+    },
+    {
+      "url": "https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/ns-processthreadsapi-process_information",
+      "supports": "PID identity may be reused after process handles close and the object is freed; retain-handle waiting and creation identity diagnostics serve different roles."
+    }
+  ],
+  "limitations": [
+    "Review is source-only and restricted to this two-file cleanup delta.",
+    "No native Windows execution occurred on this reviewer; 15 portable passes with 9 explicit native skips are author-reported local evidence.",
+    "Actual native failure cause is not confirmed. This source fix does not establish descendant reaping or PID reuse as the explanation for the observed failures.",
+    "Fresh candidate/refreeze, native Windows controls and complete required CI remain necessary; this review grants no artifact qualification.",
+    "No Cargo build, proof execution, node launch, commit, push, publication, activation or deployment performed by reviewer."
+  ],
+  "boundaries": {
+    "source_review_only": true,
+    "native_windows_qualified": false,
+    "all_ci_passing_verified": false,
+    "physical_asic_qualified": false,
+    "production_authorized": false,
+    "mainnet_authorized": false,
+    "activation_authorized": false,
+    "public_cutover_authorized": false,
+    "deployment_verified": false,
+    "publication_authorized": false
+  }
+}

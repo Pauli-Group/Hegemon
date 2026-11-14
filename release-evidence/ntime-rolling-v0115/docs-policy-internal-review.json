@@ -1,0 +1,29 @@
+{
+  "reviewer": "Codex stratum_source internal delta review",
+  "reviewed_at": "2026-11-14T15:56:31Z",
+  "base": "5c1d278af03c7bd0b0a61a8383bf4d8aede94e59",
+  "head": "cb3db0addc2d1bca3c8338fca172300fc0855ea3",
+  "scope": [
+    "DESIGN.md",
+    "METHODS.md",
+    "protocol/versioning/src/lib.rs",
+    ".github/workflows/ntime-rolling.yml",
+    "scripts/check-core.sh",
+    "scripts/v011_join.py"
+  ],
+  "source_sha256": {
+    "DESIGN.md": "cdfa24ce67ca0f16e97bba26438f5df9bb08440647b887f95c497f7a70572c96",
+    "METHODS.md": "465776a670287e1683834ae5a42805c308965abb0a975474512adf4912c6f97b",
+    "protocol/versioning/src/lib.rs": "cb0a0bc8be5a40cad42fafe2f2c862725effd7b0ae5887402f832b2cad2c2df6",
+    ".github/workflows/ntime-rolling.yml": "a41f2e13b1face8d341cab3ee6495ca63d5de40080bce0d3cdc5bc3394b4d507",
+    "scripts/check-core.sh": "f58da20f38617ade40edaed95026adc46aa65545aa88b8c7c505e6b64ea2693e",
+    "scripts/v011_join.py": "8208fa3949b6114ecf9520aa90563ab460aef20b14d6ac72444cc6efabafd46d"
+  },
+  "finding": "No confirmed correctness or authority-boundary defect in the reviewed documentation, new workflow, metadata label and launcher delta. Documentation distinguishes preactivation fixed time from additive activation and dynamic node-clock bound; maps proof time to final header while preserving prior hashes, ASERT anchor and treasury cadence. Rehearsal ASERT command includes its own feature. Launcher adds only exact v0.11.5 release/version pair and retains readiness/network/seed/opt-in checks. Existing release PQ scanner, CI release policy, production authorization policy, theorem/proof sources and formal-core logic are unchanged in this reviewed delta.",
+  "limitations": [
+    "Current source only; root is preparing additional sync/RPC/audit changes that require fresh independent review before final binding.",
+    "No builds or tests executed in this read-only review phase. Finite tests and exact-head full policy/Lean CI must be recorded separately.",
+    "Not an independent external security audit, release qualification, production authorization or deployment."
+  ],
+  "status": "review complete for recorded files; final composed-source review pending"
+}

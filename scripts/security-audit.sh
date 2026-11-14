@@ -156,6 +156,7 @@ BINARY_PROFILE_AUTHORIZED=false
 BINARY_PRIVATE_LAUNCH_AUTHORIZED=false
 BINARY_CURRENT_BACKEND_ATTESTED=false
 BINARY_COMBINED_SOFTWARE_CANDIDATE_ATTESTED=false
+BINARY_NTIME_SOFTWARE_CANDIDATE_ATTESTED=false
 
 if [ -n "${HEGEMON_LEAN_RELEASE_PQ_BINARY_POLICY_VECTORS:-}" ]; then
     echo "=== Step 0: Lean Release PQ Binary Policy Vector Check ==="
@@ -399,6 +400,35 @@ elif (p.get("production_authority") is False and p.get("private_spend_launch_aut
       and p.get("mode") == "executed-private-spend-launch"
       and p.get("authorization_scope") == "source-owned-current86-private-spend-launch"):
     print("private")
+elif (p.get("mode") == "executed-ntime-rolling-software-candidate"
+      and p.get("authorization_scope") == "exact-v0115-premainnet-source-proof-h0-and-ntime-lifecycle"
+      and p.get("software_version") == "0.11.5"
+      and all(p.get(field) is False for field in (
+          "production_authority", "private_spend_launch_authority", "current_network_G8_qualified",
+          "production_authorized", "deployment_verified", "public_cutover_authorized",
+          "mainnet_authorized", "activation_authorized", "physical_asic_qualified",
+          "cryptographic_security_approved"))
+      and all(p.get(field) is True for field in (
+          "actual_new_binary_proof_verification", "affected_lifecycle_verified", "fresh_ntime_lifecycle_verified"))
+      and all(isinstance(p.get(field), str) and re.fullmatch("[0-9a-f]{64}", p[field])
+              for field in ("candidate_binding_sha256", "source_inventory_sha256", "artifact_manifest_sha256"))
+      and isinstance(p.get("artifact_sha256"), dict)
+      and set(p["artifact_sha256"]) == {"hegemon-node", "wallet", "walletd", "private-spend"}
+      and all(isinstance(value, str) and re.fullmatch("[0-9a-f]{64}", value)
+              for value in p["artifact_sha256"].values())
+      and isinstance(p.get("target_triple"), str)
+      and re.fullmatch("[A-Za-z0-9_]+(?:-[A-Za-z0-9_]+){2,3}", p["target_triple"])
+      and isinstance(p.get("identity"), dict)
+      and p["identity"].get("schema") == "hegemon.private-spend.native-launch-identity.v2"
+      and p["identity"].get("kind") == "PrivateSpend"
+      and p["identity"].get("network_profile") == "pre-mainnet"
+      and p["identity"].get("relation_id") == "Hegemon.PrivateSpend.BoundedPolicy.CompFF01.Packed.v4"
+      and type(p["identity"].get("public_words")) is int and p["identity"]["public_words"] == 86
+      and all(isinstance(p["identity"].get(field), str)
+              and re.fullmatch("[0-9a-f]{%d}" % length, p["identity"][field])
+              for field, length in (("chain_id", 64), ("genesis_hash", 64),
+                                    ("manifest_digest", 128), ("relation_digest", 128)))):
+    print("ntime-software-candidate")
 elif (p.get("mode") == "executed-combined-upgrade-software-candidate"
       and all(p.get(field) is False for field in (
           "production_authority", "private_spend_launch_authority", "current_network_G8_qualified",
@@ -447,6 +477,8 @@ else:
             BINARY_CURRENT_BACKEND_ATTESTED=true
         elif [ "$PROFILE_SCOPE" = combined-software-candidate ]; then
             BINARY_COMBINED_SOFTWARE_CANDIDATE_ATTESTED=true
+        elif [ "$PROFILE_SCOPE" = ntime-software-candidate ]; then
+            BINARY_NTIME_SOFTWARE_CANDIDATE_ATTESTED=true
         fi
     else
         echo -e "${RED}❌ RELEASE ARTIFACT ATTESTATION FAILED${NC}"
@@ -529,6 +561,8 @@ elif [ "$BINARY_CURRENT_BACKEND_ATTESTED" = true ]; then
     echo -e "${GREEN}✅ Exact current-source binary backend proofs and H0 attested; fresh-network G8 and launch authority remain false${NC}"
 elif [ "$BINARY_COMBINED_SOFTWARE_CANDIDATE_ATTESTED" = true ]; then
     echo -e "${GREEN}✅ Combined software candidate proofs, H0 and affected lifecycle attested; production, launch, activation, mainnet, public cutover and physical ASIC authority remain false${NC}"
+elif [ "$BINARY_NTIME_SOFTWARE_CANDIDATE_ATTESTED" = true ]; then
+    echo -e "${GREEN}✅ v0.11.5 software candidate proofs, H0 and fresh nTime lifecycle attested; production, launch, deployment, activation, mainnet, public cutover and physical ASIC authority remain false${NC}"
 elif [ "$BINARY_PROFILE_AUTHORIZED" = true ]; then
     echo -e "${GREEN}✅ Compiled V4/Gamma SmallWood profile attested${NC}"
 elif [ "$BINARY_PROFILE_CHECKED" = true ] && [ "$ALLOW_UNAPPROVED_PROFILE" = true ]; then

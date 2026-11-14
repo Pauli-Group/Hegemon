@@ -1,0 +1,30 @@
+{
+  "reviewer": "Codex stratum_source fresh internal delta review",
+  "base": "5c1d278af03c7bd0b0a61a8383bf4d8aede94e59",
+  "head": "cb3db0addc2d1bca3c8338fca172300fc0855ea3",
+  "reviewed_at": "2026-11-14T16:07:57Z",
+  "finding": "No confirmed correctness finding in reviewed sync ownership and RPC fixture delta. Sync tests now complete an exact target while queue ownership is active, admit a higher unverified target only after release, and check that old completion preserves the newer tuple/request. Existing production service guard retains queue completion ownership across cleared node flag. RPC notification is cfg(test)-only, bounded, per-node and installed before requests; the test still asserts retained capacity after disconnect and recovery after worker completion. Documentation preserves proof, liveness and production-authority boundaries. CI additions are additive and exact branch-scoped; final consumer/generator files must be rechecked at freeze.",
+  "source_sha256": {
+    "node/src/native/node_impl.rs": "e1b1b9c55030183db987eed8819f5f39c16c9407a9da3528ec56f806e9fc7ab2",
+    "node/src/native/service.rs": "54dabf7f40c09e6476de2ce1f0a599feefacc2d187cff5fbf9c738aa05b798e8",
+    "node/src/native/sync_liveness_tests.rs": "8d45daeb558f8181898f4f9e864bd13fef41d24ab42c70bf206a69164141f684",
+    "node/src/native/mining_recovery_qualification_tests.rs": "84291278ddf727f620aec11cdfc6e8cc585bbad49fe4fc286450ffcab164c4bb",
+    "node/src/native/sync_queue_qualification_tests.rs": "2ffcf272f979e9cadd173ce3378bfecfa7e258640990fca999bf4872b07ca867",
+    "node/src/native/rpc.rs": "31ea13f42ed9d50e914f1142b952ae5280a33b0bd6c253a4f94b29b2e35f8d75",
+    "node/src/native/public_rpc_http_tests.rs": "4dc890f3150469eb74e32e34efa098938e25e20fa5f0288a07fe40a4ad7636c4",
+    "DESIGN.md": "99527e751350ab9e1b21f38f82273c5a883f4ea97435fc294555472a33ff4299",
+    "METHODS.md": "54f7274d4f8769d314293f09383da450b57796ca0ea307314d6e3b6f7e055aed",
+    ".github/workflows/ci.yml": "fe8011768098ddb0630fd7e07926dbb715a7ff1935804441734ab5e6b93c058d",
+    "scripts/check-core.sh": "9b0456c07a28b7014ec0c43f7d293d11c866ba567f32abd885b84f69f7a352ca"
+  },
+  "reported_execution_from_coordinator": {
+    "minimal_native": "1017 passed;12 existing ignored",
+    "default_native": "1017 passed;12 existing ignored"
+  },
+  "reviewer_execution": "No tests or builds executed by this reviewer in read-only phase.",
+  "pending": [
+    "Final global source freeze and consumer/preparation generator review",
+    "Actual final focused governance execution, config bindings and exact-head full formal/Lean CI"
+  ],
+  "authority": "All existing external-review statuses and production/activation/hardware authority unchanged; no publication or deployment."
+}

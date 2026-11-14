@@ -1,0 +1,23 @@
+{
+  "boundaries": {
+    "activation_authorized": false,
+    "deployment_authorized": false,
+    "mainnet_authorized": false,
+    "physical_asic_qualified": false,
+    "publication_authorized": false
+  },
+  "build_index_tree": null,
+  "build_source_head": null,
+  "cargo_lock_sha256": "1c243bf3858f4ee22fa4441c7a2ee6d49b16d264147b0f3a2de845e760821719",
+  "ci_artifacts": null,
+  "ci_preparation": null,
+  "network_release": "v0.11",
+  "platform_manifests_sha256": {},
+  "qualification_receipts_sha256": {},
+  "release_source_head": null,
+  "schema": "hegemon.v0115.release-artifacts.v1",
+  "software_release": "v0.11.5",
+  "software_version": "0.11.5",
+  "source_tree_sha256": null,
+  "status": "pending"
+}

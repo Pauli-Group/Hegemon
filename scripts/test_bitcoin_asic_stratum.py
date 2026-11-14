@@ -39,6 +39,19 @@ def work(job_id="job-1", ntime="69000000", nbits="207fffff",
     }
 
 
+def rolling_work(job_id="job-1", *, server_time=None, min_ntime=None, **kwargs):
+    value = work(job_id, **kwargs)
+    suggested = int(value["ntime"], 16)
+    server_time = suggested if server_time is None else server_time
+    value.update({
+        "ntime_rolling": True, "ntime_activation_height": 28_860,
+        "min_ntime": f"{suggested - 120 if min_ntime is None else min_ntime:08x}",
+        "max_ntime": f"{min(bridge.MAX_NTIME, server_time + 90):08x}",
+        "server_time": f"{server_time:08x}", "max_future_skew_seconds": 90,
+    })
+    return value
+
+
 class MockRPC:
     def __init__(self):
         self.work = work()
@@ -887,6 +900,216 @@ class MiningProfileValidationTest(unittest.TestCase):
                 bridge.Pool(MockRPC(), "miner", "secret", "1", extranonce2_bytes=ex2)
         with self.assertRaisesRegex(ValueError, "namespace"):
             bridge.Pool(MockRPC(), "miner", "secret", "1", max_clients=257, extranonce2_bytes=27)
+
+
+class TimeRollingTCPTest(unittest.TestCase):
+    send = StratumTCPTest.send
+    read = StratumTCPTest.read
+    authorize = StratumTCPTest.authorize
+    subscribe = StratumTCPTest.subscribe
+    tearDown = StratumTCPTest.tearDown
+
+    def setUp(self):
+        self.rpc = MockRPC()
+        self.rpc.work = rolling_work(version_mask="1fffffe0")
+        self.pool = bridge.Pool(self.rpc, "miner.1", "secret", "0.000000000001", extranonce2_bytes=4)
+        self.pool.poll_once()
+        self.server = bridge._Server(("127.0.0.1", 0), self.pool)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.sock = socket.create_connection(self.server.server_address, timeout=2)
+        self.sock.settimeout(2)
+        self.reader = self.sock.makefile("rb")
+
+    def test_independent_solutions_before_and_after_suggested_time(self):
+        ex1 = self.subscribe()
+        notify = self.authorize()
+        ex2 = "01020304"
+        merkle = hash2(bytes.fromhex(notify[2] + ex1 + ex2 + notify[3]))
+        parent = bytes.fromhex(self.rpc.work["parent_hash"][2:])[::-1]
+        for rid, offset in ((4, -60), (5, 70)):
+            ntime = f"{int(notify[7], 16) + offset:08x}"
+            base = (int(notify[5], 16).to_bytes(4, "little") + parent + merkle
+                    + int(ntime, 16).to_bytes(4, "little")
+                    + int(notify[6], 16).to_bytes(4, "little"))
+            for candidate in range(100):
+                header = base + candidate.to_bytes(4, "little")
+                if int.from_bytes(hash2(header), "little") <= self.pool.current.network_target:
+                    break
+            else:
+                self.fail("expected easy independent rolled-time solution")
+            nonce = f"{candidate:08x}"
+            self.assertEqual(header, self.pool.current.header(bytes.fromhex(ex1 + ex2), nonce, ntime=ntime))
+            self.assertNotEqual(header, self.pool.current.header(bytes.fromhex(ex1 + ex2), nonce))
+            self.send(rid, "mining.submit", ["miner.1", notify[0], ex2, ntime, nonce])
+            self.assertTrue(self.read()["result"])
+            self.assertEqual(self.rpc.submissions[-1]["ntime"], ntime)
+            self.assertEqual(self.rpc.submissions[-1]["nonce"], nonce)
+        self.assertEqual(len(self.rpc.submissions), 2)
+
+    def test_time_coordinates_have_independent_duplicate_identity(self):
+        self.subscribe()
+        notify = self.authorize()
+        with patch.object(bridge, "sha256d", return_value=bytes(32)):
+            for rid, offset in ((4, -60), (5, 70)):
+                self.send(rid, "mining.submit", ["miner.1", notify[0], "00" * 4,
+                                                f"{int(notify[7], 16) + offset:08x}", "00000000"])
+                self.assertTrue(self.read()["result"])
+        self.assertEqual(len(self.rpc.submissions), 2)
+
+    def test_time_and_negotiated_version_roll_in_same_independent_solution(self):
+        self.send(1, "mining.configure", [["version-rolling"], {
+            "version-rolling.mask": "00000020", "version-rolling.min-bit-count": 1}])
+        self.assertEqual(self.read()["result"]["version-rolling.mask"], "00000020")
+        ex1 = self.subscribe()
+        notify = self.authorize()
+        ntime = f"{int(notify[7], 16) - 60:08x}"
+        ex2 = "01020304"
+        merkle = hash2(bytes.fromhex(notify[2] + ex1 + ex2 + notify[3]))
+        parent = bytes.fromhex(self.rpc.work["parent_hash"][2:])[::-1]
+        base = (int("20000020", 16).to_bytes(4, "little") + parent + merkle
+                + int(ntime, 16).to_bytes(4, "little")
+                + int(notify[6], 16).to_bytes(4, "little"))
+        for candidate in range(100):
+            header = base + candidate.to_bytes(4, "little")
+            if int.from_bytes(hash2(header), "little") <= self.pool.current.network_target:
+                break
+        else:
+            self.fail("expected easy independent time+version solution")
+        nonce = f"{candidate:08x}"
+        self.assertEqual(header, self.pool.current.header(bytes.fromhex(ex1 + ex2), nonce,
+                                                         mining_version="20000020", ntime=ntime))
+        self.send(4, "mining.submit", ["miner.1", notify[0], ex2, ntime, nonce, "00000020"])
+        self.assertTrue(self.read()["result"])
+        self.assertEqual(self.rpc.submissions[-1]["ntime"], ntime)
+        self.assertEqual(self.rpc.submissions[-1]["mining_version"], "20000020")
+
+
+class TimeRollingClockTest(unittest.TestCase):
+    def setUp(self):
+        self.rpc = MockRPC()
+        self.rpc.work = rolling_work()
+        self.pool = bridge.Pool(self.rpc, "miner.1", "secret", "0.000000000001", extranonce2_bytes=4)
+        with patch.object(bridge.time, "monotonic", return_value=1_000):
+            self.pool.poll_once()
+        self.original = self.pool.current
+        self.client = bridge.Client(None, authorized=True, extranonce1=bytes(24), job_ids={"job-1"})
+
+    def submit(self, ntime, *, monotonic=1_000, wallclock=0):
+        job = self.pool.jobs["job-1"]
+        for candidate in range(100):
+            nonce = f"{candidate:08x}"
+            if int.from_bytes(hash2(job.header(bytes(28), nonce, ntime=f"{ntime:08x}")), "little") <= job.network_target:
+                break
+        else:
+            self.fail("expected easy rolled-time solution")
+        with patch.object(bridge.time, "monotonic", return_value=monotonic), \
+                patch.object(bridge.time, "time", return_value=wallclock):
+            return self.pool.handle(self.client, {"id": 1, "method": "mining.submit", "params": [
+                "miner.1", "job-1", "00" * 4, f"{ntime:08x}", nonce]})
+
+    def test_inclusive_parent_and_node_clock_bounds(self):
+        low, high = self.original.min_ntime, self.original.max_ntime
+        self.assertEqual(self.submit(low - 1)["error"][1], "ntime is below parent minimum")
+        self.assertEqual(self.submit(high + 1)["error"][1], "ntime exceeds node clock bound")
+        self.assertTrue(self.submit(low)["result"])
+        self.assertTrue(self.submit(high)["result"])
+
+    def test_clock_bound_advances_from_node_snapshot_with_monotonic_elapsed(self):
+        high = self.original.max_ntime
+        # Wall-clock rollback and a wildly future local wall clock have no
+        # effect on the node-derived boundary.
+        self.assertEqual(self.submit(high + 21, monotonic=1_020, wallclock=1e12)["error"][1],
+                         "ntime exceeds node clock bound")
+        self.assertTrue(self.submit(high + 20, monotonic=1_020, wallclock=-1e12)["result"])
+
+    def test_same_id_bounds_refresh_honors_node_rollback_without_renewing_ttl(self):
+        suggested = int(self.original.ntime, 16)
+        self.rpc.work = rolling_work(server_time=suggested - 100)
+        self.rpc.work["expires_in"] = 120
+        with patch.object(bridge.time, "monotonic", return_value=1_010), \
+                patch.object(bridge.time, "time", return_value=-1e12):
+            self.pool.poll_once()
+        current = self.pool.current
+        self.assertEqual(current.max_ntime, suggested - 10)
+        self.assertGreater(int(current.ntime, 16), current.max_ntime)
+        self.assertEqual(current.expires_monotonic, self.original.expires_monotonic)
+        self.assertEqual(self.submit(suggested, monotonic=1_010)["error"][1],
+                         "ntime exceeds node clock bound")
+        self.assertTrue(self.submit(suggested - 10, monotonic=1_010)["result"])
+        self.assertEqual(self.submit(suggested - 9, monotonic=1_061, wallclock=-1e12)["error"][1],
+                         "stale job")
+
+    def test_new_current_job_refreshes_retained_job_clock_without_renewing_expiry(self):
+        suggested = int(self.original.ntime, 16)
+        self.rpc.work = rolling_work("job-2", server_time=suggested - 100, prehash_start=33)
+        with patch.object(bridge.time, "monotonic", return_value=1_010):
+            self.pool.poll_once()
+        retained = self.pool.jobs["job-1"]
+        self.assertEqual(retained.max_ntime, suggested - 10)
+        self.assertEqual(retained.time_observed_monotonic, 1_010)
+        self.assertEqual(retained.expires_monotonic, self.original.expires_monotonic)
+        self.assertEqual(self.submit(suggested, monotonic=1_010)["error"][1],
+                         "ntime exceeds node clock bound")
+
+    def test_clock_refresh_does_not_change_busy_retry_identity(self):
+        suggested = int(self.original.ntime, 16)
+        self.rpc.solution_outcomes = [bridge.NodeRPCError(-32602, bridge.BUSY_SUBMISSION_MESSAGE)]
+        refreshed = rolling_work(server_time=suggested + 10)
+        with patch.object(bridge.time, "sleep", side_effect=lambda delay: setattr(self.rpc, "work", refreshed)):
+            result = self.submit(suggested - 60)
+        self.assertTrue(result["result"])
+        self.assertEqual(self.rpc.submissions[0], self.rpc.submissions[1])
+        self.assertEqual(self.rpc.submissions[0]["ntime"], f"{suggested - 60:08x}")
+        self.assertEqual(self.pool.current.expires_monotonic, self.original.expires_monotonic)
+
+
+class TimeRollingMetadataTest(unittest.TestCase):
+    def test_legacy_rpc_has_fixed_time_authority(self):
+        job = bridge.Job.from_rpc(work(), 0)
+        self.assertFalse(job.ntime_rolling)
+        self.assertEqual(job.min_ntime, int(job.ntime, 16))
+        self.assertEqual(job.max_ntime, int(job.ntime, 16))
+        with self.assertRaisesRegex(ValueError, "ntime rolling is disabled"):
+            job.validate_ntime(f"{int(job.ntime, 16) + 1:08x}")
+
+    def test_pre_activation_advertisement_stays_fixed(self):
+        value = rolling_work()
+        value.update(ntime_rolling=False, min_ntime=value["ntime"], max_ntime=value["ntime"])
+        job = bridge.Job.from_rpc(value, 0)
+        self.assertFalse(job.ntime_rolling)
+        job.validate_ntime(job.ntime)
+        with self.assertRaisesRegex(ValueError, "ntime rolling is disabled"):
+            job.validate_ntime(f"{int(job.ntime, 16) - 1:08x}")
+
+    def test_malformed_or_inconsistent_time_authority_rejects(self):
+        malformed = [
+            {"ntime_rolling": 1}, {"min_ntime": None}, {"max_ntime": "bad"},
+            {"server_time": "100000000"}, {"max_future_skew_seconds": True},
+            {"max_future_skew_seconds": 91}, {"ntime_activation_height": True},
+            {"ntime_activation_height": -1}, {"min_ntime": "ffffffff"},
+            {"max_ntime": "6900005b"},
+            {"ntime_rolling": False},
+        ]
+        for changes in malformed:
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                bridge.Job.from_rpc(dict(rolling_work(), **changes), 0)
+
+    def test_same_id_cannot_change_time_rolling_authority(self):
+        for changes in ({"min_ntime": "68ffff89"}, {"ntime_activation_height": 28_920}):
+            rpc = MockRPC()
+            rpc.work = rolling_work()
+            pool = bridge.Pool(rpc, "miner", "secret", "1")
+            pool.poll_once()
+            rpc.work = dict(rpc.work, **changes)
+            with self.subTest(changes=changes), self.assertRaisesRegex(ValueError, "different work"):
+                pool.poll_once()
+
+    def test_time_upper_bound_saturates_at_u32(self):
+        value = rolling_work(ntime="ffffffc0", server_time=bridge.MAX_NTIME - 10)
+        job = bridge.Job.from_rpc(value, 0)
+        with patch.object(bridge.time, "monotonic", return_value=job.time_observed_monotonic + 30):
+            self.assertEqual(job.current_max_ntime(), bridge.MAX_NTIME)
 
 
 if __name__ == "__main__":
