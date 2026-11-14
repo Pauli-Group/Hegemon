@@ -23,6 +23,7 @@ import time
 SCHEMA = 'hegemon.v0115.process-ownership.v1'
 OUTPUT_CAP = 65536
 CLEANUP_SECONDS = 5
+MAX_JOB_MEMBERS = 4096
 JOB_LIST = 0x0002000D
 HANDLE_LIST = 0x00020002
 KILL_ON_JOB_CLOSE = 0x00002000
@@ -129,6 +130,7 @@ class WindowsKernel:
             ('ResumeThread', [HANDLE], DWORD),
             ('WaitForSingleObject', [HANDLE, DWORD], DWORD),
             ('GetExitCodeProcess', [HANDLE, c.POINTER(DWORD)], BOOL),
+            ('OpenProcess', [DWORD, BOOL, DWORD], HANDLE),
             ('TerminateJobObject', [HANDLE, c.c_uint32], BOOL),
             ('TerminateProcess', [HANDLE, c.c_uint32], BOOL),
             ('CloseHandle', [HANDLE], BOOL),
@@ -254,6 +256,34 @@ class WindowsKernel:
         return {'total_processes': int(value.TotalProcesses), 'active_processes': int(value.ActiveProcesses),
                 'terminated_processes': int(value.TotalTerminatedProcesses)}
 
+    def retain_members(self, job):
+        """Retain a bounded exact job snapshot before requesting termination."""
+        class ProcessIds(c.Structure):
+            _fields_ = [('assigned', DWORD), ('listed', DWORD), ('pids', SIZE_T * MAX_JOB_MEMBERS)]
+        value = ProcessIds(); retained = []
+        try:
+            self.checked('QueryInformationJobObject', job, 3, c.byref(value), c.sizeof(value), None)
+            require(value.assigned == value.listed and value.listed <= MAX_JOB_MEMBERS,
+                    'incomplete or oversized Windows job member snapshot')
+            pids = [int(value.pids[index]) for index in range(value.listed)]
+            require(len(pids) == len(set(pids)) and all(0 < pid <= 0xFFFFFFFF for pid in pids),
+                    'invalid Windows job member identifiers')
+            for pid in pids:
+                handle = self.checked('OpenProcess', 0x00101000, False, pid)  # SYNCHRONIZE | QUERY_LIMITED_INFORMATION.
+                retained.append((pid, handle))
+                require(self.in_job(handle, job), 'retained process is not in the exact owned job')
+            return retained
+        except BaseException as error:
+            failures = []
+            for _pid, handle in reversed(retained):
+                try:
+                    self.close(handle)
+                except BaseException as cleanup:
+                    failures.append(str(cleanup))
+            if failures:
+                raise OwnershipError(str(error) + '; member handle cleanup: ' + '; '.join(failures)) from error
+            raise
+
     def terminate_job(self, job):
         self.checked('TerminateJobObject', job, 1)
 
@@ -323,8 +353,22 @@ class WindowsProcess:
 
     def abort(self):
         failures = []
+        retained = []
+        total_before = None
+        deadline = time.monotonic() + CLEANUP_SECONDS
         job_termination_requested = False
         if self.job is not None:
+            try:
+                total_before = self.accounting()['total_processes']
+                with deferred_interruption():
+                    retained = self.kernel.retain_members(self.job)
+                known_pids = {pid for pid, _handle in retained}
+                if self.pid is not None:
+                    known_pids.add(self.pid)
+                require(len(known_pids) == total_before,
+                        'Windows job has historical members without retained identities')
+            except BaseException as error:
+                failures.append(str(error))
             try:
                 self.kernel.terminate_job(self.job)
                 job_termination_requested = True
@@ -341,8 +385,20 @@ class WindowsProcess:
                 # A successful job termination already requests root termination.
                 # A redundant TerminateProcess may race that asynchronous exit.
                 # Always wait on the retained identity, even if a request failed.
-                require(self.kernel.wait(self.process, CLEANUP_SECONDS * 1000), 'owned Windows root did not terminate')
+                remaining = max(0, int((deadline - time.monotonic()) * 1000))
+                require(self.kernel.wait(self.process, remaining), 'owned Windows root did not terminate')
                 self.code = self.kernel.exit_code(self.process)
+            except BaseException as error:
+                failures.append(str(error))
+        for pid, handle in retained:
+            try:
+                remaining = max(0, int((deadline - time.monotonic()) * 1000))
+                require(self.kernel.wait(handle, remaining), 'owned Windows member did not terminate: ' + str(pid))
+            except BaseException as error:
+                failures.append(str(error))
+        for _pid, handle in reversed(retained):
+            try:
+                self.kernel.close(handle)
             except BaseException as error:
                 failures.append(str(error))
         for name in ('thread', 'process'):
@@ -354,10 +410,11 @@ class WindowsProcess:
                     failures.append(str(error))
         if self.job is not None:
             try:
-                limit = time.monotonic() + CLEANUP_SECONDS
                 while self.accounting()['active_processes']:
-                    require(time.monotonic() < limit, 'Windows owned job did not drain after termination')
+                    require(time.monotonic() < deadline, 'Windows owned job did not drain after termination')
                     time.sleep(0.01)
+                require(total_before is not None and self.last_accounting['total_processes'] == total_before,
+                        'Windows job membership changed during termination capture')
             except BaseException as error:
                 failures.append(str(error))
             try:

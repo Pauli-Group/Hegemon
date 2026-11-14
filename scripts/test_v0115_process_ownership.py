@@ -52,6 +52,7 @@ class FakeKernel:
     def accounting(self, job):
         self.step('accounting')
         return {'total_processes': 1, 'active_processes': int(self.process_open), 'terminated_processes': int(self.killed)}
+    def retain_members(self, job): self.step('retain_members'); return []
     def terminate_job(self, job): self.step('terminate_job'); self.killed = True
     def terminate_process(self, process): self.step('terminate_process')
 
@@ -93,27 +94,61 @@ class PortableControls(unittest.TestCase):
     def test_successful_job_termination_waits_without_redundant_process_termination(self):
         class Kernel(FakeKernel):
             def wait(self, process, ms):
-                self.events.append('wait_' + str(ms)); return ms != 0
+                self.events.append('wait_bounded' if ms else 'wait_0'); return ms != 0
             def terminate_process(self, process):
                 raise AssertionError('successful job termination must not kill root again')
         kernel = Kernel(); process = p.WindowsProcess(*self.invocation(), kernel=kernel)
         process.abort()
-        self.assertLess(kernel.events.index('wait_' + str(p.CLEANUP_SECONDS * 1000)), kernel.events.index('close_20'))
+        self.assertLess(kernel.events.index('wait_bounded'), kernel.events.index('close_20'))
         self.assertEqual(sorted(kernel.closed), [10, 20, 30])
     def test_failed_termination_requests_still_wait_retained_root_and_preserve_errors(self):
         class Kernel(FakeKernel):
             def terminate_job(self, job):
                 self.events.append('terminate_job'); raise p.OwnershipError('TerminateJobObject failed; Win32 GetLastError=5')
             def wait(self, process, ms):
-                self.events.append('wait_' + str(ms)); return ms != 0
+                self.events.append('wait_bounded' if ms else 'wait_0'); return ms != 0
             def terminate_process(self, process):
                 self.events.append('terminate_process'); raise p.OwnershipError('TerminateProcess failed; Win32 GetLastError=5')
         kernel = Kernel(); process = p.WindowsProcess(*self.invocation(), kernel=kernel)
         with self.assertRaisesRegex(p.OwnershipError, 'TerminateJobObject.*TerminateProcess'):
             process.abort()
-        self.assertLess(kernel.events.index('terminate_process'), kernel.events.index('wait_' + str(p.CLEANUP_SECONDS * 1000)))
-        self.assertLess(kernel.events.index('wait_' + str(p.CLEANUP_SECONDS * 1000)), kernel.events.index('close_20'))
+        self.assertLess(kernel.events.index('terminate_process'), kernel.events.index('wait_bounded'))
+        self.assertLess(kernel.events.index('wait_bounded'), kernel.events.index('close_20'))
         self.assertEqual(sorted(kernel.closed), [10, 20, 30])
+    def test_job_zero_does_not_skip_retained_descendant_wait(self):
+        class Kernel(FakeKernel):
+            def retain_members(self, job): self.step('retain_members'); return [(51, 61)]
+            def accounting(self, job):
+                self.step('accounting'); return {'total_processes': 2, 'active_processes': 0, 'terminated_processes': 0}
+            def wait(self, process, ms):
+                self.events.append('wait_' + str(process)); self.asserted_ms = ms; return ms > 0
+        kernel = Kernel(); process = p.WindowsProcess(*self.invocation(), kernel=kernel)
+        process.abort()
+        self.assertLess(kernel.events.index('terminate_job'), kernel.events.index('wait_61'))
+        self.assertLess(kernel.events.index('wait_61'), kernel.events.index('close_61'))
+        self.assertLess(kernel.events.index('close_61'), len(kernel.events) - 1 - kernel.events[::-1].index('accounting'))
+        self.assertGreater(kernel.asserted_ms, 0); self.assertLessEqual(kernel.asserted_ms, p.CLEANUP_SECONDS * 1000)
+    def test_unaccounted_history_and_newborn_members_fail_closed_after_termination(self):
+        class Kernel(FakeKernel):
+            def __init__(self, newborn): super().__init__(); self.newborn = newborn; self.queries = 0
+            def accounting(self, job):
+                self.queries += 1
+                return {'total_processes': 1 + int(not self.newborn or self.queries > 1), 'active_processes': 0, 'terminated_processes': 0}
+        for newborn, message in [(False, 'historical members'), (True, 'membership changed')]:
+            kernel = Kernel(newborn); process = p.WindowsProcess(*self.invocation(), kernel=kernel)
+            with self.subTest(newborn=newborn), self.assertRaisesRegex(p.OwnershipError, message):
+                process.abort()
+            self.assertTrue(kernel.killed); self.assertEqual(sorted(kernel.closed), [10, 20, 30])
+    def test_signal_during_member_adoption_retains_handles_for_cleanup(self):
+        class Kernel(FakeKernel):
+            def retain_members(self, job):
+                signal.raise_signal(signal.SIGTERM); return [(51, 61)]
+            def accounting(self, job):
+                return {'total_processes': 2, 'active_processes': int(self.process_open), 'terminated_processes': 0}
+        kernel = Kernel(); process = p.WindowsProcess(*self.invocation(), kernel=kernel)
+        with self.assertRaisesRegex(p.OwnershipError, 'interrupted during process adoption'):
+            process.abort()
+        self.assertTrue(kernel.killed); self.assertEqual(sorted(kernel.closed), [10, 20, 30, 61])
     def test_reject_nuls_environment_collision_and_relative_program(self):
         valid = ([sys.executable, '', 'space argument', 'café'], Path.cwd(), {'A': 'b'})
         p.validate_invocation(*valid)
@@ -212,6 +247,35 @@ class NativeApiPolicyControls(unittest.TestCase):
             owned.poll(); owned.finish(time.monotonic() + 1); owned.close()
         self.assertEqual(sorted(dll.closed), [10, 100, 101, 102, 201, 202])
         self.assertEqual(len(dll.closed), len(set(dll.closed)))
+    def test_exact_member_snapshot_and_failed_membership_close_retained_handles(self):
+        class Dll(FakeDll):
+            def __init__(self, member): super().__init__(); self.member = member
+            def QueryInformationJobObject(self, job, kind, value, size, returned):
+                assert kind == 3
+                value._obj.assigned = value._obj.listed = 2
+                value._obj.pids[0], value._obj.pids[1] = 203, 204
+                return 1
+            def OpenProcess(self, access, inherit, pid):
+                assert access == 0x00101000 and inherit is False
+                self.events.append('open_' + str(pid)); return pid + 1000
+            def IsProcessInJob(self, process, job, member):
+                assert job == 10
+                member._obj.value = int(self.member or process != 1204); return 1
+        dll = Dll(True); kernel = self.kernel(dll)
+        self.assertEqual(kernel.retain_members(10), [(203, 1203), (204, 1204)])
+        kernel.close(1203); kernel.close(1204)
+        dll = Dll(False); kernel = self.kernel(dll)
+        with self.assertRaisesRegex(p.OwnershipError, 'exact owned job'):
+            kernel.retain_members(10)
+        self.assertEqual(sorted(dll.closed), [1203, 1204])
+    def test_oversized_member_snapshot_fails_before_opening_processes(self):
+        class Dll(FakeDll):
+            def QueryInformationJobObject(self, job, kind, value, size, returned):
+                value._obj.assigned = p.MAX_JOB_MEMBERS + 1; value._obj.listed = p.MAX_JOB_MEMBERS
+                return 1
+            def OpenProcess(self, *args): raise AssertionError('oversized snapshot must not open processes')
+        with self.assertRaisesRegex(p.OwnershipError, 'incomplete or oversized'):
+            self.kernel(Dll()).retain_members(10)
     def test_each_preexecution_api_failure_and_postcreation_interruption_reaps_all_handles(self):
         for stage in ('duplicate', 'initialize', p.HANDLE_LIST, p.JOB_LIST, 'create', 'after-create', 'delete'):
             dll = FakeDll(stage)
@@ -317,6 +381,9 @@ class NativeWindowsControls(ProcessControls):
         class RefuseKernel(p.WindowsKernel):
             def in_job(self, process, job):
                 if not super().in_job(process, job): raise AssertionError('creation-time job association failed')
+                if getattr(self, 'refused_creation', False):
+                    return True  # Cleanup still checks the actual exact membership.
+                self.refused_creation = True
                 return False
             def resume(self, thread): raise AssertionError('failed containment must never resume')
         null = os.open(os.devnull, os.O_RDWR)

@@ -126,9 +126,9 @@ def validate_ownership(value, windows):
     accounting = value['accounting']
     if windows:
         require(isinstance(accounting, dict) and set(accounting) == {'total_processes', 'active_processes', 'terminated_processes'}
-                and all(type(v) is int for v in accounting.values()) and accounting['total_processes'] >= 1
+                and all(type(v) is int for v in accounting.values()) and accounting['total_processes'] == 1
                 and accounting['active_processes'] == accounting['terminated_processes'] == 0,
-                'successful Windows job accounting must be complete and empty')
+                'successful Windows proof job must contain one process and be fully drained')
     else:
         require(isinstance(accounting, dict) and set(accounting) == {'active_processes'}
                 and type(accounting['active_processes']) is int and accounting['active_processes'] == 0,

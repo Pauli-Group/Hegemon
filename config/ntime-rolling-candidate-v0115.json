@@ -9,9 +9,9 @@
     "public_cutover_authorized": false
   },
   "independent_review": {
-    "bytes": 5981,
+    "bytes": 6604,
     "path": "release-evidence/ntime-rolling-v0115/independent-review.json",
-    "sha256": "965796bf90453ba159c74301f194948aec2cbe80e548cd7037951b30aefb71a8"
+    "sha256": "d4eedd63f6f00e9342e1f3f0c7d217a23955a9fcbd2e9763ec5e817a8669d045"
   },
   "kind": "ntime-rolling-software-candidate",
   "proof_identity": {
@@ -589,10 +589,10 @@
     },
     {
       "after_mode": "100644",
-      "after_sha256": "cc3ceb032ea2ea259c848aa40be8d7d480162975ef51e1d847b38a7a276e19e9",
+      "after_sha256": "9bcd68f9794ac926217f815ca7d5c6991218105ab0fe053a148e3197521d655e",
       "before_mode": null,
       "before_sha256": null,
-      "bytes": 10640,
+      "bytes": 10654,
       "path": "scripts/check_v0115_current_binary_proofs.py"
     },
     {
@@ -701,10 +701,10 @@
     },
     {
       "after_mode": "100644",
-      "after_sha256": "53f5803ea9b7c3976d6a473878658e7049e5a9dc31a2ef61005dbde1db7f4b5f",
+      "after_sha256": "1a4490aa1fd4dba067a258f2308a9cf2f2ccc02c80a944aa96620aef77c2f54c",
       "before_mode": null,
       "before_sha256": null,
-      "bytes": 9288,
+      "bytes": 9340,
       "path": "scripts/test_check_v0115_current_binary_proofs.py"
     },
     {
@@ -757,18 +757,18 @@
     },
     {
       "after_mode": "100644",
-      "after_sha256": "8519b1885096492386e479df5371ba9ec32e4c22a7d76f0f895bcaa6a6758572",
+      "after_sha256": "389bf766aa9f867074f9c0a8955f14676056dbdc9fb625c7e421630d8b6bcd50",
       "before_mode": null,
       "before_sha256": null,
-      "bytes": 28087,
+      "bytes": 32680,
       "path": "scripts/test_v0115_process_ownership.py"
     },
     {
       "after_mode": "100644",
-      "after_sha256": "2cab7708f4f1f1e55b5d377a3d142b93ef43b559082239565d7a7bdf100aed79",
+      "after_sha256": "a92f7f38f9a816f08e908fea5e3dd8a6bb1db6fc692491e6619f1b1ac9b2625c",
       "before_mode": null,
       "before_sha256": null,
-      "bytes": 25598,
+      "bytes": 28668,
       "path": "scripts/v0115_process_ownership.py"
     },
     {
@@ -40883,10 +40883,10 @@
       "sha256": "af04798400fd70c11b934a743961b271bd9db16a729210d73641b600737df61c"
     },
     {
-      "bytes": 10640,
+      "bytes": 10654,
       "mode": "100644",
       "path": "scripts/check_v0115_current_binary_proofs.py",
-      "sha256": "cc3ceb032ea2ea259c848aa40be8d7d480162975ef51e1d847b38a7a276e19e9"
+      "sha256": "9bcd68f9794ac926217f815ca7d5c6991218105ab0fe053a148e3197521d655e"
     },
     {
       "bytes": 19971,
@@ -41573,10 +41573,10 @@
       "sha256": "5e3389026cf4f9e87f7d8569ea92ab40107cc2922536b685a2ccf1c5c874e62a"
     },
     {
-      "bytes": 9288,
+      "bytes": 9340,
       "mode": "100644",
       "path": "scripts/test_check_v0115_current_binary_proofs.py",
-      "sha256": "53f5803ea9b7c3976d6a473878658e7049e5a9dc31a2ef61005dbde1db7f4b5f"
+      "sha256": "1a4490aa1fd4dba067a258f2308a9cf2f2ccc02c80a944aa96620aef77c2f54c"
     },
     {
       "bytes": 7120,
@@ -41783,10 +41783,10 @@
       "sha256": "eb360d693fc10afc30c3ed696fc5569f167a4642430a3c1668f21d98935cee25"
     },
     {
-      "bytes": 28087,
+      "bytes": 32680,
       "mode": "100644",
       "path": "scripts/test_v0115_process_ownership.py",
-      "sha256": "8519b1885096492386e479df5371ba9ec32e4c22a7d76f0f895bcaa6a6758572"
+      "sha256": "389bf766aa9f867074f9c0a8955f14676056dbdc9fb625c7e421630d8b6bcd50"
     },
     {
       "bytes": 32793,
@@ -41849,10 +41849,10 @@
       "sha256": "4def3f49778b0f946df4ada18c3e7824ce2a42266823d4c1dde00009350c1bd2"
     },
     {
-      "bytes": 25598,
+      "bytes": 28668,
       "mode": "100644",
       "path": "scripts/v0115_process_ownership.py",
-      "sha256": "2cab7708f4f1f1e55b5d377a3d142b93ef43b559082239565d7a7bdf100aed79"
+      "sha256": "a92f7f38f9a816f08e908fea5e3dd8a6bb1db6fc692491e6619f1b1ac9b2625c"
     },
     {
       "bytes": 13055,
@@ -43127,6 +43127,6 @@
       "sha256": "2979ff748a39a72e0181c8f82aff4f2da29f69ced72d6dd5e49ddf0c9cd27b64"
     }
   ],
-  "source_inventory_sha256": "4a6e22889d4440b7cf10acb87d7d2dc120d0420379f0796fcc2bead1c6a25afd",
+  "source_inventory_sha256": "3ccfa78295b8106b194700664807c180981b4d485584524cb7047d7ab921c12b",
   "status": "frozen"
 }

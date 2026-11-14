@@ -1,7 +1,7 @@
 {
   "activation_authorized": false,
   "baseline_commit": "ad77c8d564944972b6ae5e7cab26fcf500972aff",
-  "candidate_binding_sha256": "ff55e599111387070d4fe25497e5cf02d39b7e7a7e2bae0f15e0ee93e4404669",
+  "candidate_binding_sha256": "9bf3a3f4b190fada6ed414ddceb25c633e322462be4bc0b78b0031940047dce6",
   "component_reviews": [
     {
       "bytes": 9176,
@@ -72,6 +72,11 @@
       "bytes": 6553,
       "path": "release-evidence/ntime-rolling-v0115/windows-cleanup-independent-review.json",
       "sha256": "9e0e940f673a0c6764451c9ebd55b81bd645d184e19650769c9dfe896345a91f"
+    },
+    {
+      "bytes": 10084,
+      "path": "release-evidence/ntime-rolling-v0115/windows-descendant-wait-independent-review.json",
+      "sha256": "c9850aea0cc4844912790d796745ba5bca0d4690b8e58eabde07d82ea44d5ec0"
     }
   ],
   "decision": "ACCEPT_SOFTWARE_CANDIDATE_SCOPE",
@@ -85,25 +90,28 @@
     "The 1bcfa01 source/review records remain historical for changed paths; the new Windows/process/workflow/document delta supersedes those path rows. All other frozen source rows are byte-identical to that reviewed candidate.",
     "Native Windows ownership tests and all four final-binary proof/H0/lifecycle checks must execute in fresh CI; local portable controls and static review do not establish Windows qualification.",
     "The failed 1bcfa01 Windows preparation attempt is retained and grants no artifact acceptance. Formal policy files and their declared input fingerprints remain byte-identical; no unrelated review or execution record was renewed.",
-    "The 2a40080796 native Windows ownership controls failed and grant no qualification. This incremental review covers only the cleanup wait and its fail-closed diagnostic controls; all other source rows match the prior reviewed candidate. Fresh Windows and four-platform CI remain mandatory."
+    "The 2a40080796 native Windows ownership controls failed and grant no qualification. This incremental review covers only the cleanup wait and its fail-closed diagnostic controls; all other source rows match the prior reviewed candidate. Fresh Windows and four-platform CI remain mandatory.",
+    "The a0bbc32c40 native Windows ownership controls failed and grant no qualification. This incremental review covers only the owned-process cleanup and its fail-closed controls; all other source rows match the prior reviewed candidate. Fresh Windows and four-platform CI remain mandatory."
   ],
   "mainnet_authorized": false,
   "physical_asic_qualified": false,
   "prior_candidate_review": {
-    "bytes": 5943,
-    "path": "release-evidence/ntime-rolling-v0115/independent-review-2a40080796.json",
-    "sha256": "71f88f1b1d8bae9647f283f04ea14949f65f01d9599f0f3c6df86afd801697b9"
+    "bytes": 5981,
+    "path": "release-evidence/ntime-rolling-v0115/independent-review-a0bbc32c40.json",
+    "sha256": "965796bf90453ba159c74301f194948aec2cbe80e548cd7037951b30aefb71a8"
   },
   "production_authorized": false,
   "public_cutover_authorized": false,
   "qualification_commands_sha256": "8de8ed193d36e3f2d12bf9a7e6287665f18758d5e3e262eaf9167b5c54c8db36",
   "review_kind": "independent_model_review",
-  "reviewed_at_utc": "2026-11-14T19:04:26.708838+00:00",
+  "reviewed_at_utc": "2026-11-14T19:13:33.483009+00:00",
   "reviewer": "Codex independent reviewers /root/prior_asic_context and /root/ntime_native; original component reviews retained for unchanged source, scoped Windows/process/workflow/document review aggregated by coordinator",
   "schema": "hegemon.ntime-rolling.independent-review.v1",
-  "source_inventory_sha256": "4a6e22889d4440b7cf10acb87d7d2dc120d0420379f0796fcc2bead1c6a25afd",
-  "supplemental_review_base": "2a40080796e23c9e3327ec13108a31ceb9e1464e",
+  "source_inventory_sha256": "3ccfa78295b8106b194700664807c180981b4d485584524cb7047d7ab921c12b",
+  "supplemental_review_base": "a0bbc32c4013bebf453044198bbe686744530203",
   "supplemental_reviewed_paths": [
+    "scripts/check_v0115_current_binary_proofs.py",
+    "scripts/test_check_v0115_current_binary_proofs.py",
     "scripts/test_v0115_process_ownership.py",
     "scripts/v0115_process_ownership.py"
   ]

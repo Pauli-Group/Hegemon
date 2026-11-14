@@ -124,6 +124,7 @@ class HarnessControls(unittest.TestCase):
             with self.subTest(key=key), self.assertRaises(h.HarnessError): h.validate_ownership(changed, True)
         for path, value in ((('owned_before_execution',), 1), (('job_handle_inherited',), True),
             (('resume_prior_suspend_count',), True), (('accounting', 'total_processes'), 0),
+            (('accounting', 'total_processes'), 2),
             (('accounting', 'active_processes'), 1), (('accounting', 'terminated_processes'), 1),
             (('accounting', 'active_processes'), False)):
             changed = copy.deepcopy(original); target = changed
