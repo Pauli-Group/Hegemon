@@ -10,6 +10,9 @@ import shutil
 import os
 import subprocess
 import signal
+import py_compile
+from types import SimpleNamespace
+from unittest.mock import Mock
 import sys
 import time
 import tempfile
@@ -338,6 +341,46 @@ class CandidatePolicyControls(unittest.TestCase):
             changed = copy.deepcopy(smoke); changed[field] = changed[field].replace('0.11.5', '0.11.4')
             with self.subTest(version=field), self.assertRaises(gate.CandidateError):
                 gate.validate_identity_smoke(changed, identity)
+
+
+    def test_owned_proof_stage_requires_both_unchanged_proof_predicate_and_new_harness(self):
+        fixture = self.write('release-evidence/v0.11-current-proof-fixture/manifest.json', '{}')
+        node = self.write('target/synthetic/node', 'synthetic routing control only')
+        manifest = self.write('target/synthetic/proof-manifest.json', json.dumps({
+            'target_triple': 'synthetic-policy-only', 'artifacts': [{'binary': 'hegemon-node', 'path': 'target/synthetic/node'}]}))
+        executor = SimpleNamespace(frozen_sources=Mock(), validate_harness=Mock())
+        old = SimpleNamespace(CURRENT_FIXTURE_SHA256=gate.sha(fixture.read_bytes()), validate_current_binary_proofs=Mock())
+        checks = {'target_triple': 'synthetic-policy-only'}
+        receipt = {'identity_smoke': {'scratch_directory': str(self.root / 'target/synthetic')},
+                   'artifact_sha256': {'hegemon-node': gate.sha(node.read_bytes())},
+                   'artifact_manifest_sha256': gate.sha(manifest.read_bytes())}
+        result = subprocess.CompletedProcess([], 0, json.dumps(checks).encode(), b'')
+        with patch.object(gate, 'current_proof_executor', return_value=executor), \
+             patch.object(gate, 'run_qualification', return_value=result) as run, \
+             patch.object(gate, 'recheck_artifacts'):
+            self.write('scripts/check_v0115_current_binary_proofs.py', '# synthetic routing control')
+            actual = gate.current_owned_proofs(self.root, {}, manifest, receipt, 4, old)
+        old.validate_current_binary_proofs.assert_called_once()
+        executor.validate_harness.assert_called_once_with(checks, self.root)
+        self.assertIn('check_v0115_current_binary_proofs.py', run.call_args.args[0][3])
+        self.assertTrue(actual['actual_new_binary_proof_verification'])
+        old.validate_current_binary_proofs.side_effect = gate.CandidateError('old proof rejection')
+        with patch.object(gate, 'current_proof_executor', return_value=executor), \
+             patch.object(gate, 'run_qualification', return_value=result), \
+             patch.object(gate, 'recheck_artifacts'), self.assertRaisesRegex(gate.CandidateError, 'old proof rejection'):
+            gate.current_owned_proofs(self.root, {}, manifest, receipt, 4, old)
+
+    def test_wrapper_import_executes_checked_source_bytes_and_ignores_unchecked_pyc(self):
+        path = self.write('scripts/check_v0115_current_binary_proofs.py', 'VALUE="forged-cache"\n')
+        py_compile.compile(str(path), doraise=True, invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)
+        path.write_text('VALUE="checked-source"\n')
+        raw = path.read_bytes()
+        config = {'source_inventory': [{'path': 'scripts/check_v0115_current_binary_proofs.py',
+                                       'bytes': len(raw), 'sha256': gate.sha(raw), 'mode': '100644'}]}
+        self.assertEqual(gate.current_proof_executor(self.root, config).VALUE, 'checked-source')
+        config['source_inventory'][0]['sha256'] = '0' * 64
+        with self.assertRaises(gate.CandidateError):
+            gate.current_proof_executor(self.root, config)
 
 
 

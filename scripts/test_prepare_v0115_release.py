@@ -88,6 +88,121 @@ class WorkflowTests(unittest.TestCase):
             keys = re.findall(r'^          ([a-z-]+):', mapping, re.M)
             self.assertEqual(len(keys), len(set(keys)), mapping)
 
+    def test_windows_native_ownership_runs_immediately_after_checkout_before_build_tools(self):
+        body = re.split(r'\n(?=  [a-z0-9-]+:\n)',
+                        self.workflow.split('  build-windows:\n', 1)[1], maxsplit=1)[0]
+        checkout = ('      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5\n'
+                    '        with:\n          persist-credentials: false\n          fetch-depth: 0\n\n')
+        self.assertIn(checkout + preparation.WINDOWS_OWNERSHIP_STEP + '\n'
+                      + preparation.PROOF_EXECUTION_TEST_STEP + '\n      - name: Install LLVM\n', body)
+        self.assertEqual(self.workflow.count(preparation.WINDOWS_OWNERSHIP_COMMAND), 1)
+        self.assertLess(body.index(preparation.WINDOWS_OWNERSHIP_COMMAND), body.index('choco install llvm'))
+        self.assertLess(body.index(preparation.WINDOWS_OWNERSHIP_COMMAND), body.index('./scripts/build_release_artifacts.sh'))
+        self.assertLess(body.index(preparation.WINDOWS_OWNERSHIP_COMMAND), body.index(preparation.PROOF_EXECUTION_TEST_COMMAND))
+        self.assertLess(body.index(preparation.PROOF_EXECUTION_TEST_COMMAND), body.index('choco install llvm'))
+        step = preparation.WINDOWS_OWNERSHIP_STEP
+        softened = (step.replace('--require-windows', ''),
+                    step.replace('        shell: bash\n', '        continue-on-error: true\n        shell: bash\n'),
+                    step.replace('        shell: bash\n', '        if: false\n        shell: bash\n'),
+                    step.replace(preparation.WINDOWS_OWNERSHIP_COMMAND,
+                                 preparation.WINDOWS_OWNERSHIP_COMMAND + ' || true'),
+                    step.replace(preparation.WINDOWS_OWNERSHIP_COMMAND,
+                                 'true # ' + preparation.WINDOWS_OWNERSHIP_COMMAND), '')
+        for replacement in softened:
+            with self.subTest(replacement=replacement), self.assertRaises(ValueError):
+                preparation.verify_preparation(self.release, self.workflow.replace(step, replacement, 1))
+        late_body = body.replace(step + '\n', '', 1)
+        late_body = late_body.replace('      - name: Verify release artifact manifest\n',
+                                     step + '\n      - name: Verify release artifact manifest\n', 1)
+        late = self.workflow.replace(body, late_body, 1)
+        with self.assertRaises(ValueError):
+            preparation.verify_preparation(self.release, late)
+
+    def test_changed_windows_install_anchor_requires_generator_review(self):
+        historical = preparation.historical.expected_workflow(self.release, v0113=True, combined=True)
+        historical = historical.replace('      - name: Install LLVM\n', '      - name: Changed Windows install\n')
+        with patch.object(preparation.historical, 'expected_workflow', return_value=historical):
+            with self.assertRaisesRegex(ValueError, 'review changed preparation anchor'):
+                preparation.expected_workflow(self.release)
+
+    def test_wrapper_controls_are_blocking_in_policy_and_early_windows(self):
+        policy = re.split(r'\n(?=  [a-z0-9-]+:\n)',
+                          self.workflow.split('  preparation-policy:\n', 1)[1], maxsplit=1)[0]
+        windows = re.split(r'\n(?=  [a-z0-9-]+:\n)',
+                           self.workflow.split('  build-windows:\n', 1)[1], maxsplit=1)[0]
+        command = preparation.PROOF_EXECUTION_TEST_COMMAND
+        policy_command = '/usr/bin/' + command
+        self.assertEqual(policy.count(policy_command), 1)
+        self.assertEqual(windows.count(command), 1)
+        self.assertEqual(self.workflow.count('scripts/test_check_v0115_current_binary_proofs.py'), 2)
+        self.assertLess(policy.index('scripts/test_package_v0115_release.py'), policy.index(policy_command))
+        for body, selected in ((policy, policy_command), (windows, command)):
+            for replacement in ('true # ' + selected, selected + ' || true', selected.replace(' -I -B ', ' ')):
+                changed = self.workflow.replace(body, body.replace(selected, replacement, 1), 1)
+                with self.subTest(command=selected, mutation=replacement), self.assertRaises(ValueError):
+                    preparation.verify_preparation(self.release, changed)
+        step = preparation.PROOF_EXECUTION_TEST_STEP
+        for replacement in ('', step.replace('        shell: bash\n', '        continue-on-error: true\n        shell: bash\n'),
+                            step.replace('        shell: bash\n', '        if: false\n        shell: bash\n')):
+            with self.subTest(step=replacement), self.assertRaises(ValueError):
+                preparation.verify_preparation(self.release, self.workflow.replace(step, replacement, 1))
+
+
+class FastWindowsWorkflowTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.workflow = (ROOT / '.github/workflows/ntime-rolling.yml').read_text()
+
+    def test_independent_native_windows_job_is_exact_and_cannot_wait_for_builds(self):
+        jobs = self.workflow.split('\njobs:\n', 1)[1]
+        self.assertEqual(set(re.findall(r'^  ([a-z0-9-]+):$', jobs, re.M)),
+                         {'source-and-adapter', 'consensus', 'native', 'process-ownership-windows'})
+        body = re.split(r'\n(?=  [a-z0-9-]+:\n)',
+                        jobs.split('  process-ownership-windows:\n', 1)[1], maxsplit=1)[0]
+        expected = '''    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+''' + preparation.WINDOWS_OWNERSHIP_STEP + preparation.PROOF_EXECUTION_TEST_STEP
+        self.assertEqual(body.rstrip('\n'), expected.rstrip('\n'))
+        self.assertNotIn('needs:', body)
+        self.assertNotIn('continue-on-error:', body)
+        self.assertNotIn('if:', body)
+        self.assertNotIn('cargo ', body)
+        self.assertEqual(self.workflow.count(preparation.WINDOWS_OWNERSHIP_COMMAND), 1)
+
+    def test_wrapper_controls_run_in_focused_source_and_after_native_windows(self):
+        source = re.split(r'\n(?=  [a-z0-9-]+:\n)',
+                          self.workflow.split('  source-and-adapter:\n', 1)[1], maxsplit=1)[0]
+        windows = re.split(r'\n(?=  [a-z0-9-]+:\n)',
+                           self.workflow.split('  process-ownership-windows:\n', 1)[1], maxsplit=1)[0]
+        command = preparation.PROOF_EXECUTION_TEST_COMMAND
+        self.assertEqual(source.count(command), 1)
+        self.assertEqual(windows.count(command), 1)
+        self.assertEqual(self.workflow.count('        run: ' + command), 2)
+        self.assertIn(preparation.PROOF_EXECUTION_TEST_STEP, source)
+        self.assertIn((preparation.WINDOWS_OWNERSHIP_STEP + preparation.PROOF_EXECUTION_TEST_STEP).rstrip('\n'), windows)
+        self.assertLess(source.index('scripts/check_ntime_rolling_source.py'), source.index(command))
+        self.assertLess(source.index(command), source.index('scripts/test_bitcoin_asic_stratum.py'))
+
+    def test_precise_ownership_and_routing_inputs_trigger_fast_pr_job(self):
+        paths = self.workflow.split('  pull_request:\n    paths:\n', 1)[1].split('  workflow_dispatch:', 1)[0]
+        for name in ('scripts/v0115_process_ownership.py', 'scripts/test_v0115_process_ownership.py',
+                     'scripts/check_v0115_current_binary_proofs.py',
+                     'scripts/test_check_v0115_current_binary_proofs.py',
+                     'scripts/prepare_v0115_release.py', 'scripts/test_prepare_v0115_release.py',
+                     '.github/workflows/prepare-premainnet-release.yml'):
+            self.assertIn("      - '" + name + "'\n", paths)
+        for command in ('scripts/test_check_ntime_rolling_source.py',
+                        'scripts/test_bitcoin_asic_stratum.py',
+                        'cargo test --locked -p consensus-light-client',
+                        '--lib native_timestamp_rolling', '--lib native::timestamp_admission_tests::',
+                        '--lib native::asert_tests::', '--lib treasury_cadence'):
+            self.assertIn(command, self.workflow)
+
 
 class EvidenceTests(unittest.TestCase):
     def setUp(self):

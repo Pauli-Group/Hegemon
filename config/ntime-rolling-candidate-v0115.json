@@ -9,9 +9,9 @@
     "public_cutover_authorized": false
   },
   "independent_review": {
-    "bytes": 3727,
+    "bytes": 5943,
     "path": "release-evidence/ntime-rolling-v0115/independent-review.json",
-    "sha256": "4c8e3656f86251162cfb99eeee89ac325a4d26ebd9e3cfc08bc66b1e254e0c4c"
+    "sha256": "71f88f1b1d8bae9647f283f04ea14949f65f01d9599f0f3c6df86afd801697b9"
   },
   "kind": "ntime-rolling-software-candidate",
   "proof_identity": {
@@ -301,10 +301,10 @@
   "reviewed_delta": [
     {
       "after_mode": "100644",
-      "after_sha256": "ad8e4a21bdad955d1db123b27b4a38cfd31e74f5c4d5e4d90ee7d081b409b534",
+      "after_sha256": "c34666e6916f4702a64107df815f4f8f4a8120a8cb66c82af4634e58ecced814",
       "before_mode": null,
       "before_sha256": null,
-      "bytes": 21761,
+      "bytes": 23664,
       "path": ".agent/V0115_NTIME_ROLLING_EXECPLAN.md"
     },
     {
@@ -317,18 +317,18 @@
     },
     {
       "after_mode": "100644",
-      "after_sha256": "a41f2e13b1face8d341cab3ee6495ca63d5de40080bce0d3cdc5bc3394b4d507",
+      "after_sha256": "9155e7669acba532cfe6495e28108d378b47b5381cc2b54f17855ecefa70a135",
       "before_mode": null,
       "before_sha256": null,
-      "bytes": 4168,
+      "bytes": 5277,
       "path": ".github/workflows/ntime-rolling.yml"
     },
     {
       "after_mode": "100644",
-      "after_sha256": "f97448f685a563d34f7964dbc94ae7ee778ca6306c7220c3fd1d4898f5c2cce3",
+      "after_sha256": "90514baf4c48be36cd77d8af4cfd0e175e81be714fee1642bbe15047603f9e3d",
       "before_mode": "100644",
       "before_sha256": "2049113de4f7f147eeca47325786d834f3e780d2d3820a77649766eb02cfd4f6",
-      "bytes": 41460,
+      "bytes": 41963,
       "path": ".github/workflows/prepare-premainnet-release.yml"
     },
     {
@@ -437,10 +437,10 @@
     },
     {
       "after_mode": "100644",
-      "after_sha256": "d989ed6af8e32130d15d3803ec6f0a0667ff5807b49981bf6a4cfd4a3cd7d4bf",
+      "after_sha256": "9f79b93870fcaab60cd33f7c6e7a55e3026516c2bf89f738d9b6e41d0d6fcbed",
       "before_mode": null,
       "before_sha256": null,
-      "bytes": 8750,
+      "bytes": 9883,
       "path": "docs/releases/V0.11.5_PREPARATION.md"
     },
     {
@@ -557,10 +557,10 @@
     },
     {
       "after_mode": "100644",
-      "after_sha256": "c420bdf3ffea8794bd142f52111135fd52c81c60bc1ec73176bdaf5eebbcc0d2",
+      "after_sha256": "5f2543fa9e2c61245f94f09c8e12eb195f167165eecbe16946cd78f3a7d12cb5",
       "before_mode": null,
       "before_sha256": null,
-      "bytes": 40143,
+      "bytes": 43079,
       "path": "scripts/check_ntime_rolling_candidate.py"
     },
     {
@@ -588,6 +588,14 @@
       "path": "scripts/check_release_dependency_reachability.py"
     },
     {
+      "after_mode": "100644",
+      "after_sha256": "cc3ceb032ea2ea259c848aa40be8d7d480162975ef51e1d847b38a7a276e19e9",
+      "before_mode": null,
+      "before_sha256": null,
+      "bytes": 10640,
+      "path": "scripts/check_v0115_current_binary_proofs.py"
+    },
+    {
       "after_mode": "100755",
       "after_sha256": "c8a1ee09d1b47ff0fcc4eebc0c26743b4e7815f0d5cf52defa1be49dea616469",
       "before_mode": "100755",
@@ -613,10 +621,10 @@
     },
     {
       "after_mode": "100644",
-      "after_sha256": "95d264b21393d4cea2dc005b1a8d01d23eb36cf1832fd68a1b9f46d64bdf0cab",
+      "after_sha256": "06fb7b8927d902f5672c8cdd5535426cf7f67198fb6e0ec094bfe672f008e8f1",
       "before_mode": null,
       "before_sha256": null,
-      "bytes": 12774,
+      "bytes": 13871,
       "path": "scripts/prepare_v0115_release.py"
     },
     {
@@ -653,10 +661,10 @@
     },
     {
       "after_mode": "100644",
-      "after_sha256": "d43aee018f469ba669dece926bff90ae282b0e9c89e87080ca24f1617f8e234c",
+      "after_sha256": "9e9d3e5f2b38f4ae2470d56395042a85435044d591abeb367846c723b1cb8b45",
       "before_mode": null,
       "before_sha256": null,
-      "bytes": 19946,
+      "bytes": 23174,
       "path": "scripts/test_check_ntime_rolling_candidate.py"
     },
     {
@@ -693,6 +701,14 @@
     },
     {
       "after_mode": "100644",
+      "after_sha256": "53f5803ea9b7c3976d6a473878658e7049e5a9dc31a2ef61005dbde1db7f4b5f",
+      "before_mode": null,
+      "before_sha256": null,
+      "bytes": 9288,
+      "path": "scripts/test_check_v0115_current_binary_proofs.py"
+    },
+    {
+      "after_mode": "100644",
       "after_sha256": "f0a2c5e05aa74255cdec993a97273ac3883f8130785a4535df1e7fd57c7d0b29",
       "before_mode": "100644",
       "before_sha256": "1422235f622355f647d47865ace601b6745f7e5ad32f983fdc7595d33d469914",
@@ -725,10 +741,10 @@
     },
     {
       "after_mode": "100644",
-      "after_sha256": "61e1a6ba1c5f32dd533915c1c195358c22fd3c1685ddc7b01514d599a0d27d1a",
+      "after_sha256": "3b846dfb4a2ab4bd3129b0622f59c961dd98caf724464cf95a6e09bde903bc70",
       "before_mode": null,
       "before_sha256": null,
-      "bytes": 11327,
+      "bytes": 19487,
       "path": "scripts/test_prepare_v0115_release.py"
     },
     {
@@ -738,6 +754,22 @@
       "before_sha256": null,
       "bytes": 15533,
       "path": "scripts/test_qualify_ntime_rolling.py"
+    },
+    {
+      "after_mode": "100644",
+      "after_sha256": "2d6a437747cf280df9443271c0f3a22ea974530c5d2ea022a06bf614ef18828b",
+      "before_mode": null,
+      "before_sha256": null,
+      "bytes": 22134,
+      "path": "scripts/test_v0115_process_ownership.py"
+    },
+    {
+      "after_mode": "100644",
+      "after_sha256": "73c768134bd006a311fd84d205cc9a6d7bee4f68f4ff53a899f7fe4ea45f5662",
+      "before_mode": null,
+      "before_sha256": null,
+      "bytes": 25093,
+      "path": "scripts/v0115_process_ownership.py"
     },
     {
       "after_mode": "100644",
@@ -1551,10 +1583,10 @@
       "sha256": "735173222f7cefb8a98ea83c672b09a40abfd6fa181097738f2822b774844110"
     },
     {
-      "bytes": 21761,
+      "bytes": 23664,
       "mode": "100644",
       "path": ".agent/V0115_NTIME_ROLLING_EXECPLAN.md",
-      "sha256": "ad8e4a21bdad955d1db123b27b4a38cfd31e74f5c4d5e4d90ee7d081b409b534"
+      "sha256": "c34666e6916f4702a64107df815f4f8f4a8120a8cb66c82af4634e58ecced814"
     },
     {
       "bytes": 8118,
@@ -12867,16 +12899,16 @@
       "sha256": "401e43edf1b597facd6a9362f2c5f042f2f82159143784941659b561e06eba27"
     },
     {
-      "bytes": 4168,
+      "bytes": 5277,
       "mode": "100644",
       "path": ".github/workflows/ntime-rolling.yml",
-      "sha256": "a41f2e13b1face8d341cab3ee6495ca63d5de40080bce0d3cdc5bc3394b4d507"
+      "sha256": "9155e7669acba532cfe6495e28108d378b47b5381cc2b54f17855ecefa70a135"
     },
     {
-      "bytes": 41460,
+      "bytes": 41963,
       "mode": "100644",
       "path": ".github/workflows/prepare-premainnet-release.yml",
-      "sha256": "f97448f685a563d34f7964dbc94ae7ee778ca6306c7220c3fd1d4898f5c2cce3"
+      "sha256": "90514baf4c48be36cd77d8af4cfd0e175e81be714fee1642bbe15047603f9e3d"
     },
     {
       "bytes": 1777,
@@ -16143,10 +16175,10 @@
       "sha256": "d906882d43851b036057fcdc932b2578ed61a37ec3107998a39585043b27da2a"
     },
     {
-      "bytes": 8750,
+      "bytes": 9883,
       "mode": "100644",
       "path": "docs/releases/V0.11.5_PREPARATION.md",
-      "sha256": "d989ed6af8e32130d15d3803ec6f0a0667ff5807b49981bf6a4cfd4a3cd7d4bf"
+      "sha256": "9f79b93870fcaab60cd33f7c6e7a55e3026516c2bf89f738d9b6e41d0d6fcbed"
     },
     {
       "bytes": 6634,
@@ -40701,10 +40733,10 @@
       "sha256": "5c7496b002c8d617b8d6cd5fd9f1bf7519f643049ca4b5d6a5822c79702b0e31"
     },
     {
-      "bytes": 40143,
+      "bytes": 43079,
       "mode": "100644",
       "path": "scripts/check_ntime_rolling_candidate.py",
-      "sha256": "c420bdf3ffea8794bd142f52111135fd52c81c60bc1ec73176bdaf5eebbcc0d2"
+      "sha256": "5f2543fa9e2c61245f94f09c8e12eb195f167165eecbe16946cd78f3a7d12cb5"
     },
     {
       "bytes": 7052,
@@ -40849,6 +40881,12 @@
       "mode": "100644",
       "path": "scripts/check_v0113_release_successor.py",
       "sha256": "af04798400fd70c11b934a743961b271bd9db16a729210d73641b600737df61c"
+    },
+    {
+      "bytes": 10640,
+      "mode": "100644",
+      "path": "scripts/check_v0115_current_binary_proofs.py",
+      "sha256": "cc3ceb032ea2ea259c848aa40be8d7d480162975ef51e1d847b38a7a276e19e9"
     },
     {
       "bytes": 19971,
@@ -41139,10 +41177,10 @@
       "sha256": "bfccc7ea38d329b198c8da4474d199fc5f50abe2111c0f301b72454f194ecafc"
     },
     {
-      "bytes": 12774,
+      "bytes": 13871,
       "mode": "100644",
       "path": "scripts/prepare_v0115_release.py",
-      "sha256": "95d264b21393d4cea2dc005b1a8d01d23eb36cf1832fd68a1b9f46d64bdf0cab"
+      "sha256": "06fb7b8927d902f5672c8cdd5535426cf7f67198fb6e0ec094bfe672f008e8f1"
     },
     {
       "bytes": 7464,
@@ -41403,10 +41441,10 @@
       "sha256": "9c0741b97fd84d7941da6ffd6275f4408b54369600a4da3b508115565b798762"
     },
     {
-      "bytes": 19946,
+      "bytes": 23174,
       "mode": "100644",
       "path": "scripts/test_check_ntime_rolling_candidate.py",
-      "sha256": "d43aee018f469ba669dece926bff90ae282b0e9c89e87080ca24f1617f8e234c"
+      "sha256": "9e9d3e5f2b38f4ae2470d56395042a85435044d591abeb367846c723b1cb8b45"
     },
     {
       "bytes": 5780,
@@ -41535,6 +41573,12 @@
       "sha256": "5e3389026cf4f9e87f7d8569ea92ab40107cc2922536b685a2ccf1c5c874e62a"
     },
     {
+      "bytes": 9288,
+      "mode": "100644",
+      "path": "scripts/test_check_v0115_current_binary_proofs.py",
+      "sha256": "53f5803ea9b7c3976d6a473878658e7049e5a9dc31a2ef61005dbde1db7f4b5f"
+    },
+    {
       "bytes": 7120,
       "mode": "100644",
       "path": "scripts/test_check_v011_crypto_consumer.py",
@@ -41649,10 +41693,10 @@
       "sha256": "1a79aef6c7ff6821891f2a0e9280e4b47a1e40bf9b0905cdbf1ba5a814d081d2"
     },
     {
-      "bytes": 11327,
+      "bytes": 19487,
       "mode": "100644",
       "path": "scripts/test_prepare_v0115_release.py",
-      "sha256": "61e1a6ba1c5f32dd533915c1c195358c22fd3c1685ddc7b01514d599a0d27d1a"
+      "sha256": "3b846dfb4a2ab4bd3129b0622f59c961dd98caf724464cf95a6e09bde903bc70"
     },
     {
       "bytes": 24205,
@@ -41739,6 +41783,12 @@
       "sha256": "eb360d693fc10afc30c3ed696fc5569f167a4642430a3c1668f21d98935cee25"
     },
     {
+      "bytes": 22134,
+      "mode": "100644",
+      "path": "scripts/test_v0115_process_ownership.py",
+      "sha256": "2d6a437747cf280df9443271c0f3a22ea974530c5d2ea022a06bf614ef18828b"
+    },
+    {
       "bytes": 32793,
       "mode": "100755",
       "path": "scripts/test_verify_native_backend_review_package.py",
@@ -41797,6 +41847,12 @@
       "mode": "100644",
       "path": "scripts/transaction_proof_successor_authorized_registry.py",
       "sha256": "4def3f49778b0f946df4ada18c3e7824ce2a42266823d4c1dde00009350c1bd2"
+    },
+    {
+      "bytes": 25093,
+      "mode": "100644",
+      "path": "scripts/v0115_process_ownership.py",
+      "sha256": "73c768134bd006a311fd84d205cc9a6d7bee4f68f4ff53a899f7fe4ea45f5662"
     },
     {
       "bytes": 13055,
@@ -43071,6 +43127,6 @@
       "sha256": "2979ff748a39a72e0181c8f82aff4f2da29f69ced72d6dd5e49ddf0c9cd27b64"
     }
   ],
-  "source_inventory_sha256": "6eaf7a53b6fe1da877bea3fbf243eb0364db83aa8acb6031dd1a9d54b27116a6",
+  "source_inventory_sha256": "0772e8091d2ecca62ef406be64b3e903c9ae28d409f6964c84ebbd5e01e8c303",
   "status": "frozen"
 }

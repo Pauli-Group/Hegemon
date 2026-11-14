@@ -18,6 +18,7 @@ import re
 import signal
 import subprocess
 import sys
+import types
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = 'config/ntime-rolling-candidate-v0115.json'
@@ -509,6 +510,47 @@ def recheck_artifacts(root, manifest_path, receipt):
             'artifact manifest or bytes changed during affected qualification')
 
 
+def current_proof_executor(root, config):
+    relative = 'scripts/check_v0115_current_binary_proofs.py'
+    selected = [item for item in config['source_inventory'] if item['path'] == relative]
+    require(len(selected) == 1, 'new current-proof executor source pin required')
+    raw = safe_file(root, relative).read_bytes()
+    require(type(selected[0]['bytes']) is int and selected[0]['bytes'] == len(raw)
+            and selected[0]['sha256'] == sha(raw), 'new current-proof executor must match its frozen pre-import source pin')
+    module = types.ModuleType('_ntime_owned_current_proof_executor')
+    module.__file__ = str(root / relative); module.__package__ = ''; module.__cached__ = None
+    sys.modules[module.__name__] = module
+    exec(compile(raw, module.__file__, 'exec', dont_inherit=True), module.__dict__)
+    return module
+
+
+def current_owned_proofs(root, config, manifest_path, receipt, min_free_gib, historical):
+    executor = current_proof_executor(root, config)
+    # Authenticate the unchanged logic and new owner before starting the wrapper.
+    executor.frozen_sources(root)
+    fixture = safe_file(root, 'release-evidence/v0.11-current-proof-fixture/manifest.json')
+    require(sha(fixture.read_bytes()) == historical.CURRENT_FIXTURE_SHA256, 'immutable proof fixture differs')
+    manifest = strict_json(manifest_path.read_bytes())
+    node = next(item for item in manifest['artifacts'] if item['binary'] == 'hegemon-node')
+    output = Path(receipt['identity_smoke']['scratch_directory']) / 'current-binary-proofs-v0115'
+    command = [sys.executable, '-I', '-B', str(safe_file(root, 'scripts/check_v0115_current_binary_proofs.py')),
+               '--node-bin', str(safe_file(root, node['path'])), '--artifact-manifest', str(manifest_path),
+               '--output', str(output), '--min-free-gib', str(min_free_gib)]
+    result = run_qualification(command, root, 240)
+    require(result.returncode == 0 and not result.stderr, 'actual owned current-binary proof verification failed: '
+            + diagnostic_tail(result.stderr, 4096))
+    checks = strict_json(result.stdout)
+    require(checks.get('target_triple') == manifest['target_triple'], 'owned proof runner target differs')
+    historical.validate_current_binary_proofs(checks, receipt['artifact_sha256']['hegemon-node'],
+        receipt['artifact_manifest_sha256'], RELATION, historical.CURRENT_FIXTURE_SHA256)
+    executor.validate_harness(checks, root)
+    recheck_artifacts(root, manifest_path, receipt)
+    receipt.update(status='PASS_EXACT_SOURCE_CURRENT_BINARY_BACKEND_AND_H0', final_artifact_scope=SCOPE,
+                   current_binary_backend_artifacts_verified=True, actual_new_binary_proof_verification=True,
+                   current_binary_proof_verification=checks)
+    return receipt
+
+
 def final_artifacts(root, config, manifest_path, min_free_gib):
     # Authenticate before importing or starting any executable. Change attribution only.
     require(load_config(root) == config, 'candidate config differs before execution')
@@ -525,7 +567,7 @@ def final_artifacts(root, config, manifest_path, min_free_gib):
                'identity': identity, 'candidate_binding_sha256': binding(config),
                'source_inventory_sha256': config['source_inventory_sha256'], **BOUNDARIES}
     receipt = helper.artifact_gate(root, root, manifest_path, receipt, network, min_free_gib)
-    receipt = helper.final_replay(root, manifest_path, receipt, min_free_gib)
+    receipt = current_owned_proofs(root, config, manifest_path, receipt, min_free_gib, helper)
     receipt['affected_checks'] = fresh_checks(root, config, receipt, manifest_path)
     recheck_artifacts(root, manifest_path, receipt)
     require(load_config(root) == config, 'candidate config changed during execution')
@@ -587,6 +629,7 @@ def validate_final_receipt(receipt, manifest, manifest_digest, root=ROOT):
     helper.CURRENT_RUNTIME_DELTAS['node/src/bin/native_node.rs'] = (None, sha(safe_file(root, 'node/src/bin/native_node.rs').read_bytes()))
     require(receipt.get('current_binary_proof_verification', {}).get('target_triple') == manifest['target_triple'], 'proof receipt target differs')
     helper.validate_current_binary_proofs(receipt.get('current_binary_proof_verification'), receipt['artifact_sha256']['hegemon-node'], manifest_digest, RELATION, helper.CURRENT_FIXTURE_SHA256)
+    current_proof_executor(root, config).validate_harness(receipt.get('current_binary_proof_verification'), root)
     identity = strict_json(safe_file(root, 'config/v0113-release-successor.json').read_bytes())['current_identity']
     require(receipt.get('identity') == identity, 'ntime identity differs')
     validate_identity_smoke(receipt.get('identity_smoke'), identity)

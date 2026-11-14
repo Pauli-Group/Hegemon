@@ -14,6 +14,13 @@ on:
       - 'scripts/*bitcoin_asic*'
       - 'scripts/v011_join.py'
       - 'scripts/test_package_v011_release.py'
+      - 'scripts/v0115_process_ownership.py'
+      - 'scripts/test_v0115_process_ownership.py'
+      - 'scripts/check_v0115_current_binary_proofs.py'
+      - 'scripts/test_check_v0115_current_binary_proofs.py'
+      - 'scripts/prepare_v0115_release.py'
+      - 'scripts/test_prepare_v0115_release.py'
+      - '.github/workflows/prepare-premainnet-release.yml'
       - 'config/ntime-rolling-v0115.json'
       - 'Cargo.lock'
   workflow_dispatch:
@@ -46,6 +53,9 @@ jobs:
         run: |
           python3 -I -B scripts/test_check_ntime_rolling_source.py
           python3 -I -B scripts/check_ntime_rolling_source.py
+      - name: Verify v0.11.5 proof execution source and attribution
+        shell: bash
+        run: python3 -I -B scripts/test_check_v0115_current_binary_proofs.py
       - name: Exercise real Stratum TCP submissions
         run: python3 -I -B scripts/test_bitcoin_asic_stratum.py
       - name: Check release identity and launcher boundaries
@@ -54,6 +64,20 @@ jobs:
           python3 -B scripts/test_release_launcher_boundaries.py
           python3 -B scripts/test_check_release_launcher_policy.py
       - run: git diff --exit-code -- Cargo.lock
+  process-ownership-windows:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Verify native Windows process ownership before release build
+        shell: bash
+        run: python3 -I -B scripts/test_v0115_process_ownership.py --require-windows
+      - name: Verify v0.11.5 proof execution source and attribution
+        shell: bash
+        run: python3 -I -B scripts/test_check_v0115_current_binary_proofs.py
   consensus:
     runs-on: ubuntu-latest
     timeout-minutes: 20

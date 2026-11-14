@@ -27,6 +27,14 @@ PLATFORMS = {
     'build-macos-arm': ('macos-arm64', 'macos-arm-binary', 'target/release'),
     'build-windows': ('windows-x86_64', 'windows-binary', 'target/release'),
 }
+WINDOWS_OWNERSHIP_COMMAND = 'python3 -I -B scripts/test_v0115_process_ownership.py --require-windows'
+WINDOWS_OWNERSHIP_STEP = '''      - name: Verify native Windows process ownership before release build
+        shell: bash
+        run: ''' + WINDOWS_OWNERSHIP_COMMAND + '\n'
+PROOF_EXECUTION_TEST_COMMAND = 'python3 -I -B scripts/test_check_v0115_current_binary_proofs.py'
+PROOF_EXECUTION_TEST_STEP = '''      - name: Verify v0.11.5 proof execution source and attribution
+        shell: bash
+        run: ''' + PROOF_EXECUTION_TEST_COMMAND + '\n'
 
 
 def module(relative, name):
@@ -67,12 +75,20 @@ def expected_workflow(release):
         run: /usr/bin/python3 -I -B scripts/test_prepare_v0115_release.py
       - name: v0.11.5 exact provenance and packaging controls
         run: /usr/bin/python3 -I -B scripts/test_package_v0115_release.py
+      - name: v0.11.5 proof execution source and attribution controls
+        run: /usr/bin/python3 -I -B scripts/test_check_v0115_current_binary_proofs.py
 ''')
     for job, (selected, artifact, directory) in PLATFORMS.items():
         marker = f'  {job}:\n'
         prefix, block = workflow.split(marker, 1)
         parts = re.split(r'\n(?=  [a-z0-9-]+:\n)', block, maxsplit=1)
         body, suffix = parts[0], '\n' + parts[1] if len(parts) == 2 else ''
+        if job == 'build-windows':
+            # Run the actual native process-containment regression before
+            # installing dependencies or beginning an expensive Cargo build.
+            anchor = '      - name: Install LLVM\n'
+            body = replace_exact(body, anchor, WINDOWS_OWNERSHIP_STEP + '\n'
+                                 + PROOF_EXECUTION_TEST_STEP + '\n' + anchor)
         command = (f'python3 -I -B scripts/check_ntime_rolling_candidate.py --require-authorized '
                    f'--predecessor-root target/v011-predecessor --artifact-manifest '
                    f'{directory}/hegemon-release-artifacts.json --require-final-artifact')

@@ -39,6 +39,8 @@ jobs:
         run: /usr/bin/python3 -I -B scripts/test_prepare_v0115_release.py
       - name: v0.11.5 exact provenance and packaging controls
         run: /usr/bin/python3 -I -B scripts/test_package_v0115_release.py
+      - name: v0.11.5 proof execution source and attribution controls
+        run: /usr/bin/python3 -I -B scripts/test_check_v0115_current_binary_proofs.py
       - name: v0.11 launcher boundary regressions without live peers
         run: /usr/bin/python3 -I -B scripts/test_premainnet_launcher.py
       - name: Bounded predecessor archive rejection controls
@@ -511,6 +513,14 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+
+      - name: Verify native Windows process ownership before release build
+        shell: bash
+        run: python3 -I -B scripts/test_v0115_process_ownership.py --require-windows
+
+      - name: Verify v0.11.5 proof execution source and attribution
+        shell: bash
+        run: python3 -I -B scripts/test_check_v0115_current_binary_proofs.py
 
       - name: Install LLVM
         run: choco install llvm -y
