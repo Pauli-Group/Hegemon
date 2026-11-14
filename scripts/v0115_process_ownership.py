@@ -323,15 +323,24 @@ class WindowsProcess:
 
     def abort(self):
         failures = []
+        job_termination_requested = False
         if self.job is not None:
             try:
                 self.kernel.terminate_job(self.job)
+                job_termination_requested = True
             except BaseException as error:
                 failures.append(str(error))
         if self.process is not None:
+            if not job_termination_requested:
+                try:
+                    if not self.kernel.wait(self.process, 0):
+                        self.kernel.terminate_process(self.process)
+                except BaseException as error:
+                    failures.append(str(error))
             try:
-                if not self.kernel.wait(self.process, 0):
-                    self.kernel.terminate_process(self.process)
+                # A successful job termination already requests root termination.
+                # A redundant TerminateProcess may race that asynchronous exit.
+                # Always wait on the retained identity, even if a request failed.
                 require(self.kernel.wait(self.process, CLEANUP_SECONDS * 1000), 'owned Windows root did not terminate')
                 self.code = self.kernel.exit_code(self.process)
             except BaseException as error:

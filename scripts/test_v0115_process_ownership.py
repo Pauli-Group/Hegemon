@@ -90,6 +90,30 @@ class PortableControls(unittest.TestCase):
     def test_exited_code_259_is_not_treated_as_running(self):
         kernel = FakeKernel(exit_code=259); process = p.WindowsProcess(*self.invocation(), kernel=kernel)
         self.assertEqual(process.poll(), 259); process.finish(time.monotonic() + 2); process.close()
+    def test_successful_job_termination_waits_without_redundant_process_termination(self):
+        class Kernel(FakeKernel):
+            def wait(self, process, ms):
+                self.events.append('wait_' + str(ms)); return ms != 0
+            def terminate_process(self, process):
+                raise AssertionError('successful job termination must not kill root again')
+        kernel = Kernel(); process = p.WindowsProcess(*self.invocation(), kernel=kernel)
+        process.abort()
+        self.assertLess(kernel.events.index('wait_' + str(p.CLEANUP_SECONDS * 1000)), kernel.events.index('close_20'))
+        self.assertEqual(sorted(kernel.closed), [10, 20, 30])
+    def test_failed_termination_requests_still_wait_retained_root_and_preserve_errors(self):
+        class Kernel(FakeKernel):
+            def terminate_job(self, job):
+                self.events.append('terminate_job'); raise p.OwnershipError('TerminateJobObject failed; Win32 GetLastError=5')
+            def wait(self, process, ms):
+                self.events.append('wait_' + str(ms)); return ms != 0
+            def terminate_process(self, process):
+                self.events.append('terminate_process'); raise p.OwnershipError('TerminateProcess failed; Win32 GetLastError=5')
+        kernel = Kernel(); process = p.WindowsProcess(*self.invocation(), kernel=kernel)
+        with self.assertRaisesRegex(p.OwnershipError, 'TerminateJobObject.*TerminateProcess'):
+            process.abort()
+        self.assertLess(kernel.events.index('terminate_process'), kernel.events.index('wait_' + str(p.CLEANUP_SECONDS * 1000)))
+        self.assertLess(kernel.events.index('wait_' + str(p.CLEANUP_SECONDS * 1000)), kernel.events.index('close_20'))
+        self.assertEqual(sorted(kernel.closed), [10, 20, 30])
     def test_reject_nuls_environment_collision_and_relative_program(self):
         valid = ([sys.executable, '', 'space argument', 'café'], Path.cwd(), {'A': 'b'})
         p.validate_invocation(*valid)
@@ -217,9 +241,28 @@ class ProcessControls(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(); self.addCleanup(temporary.cleanup)
         self.directory = Path(temporary.name).resolve()
+        self.pre_cleanup_identity = {}
     def run_child(self, mode, *args, seconds=10, label='child'):
-        return p.run_command([sys.executable, str(THIS), '--child', mode, *map(str, args)],
-                             self.directory, label, time.monotonic() + seconds)
+        self.pre_cleanup_identity = {}
+        terminate_job = p.WindowsKernel.terminate_job
+        def observe_before_termination(kernel, job):
+            for path in self.directory.glob('*.pid'):
+                try:
+                    pid = int(path.read_text())
+                    self.pre_cleanup_identity[pid] = pid_diagnostic(pid)
+                except (OSError, ValueError) as error:
+                    self.pre_cleanup_identity[str(path)] = {'diagnostic_error': str(error)}
+            return terminate_job(kernel, job)
+        with patch.object(p.WindowsKernel, 'terminate_job', observe_before_termination):
+            return p.run_command([sys.executable, str(THIS), '--child', mode, *map(str, args)],
+                                 self.directory, label, time.monotonic() + seconds)
+    def assert_clean_failure(self, error):
+        self.assertNotIn('; cleanup:', str(error), 'unexpected cleanup failure: ' + str(error)
+                         + '; pre_cleanup=' + json.dumps(self.pre_cleanup_identity, sort_keys=True))
+    def assert_pid_stopped(self, pid, error):
+        alive = pid_alive(pid)
+        self.assertFalse(alive, json.dumps({'expected_failure': str(error), 'pid': pid,
+            'before_cleanup': self.pre_cleanup_identity.get(pid), 'after_cleanup': pid_diagnostic(pid)}, sort_keys=True))
     def test_real_exit_and_exact_bounded_stdio(self):
         result = self.run_child('echo', 'space argument', 'quote"value', 'trailing\\', 'café漢字', '')
         self.assertEqual(result['exit_code'], 0)
@@ -230,13 +273,15 @@ class ProcessControls(unittest.TestCase):
         self.assertEqual(result['process_ownership']['active_processes_after'], 0)
     def test_timeout_reaps_root_and_joins_readers(self):
         pidfile = self.directory / 'root.pid'
-        with self.assertRaisesRegex(p.OwnershipError, 'timeout'):
+        with self.assertRaisesRegex(p.OwnershipError, 'timeout') as caught:
             self.run_child('sleep', pidfile, seconds=0.3)
+        self.assert_clean_failure(caught.exception)
         self.assertTrue(pidfile.exists())
-        self.assertFalse(pid_alive(int(pidfile.read_text())))
+        self.assert_pid_stopped(int(pidfile.read_text()), caught.exception)
     def test_output_is_hard_capped_and_overflow_fails(self):
-        with self.assertRaisesRegex(p.OwnershipError, 'output exceeds bound'):
+        with self.assertRaisesRegex(p.OwnershipError, 'output exceeds bound') as caught:
             self.run_child('output')
+        self.assert_clean_failure(caught.exception)
         self.assertLessEqual((self.directory / 'child.stdout.log').stat().st_size, p.OUTPUT_CAP)
         self.assertLessEqual((self.directory / 'child.stderr.log').stat().st_size, p.OUTPUT_CAP)
 
@@ -256,15 +301,17 @@ class NativeWindowsControls(ProcessControls):
             self.assertEqual(ownership['accounting']['active_processes'], 0)
     def test_root_exit_with_leaf_retaining_writers_fails_and_kills_leaf(self):
         leaf = self.directory / 'leaf.pid'
-        with self.assertRaisesRegex(p.OwnershipError, 'descendants'):
+        with self.assertRaisesRegex(p.OwnershipError, 'descendants') as caught:
             self.run_child('spawn-exit', leaf)
-        self.assertTrue(leaf.exists()); self.assertFalse(pid_alive(int(leaf.read_text())))
+        self.assert_clean_failure(caught.exception)
+        self.assertTrue(leaf.exists()); self.assert_pid_stopped(int(leaf.read_text()), caught.exception)
     def test_timeout_with_leaf_kills_both_and_joins_pipe_readers(self):
         root, leaf = self.directory / 'root.pid', self.directory / 'leaf.pid'
-        with self.assertRaisesRegex(p.OwnershipError, 'timeout'):
+        with self.assertRaisesRegex(p.OwnershipError, 'timeout') as caught:
             self.run_child('spawn-wait', root, leaf, seconds=1)
-        self.assertFalse(pid_alive(int(root.read_text())))
-        self.assertFalse(pid_alive(int(leaf.read_text())))
+        self.assert_clean_failure(caught.exception)
+        self.assert_pid_stopped(int(root.read_text()), caught.exception)
+        self.assert_pid_stopped(int(leaf.read_text()), caught.exception)
     def test_refused_membership_never_resumes_real_suspended_process(self):
         sentinel = self.directory / 'must-not-exist'
         class RefuseKernel(p.WindowsKernel):
@@ -274,9 +321,10 @@ class NativeWindowsControls(ProcessControls):
             def resume(self, thread): raise AssertionError('failed containment must never resume')
         null = os.open(os.devnull, os.O_RDWR)
         try:
-            with self.assertRaisesRegex(p.OwnershipError, 'exact owned job'):
+            with self.assertRaisesRegex(p.OwnershipError, 'exact owned job') as caught:
                 p.WindowsProcess([sys.executable, str(THIS), '--child', 'sentinel', str(sentinel)],
                     self.directory, dict(os.environ), (null, null, null), kernel=RefuseKernel())
+            self.assert_clean_failure(caught.exception)
         finally:
             os.close(null)
         self.assertFalse(sentinel.exists())
@@ -295,6 +343,58 @@ class NativeWindowsControls(ProcessControls):
         nested = json.loads((self.directory / 'child.stdout.log').read_text())
         self.assertEqual(nested['process_ownership']['accounting']['active_processes'], 0)
         self.assertTrue(nested['process_ownership']['creation_time_job_association'])
+
+
+def pid_diagnostic(pid):
+    """Best-effort identity evidence; never substitutes for a liveness assertion."""
+    result = {'requested_pid': pid}
+    if os.name != 'nt':
+        result['alive'] = pid_alive(pid)
+        return result
+    handle = None
+    try:
+        kernel = c.WinDLL('kernel32', use_last_error=True)
+        class FileTime(c.Structure):
+            _fields_ = [('low', p.DWORD), ('high', p.DWORD)]
+        signatures = (
+            ('OpenProcess', [p.DWORD, p.BOOL, p.DWORD], p.HANDLE),
+            ('GetProcessId', [p.HANDLE], p.DWORD),
+            ('WaitForSingleObject', [p.HANDLE, p.DWORD], p.DWORD),
+            ('GetExitCodeProcess', [p.HANDLE, c.POINTER(p.DWORD)], p.BOOL),
+            ('GetProcessTimes', [p.HANDLE, *([c.POINTER(FileTime)] * 4)], p.BOOL),
+            ('QueryFullProcessImageNameW', [p.HANDLE, p.DWORD, c.c_wchar_p, c.POINTER(p.DWORD)], p.BOOL),
+            ('CloseHandle', [p.HANDLE], p.BOOL),
+        )
+        for name, arguments, returns in signatures:
+            function = getattr(kernel, name); function.argtypes = arguments; function.restype = returns
+        handle = kernel.OpenProcess(0x00101000, False, pid)  # SYNCHRONIZE | QUERY_LIMITED_INFORMATION.
+        if not handle:
+            result['open_error'] = c.get_last_error()
+            return result
+        result['opened_pid'] = int(kernel.GetProcessId(handle))
+        result['wait_status'] = int(kernel.WaitForSingleObject(handle, 0))
+        code = p.DWORD()
+        if kernel.GetExitCodeProcess(handle, c.byref(code)):
+            result['exit_code'] = int(code.value)
+        else:
+            result['exit_code_error'] = c.get_last_error()
+        created, exited, system, user = FileTime(), FileTime(), FileTime(), FileTime()
+        if kernel.GetProcessTimes(handle, c.byref(created), c.byref(exited), c.byref(system), c.byref(user)):
+            result['creation_time_100ns'] = (int(created.high) << 32) | int(created.low)
+            result['exit_time_100ns'] = (int(exited.high) << 32) | int(exited.low)
+        else:
+            result['process_times_error'] = c.get_last_error()
+        image = c.create_unicode_buffer(32768); length = p.DWORD(len(image))
+        if kernel.QueryFullProcessImageNameW(handle, 0, image, c.byref(length)):
+            result['image'] = image.value[:2048]
+        else:
+            result['image_error'] = c.get_last_error()
+    except BaseException as error:
+        result['diagnostic_error'] = str(error)
+    finally:
+        if handle and not kernel.CloseHandle(handle):
+            result['close_error'] = c.get_last_error()
+    return result
 
 
 def pid_alive(pid):
