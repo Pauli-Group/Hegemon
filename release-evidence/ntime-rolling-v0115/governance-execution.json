@@ -1,0 +1,15 @@
+{
+  "head": "cb3db0addc2d1bca3c8338fca172300fc0855ea3",
+  "execution_completed_at": "2026-11-14T16:16:26Z",
+  "source_sha256": {
+    "scripts/hegemon_formal_core/src/lib.rs": "1034e5b0f8a7b2f6c4eacbc68dc57d3baf344a732ecc67894a921c56238becbb",
+    "scripts/hegemon_formal_core/src/main.rs": "a6b25727291e96dcc4102d9ac8567dc9464fec93380eb779552f3c34652a8a37",
+    "protocol/versioning/src/lib.rs": "cb0a0bc8be5a40cad42fafe2f2c862725effd7b0ae5887402f832b2cad2c2df6",
+    "node/src/native/node_impl.rs": "e1b1b9c55030183db987eed8819f5f39c16c9407a9da3528ec56f806e9fc7ab2",
+    "Cargo.lock": "1c243bf3858f4ee22fa4441c7a2ee6d49b16d264147b0f3a2de845e760821719"
+  },
+  "command": "cargo test --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml governance_",
+  "tests_passed": 14,
+  "tests_failed": 0,
+  "exit_code": 0
+}

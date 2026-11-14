@@ -1,0 +1,50 @@
+{
+  "boundaries": {
+    "activation_authorized": false,
+    "deployment_authorized": false,
+    "mainnet_authorized": false,
+    "physical_asic_qualified": false,
+    "production_authorized": false,
+    "publication_authorized": false
+  },
+  "decision": "ACCEPT_BOUNDED_INTERNAL_PACKAGING_PREPARATION_SOURCE",
+  "initial_findings_resolved": [
+    "Historical v0.11.4 metadata remains unchanged; distinct v0115 metadata is aliased only into bundle canonical release path and is listed under its actual source path in packaging_inputs.",
+    "Every qualification receipt now delegates to the complete source-owned candidate final-receipt predicate with source root and exact retained original manifest. Summary-only receipts reject."
+  ],
+  "limits": [
+    "Synthetic controls and source inspection only; no actual four-platform build or production artifact qualification performed by this reviewer.",
+    "Raw run/API records must be obtained through the authenticated operator workflow; local parsing and digest consistency are not independent signatures or external provenance authentication."
+  ],
+  "reviewed_scope": [
+    "Pending profile fails packaging; accepted profile requires exact successful non-PR candidate-branch push or workflow_dispatch and all nine jobs.",
+    "Build commit/tree/source digest/lock and profile-only postbuild delta remain enforced.",
+    "Raw Actions API response plus two original ZIP digests, sizes, run/head/repository URL identity and exact member content inventories bind all supplied files without extraction.",
+    "Four platform/four binary manifests, full proof/H0/lifecycle receipts, deterministic output controls and historical pin preservation."
+  ],
+  "schema": "hegemon.v0115.independent-packaging-review.v1",
+  "source_sha256": {
+    ".github/workflows/prepare-premainnet-release.yml": "f97448f685a563d34f7964dbc94ae7ee778ca6306c7220c3fd1d4898f5c2cce3",
+    "config/testnet/0.11/release-v0115.json": "00c2be8dc617642d6f5f2e473848616e74ba3d3a9fa8fe8a01d76787253a00ec",
+    "config/testnet/0.11/release.json": "7441c71bf873442568c5668ffd4ad719d66b4b670d66264967a072e4aa3566b8",
+    "config/v0115-release-artifacts.json": "2b6bea0ad394b62442e7108d2cd9040f12b35e8b4e4233cd16fc11ab43e27e88",
+    "scripts/check_ntime_rolling_candidate.py": "c420bdf3ffea8794bd142f52111135fd52c81c60bc1ec73176bdaf5eebbcc0d2",
+    "scripts/package_v0115_release.py": "9c82479a2f963f0d1bc401ad3ca4da00435a1fb03d5ed16ccb3957eb60887f2b",
+    "scripts/prepare_v0115_release.py": "95d264b21393d4cea2dc005b1a8d01d23eb36cf1832fd68a1b9f46d64bdf0cab",
+    "scripts/test_package_v0115_release.py": "3dba4dfc1bf491dac1bd2d76a339d306decb627b95e59b4fa134fdca5e0de80c",
+    "scripts/test_prepare_v0115_release.py": "61e1a6ba1c5f32dd533915c1c195358c22fd3c1685ddc7b01514d599a0d27d1a"
+  },
+  "unresolved_findings": [],
+  "validation": {
+    "scripts/test_package_v0115_release.py": {
+      "failed": 0,
+      "log": "package-final.log",
+      "passed": 32
+    },
+    "scripts/test_prepare_v0115_release.py": {
+      "failed": 0,
+      "log": "preparation-final.log",
+      "passed": 11
+    }
+  }
+}

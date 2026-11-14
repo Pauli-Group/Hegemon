@@ -87,6 +87,13 @@ run_test_base() {
   python3 -B scripts/test_release_launcher_boundaries.py
   python3 -B scripts/test_release_artifact_manifest.py
   python3 -I -B scripts/test_qualify_combined_upgrade.py
+  if [ -f config/ntime-rolling-candidate-v0115.json ]; then
+    python3 -I -B scripts/test_check_ntime_rolling_candidate.py
+    python3 -I -B scripts/test_qualify_ntime_rolling.py
+    python3 -I -B scripts/test_package_v0115_release.py
+    python3 -I -B scripts/test_prepare_v0115_release.py
+    python3 -I -B scripts/test_check_v0115_crypto_consumer.py
+  fi
   python3 -B scripts/test_check_release_crypto_profile.py
   python3 -B .agent/hardening/smallwood-pqc-zk/test_strict_profile.py
   python3 -B scripts/test_check_smallwood_v5_candidate_gate.py

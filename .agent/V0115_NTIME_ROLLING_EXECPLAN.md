@@ -7,7 +7,7 @@ This living ExecPlan follows `.agent/PLANS.md`. Keep Progress, discoveries, deci
 
 ASIC miners may change the four-byte `nTime` seconds field of their Bitcoin-shaped work header. At present Hegemon also commits the suggested timestamp inside its mining coinbase, so merely allowing a different submitted field cannot produce the same native block hash. Release v0.11.5 adds a height-selected consensus profile that commits time in the final proof-of-work header and allows any whole-second timestamp strictly after the parent and no more than 90 seconds beyond the receiving node's clock. Before activation, existing fixed-time work and every historical hash remain unchanged. A successful test must solve work with a timestamp both before and after the job suggestion and import exactly that timestamp.
 
-The intended pre-mainnet activation is H28,860, aimed at Friday November 20, 2026 around 09:00 Calgary (UTC-6). Height governs activation; wall-clock timing is an estimate. This work prepares a PR. It does not publish binaries, deploy nodes or announce readiness.
+The intended pre-mainnet activation is H28,860, aimed at Friday November 20, 2026 around 09:00 Calgary (UTC-6). Height governs activation; wall-clock timing is an estimate. The user subsequently authorized complete release preparation and finalization with every required CI test passing. Prepare immutable four-platform artifacts and a reviewable ready PR, while keeping tags, GitHub releases, deployment and announcements untouched.
 
 ## Progress
 
@@ -22,6 +22,13 @@ The intended pre-mainnet activation is H28,860, aimed at Friday November 20, 202
 - [x] (2026-11-14 01:44Z) Independent source review found no correctness defect; draft PR #212 opened.
 - [x] (2026-11-14 01:44Z) Reproduced both sync failures on exact unchanged base and PR head; isolated HTTP test passed on both. Recorded all readiness blockers without changing unrelated code or authority.
 
+- [x] (2026-11-14) Expanded authorized scope from source PR to full unpublished release preparation; split fresh artifact qualification, packaging, dependency reachability and final review into owned parallel lanes.
+- [x] (2026-11-14) Reconciled the two sync qualification fixtures with the existing anti-pinning design and synchronized the HTTP capacity test with actual blocking-worker start; full minimal native library suite passed 1,017 tests (12 existing ignored).
+- [x] (2026-11-14) Full default native suite passed 1,017 tests (12 existing ignored); dependency guard passed all 12 actual release graphs and 27 negative controls.
+- [ ] Complete additive v0.11.5 final-artifact qualification and four-platform preparation workflow.
+- [ ] Freeze source, complete independent delta reviews and renew only truthful internal review bindings; run complete formal/crypto and all required release CI.
+- [ ] Download qualified artifacts, verify all four final receipts and deterministic archives, record accepted preparation profile, and mark PR ready without publishing.
+
 ## Surprises & Discoveries
 
 
@@ -29,7 +36,7 @@ The active source is ahead of `main`: v0.11.4 plus sync recovery is on `codex/sy
 
 Timestamp is currently bound twice: canonical V2 mining prehash and final 80-byte proof-of-work header. Removing a Stratum equality check alone would admit shares that native consensus reconstructs differently. The new profile therefore normalizes timestamp only in its mining prehash and requires exact whole-second native timestamps. Old rules retain their full-millisecond prehash.
 
-Normal CI initially rejected the new label through its historical v0.11.4 formatting/artifact policy. The additive v0.11.5 formatting checker now retains only the original 38 debt paths when byte-identical to the immutable ad77c8d predecessor; it grants no changed-file exemptions or release authority. The changed node implementation was formatted instead of adding an exception. Dependency audit separately reports four inherited lockfile advisories, recorded in release preparation; they remain a release blocker because lockfile remediation changes a proof-relation input.
+Normal CI initially rejected the new label through its historical v0.11.4 formatting/artifact policy. The additive v0.11.5 formatting checker now retains only the original 38 debt paths when byte-identical to the immutable ad77c8d predecessor; it grants no changed-file exemptions or release authority. The changed node implementation was formatted instead of adding an exception. Dependency audit separately reports four inherited lockfile advisories, recorded in release preparation; the exact lock must remain unchanged because it is a proof-relation input. Read-only triage found the affected crates absent from the resolved release graphs. A short-lived exception may be accepted only after a new fail-closed reachability guard verifies every exact packaged graph, including Windows; a missing graph or activated vulnerable crate must block.
 
 The network only has about seven hours of post-ASERT history at planning time, with a hashpower burst. A week-long extrapolation of its recent 33–52 second intervals is unsuitable; the height estimate uses the 60-second target and records timing uncertainty.
 
@@ -44,10 +51,14 @@ RPC range fields are snapshots of node time, not extensions to the job lifetime.
 
 H28,860 was chosen from a November 14 01:07 UTC snapshot at H19,354. At 60 seconds per block it projects to November 20 09:31 Calgary; a conditional stable-hash ASERT model gives about 08:54. Refresh the forecast near source freeze without changing an already announced activation unilaterally.
 
+The user expanded the scope on November 14 to finalize an unpublished release with all required CI passing. The stale sync tests assumed that unverified hints could replace a fresh live target, contradicting the accepted anti-pinning design. The runtime remains unchanged; revised tests exercise fresh lease protection, legitimate expiry/release, old completion isolation and real import. The HTTP test race came from treating reserved body-collection slots as proof that blocking workers had started; a per-node bounded test observer now establishes that precondition.
+
+The November 14 16:07 UTC public status refresh reported H20,217 and a tip time of 16:04:25.567 UTC. Target-cadence projection now gives Friday November 20 10:07 Calgary, still within the requested morning. Retain H28,860; no fixed wall-clock activation is claimed.
+
 ## Outcomes & Retrospective
 
 
-Source implementation, independent review and affected native execution qualification are complete. Draft PR #212 is open; release readiness also requires resolving the inherited dependency-audit findings. Physical ASIC/MRR acceptance remains distinct from software tests; no physical-hardware success is claimed by this PR. Release packaging, production authorization and deployment are separate work. The source PR objective is complete: bounded rolling and its RPC/adapter contract are implemented, the affected suites passed and the reviewable draft is open. Draft status records inherited dependency/sync blockers, the unreproduced full-suite HTTP failure and unchanged release-review bindings rather than declaring readiness.
+The earlier source-PR milestone is complete; the expanded unpublished-release milestone remains active. Source implementation, independent review and affected native execution qualification are complete. Draft PR #212 is open; release readiness also requires resolving the inherited dependency-audit findings. Physical ASIC/MRR acceptance remains distinct from software tests; no physical-hardware success is claimed by this PR. Release packaging is now authorized and in progress; production authorization, deployment and publication remain separate. The earlier source PR objective was complete: bounded rolling and its RPC/adapter contract are implemented, the affected suites passed and the reviewable draft is open. The initial draft recorded inherited dependency/sync blockers, the full-suite HTTP race and stale review bindings. The expanded preparation now resolves those specific failures with scoped fixes and fresh evidence; complete CI and accepted packaging still determine release readiness.
 
 ## Context and Orientation
 
@@ -66,6 +77,17 @@ Next make native prepared work use exact whole seconds under the new profile. Re
 Update the adapter to accept range metadata, fall back to fixed time if fields are absent, hash the submitted seconds and forward them unchanged. Same-job range refresh changes only range observations and cannot extend expiry. Existing target accounting, duplicate suppression, version rolling and busy retry behavior remain covered by regression tests.
 
 Finally set the product label to 0.11.5, allow exactly matching launcher metadata, document the protocol and activation estimate, run focused and regression tests, inspect the final patch independently and open a scoped PR against the current-network base branch.
+
+## Unpublished release preparation milestone
+
+
+Add `scripts/check_ntime_rolling_candidate.py` and its source-owned frozen configuration independently of historical v0.11.4 authority. The checker must bind the finite source inventory and independent internal review, preserve all 41 proof relation inputs, and execute fresh final-binary proof verification and a disposable height-zero node identity test. Its time-rolling lifecycle producer must execute the affected consensus, adapter, native time/ASERT/treasury and sync regression suites, reject zero-test filters, and bind every receipt to the actual four-binary artifact manifest. Reusing a low-level executor is permitted; reusing a historical pass as a new binary pass is not.
+
+Add `scripts/prepare_v0115_release.py` to generate the existing nine-job, read-only preparation workflow with the new candidate and formatting routes. Keep the historical generators unchanged. Add `scripts/package_v0115_release.py` and a pending `config/v0115-release-artifacts.json` profile. The pending profile cannot package a release. A successful exact-commit non-PR preparation run must produce ordinary node, wallet, walletd and private-spend binaries on Linux, Intel macOS, ARM macOS and Windows; four final-proof/H0/lifecycle receipts must independently match those bytes. Only the accepted artifact profile may change after that build source is frozen. Deterministic archives and checksums are retained as GitHub Actions artifacts and copied into a newly created directory under the primary workspace output/releases/ for durable local handoff, with no tag or GitHub Release creation. Raw ZIP SHA-256 values from the run artifacts API bind the supplied manifests and final receipts to the exact successful run.
+
+Preserve the root lock. Resolve the four inherited advisories through exact expiring policy exceptions only if `scripts/check_release_dependency_reachability.py` successfully resolves all four target triples and all three packaging package/feature selections and proves affected crates absent from normal and build dependencies. The guard pins the packaging script, relevant manifests, unchanged lock and its own implementation; a changed build selection or new advisory cannot borrow the exception. Retain source-grounded upstream triage and patched-version remediation.
+
+After code and workflow changes stabilize, independently review the entire inherited delta since `5c1d278`, including the new tests and audit/packaging routes. Update review dates, notes and exact content hashes only for actually reviewed scopes; keep all 122 external-review statuses pending and every production/hardware/activation authority false. Execute the pinned 14-test governance recipe before renewing its fingerprints in dependency order. Then run full formal-core Lean/vector/policy and formal-crypto CI, all ordinary Monorepo prerequisites, focused time-rolling CI and four-platform release preparation. Any failing or skipped required check remains work to resolve.
 
 ## Concrete Steps
 
@@ -117,3 +139,5 @@ Revision November 14, 2026: recorded draft PR #212, native ASIC (9) and timestam
 Revision November 14, 2026: recorded completed native execution, final strict formatting, fresh governance execution and unchanged review-binding blockers. Broader CI baseline diagnosis completed: two identical failures reproduce on the base, while the HTTP case passes in isolation on both sources. No unrelated sync/RPC fix, dependency waiver, proof requalification or production-review refresh is included.
 
 Revision November 14, 2026: completed baseline comparison and source-preparation outcome; retained draft status and explicit unresolved release/CI boundaries. All focused local tests, formatting and unchanged proof-input checks passed.
+
+Revision November 14, 2026: expanded the plan for the user-authorized unpublished release, recorded the 1,017-test minimal suite pass and concrete sync/HTTP diagnoses, and specified fresh source/artifact qualification, guarded dependency exceptions, four-platform packaging and exact-head CI acceptance.

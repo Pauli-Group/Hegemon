@@ -40,6 +40,10 @@ pub(crate) async fn rpc_handler(
     let (response, request_permit) = match tokio::task::spawn_blocking(move || {
         // Ownership follows the worker, not the HTTP future. Disconnecting or
         // cancelling the response cannot release capacity while this work runs.
+        #[cfg(test)]
+        if public {
+            super::public_rpc_http_tests::observe_public_rpc_worker_start(&dispatch_node);
+        }
         let response = match payload {
             Value::Array(requests) => {
                 let batch_limit = if public {

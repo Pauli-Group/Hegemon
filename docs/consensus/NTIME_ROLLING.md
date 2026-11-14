@@ -8,11 +8,11 @@ authorize publication or deploy nodes.
 
 The planning target is **Friday November 20, 2026, around 09:00 Calgary
 (UTC−6)**, following [Alberta’s current time guidance](https://www.alberta.ca/albertas-new-time-system-abt).
-Height governs activation. At the November 14 01:07 UTC observation,
-the chain was H19,354; 60-second intervals project H28,860 to about 09:31.
-A conditional stable-hash ASERT model projects about 08:54. Recent intervals
-included a hashpower burst, so neither calculation is a promised activation
-time. Recheck the forecast before announcing readiness and retain the agreed
+Height governs activation. At the refreshed November 14 16:07 UTC observation,
+the chain was H20,217; 60-second intervals project H28,860 to about 10:07 Calgary
+on Friday November 20. The observation is from the public network status endpoint.
+Recent intervals included a hashpower burst, so this target-cadence
+calculation is an estimate rather than a promised activation time. Recheck the forecast before announcing readiness and retain the agreed
 height once operators coordinate around it.
 
 ## Consensus construction
