@@ -18,7 +18,9 @@ The intended pre-mainnet activation is H28,860, aimed at Friday November 20, 202
 - [x] (2026-11-14 01:22Z) Added consensus profile and seven new consensus tests; both 72-unit/1-integration suites and no-std check passed.
 - [x] (2026-11-14 01:22Z) Implemented native RPC/admission and Stratum reconstruction; adapter suite passed 59 tests. Native optimized qualification remains below.
 - [x] (2026-11-14 01:22Z) Updated product label/launcher, protocol/operator docs, source-preparation checker and focused CI. Source gate and 11 mutation tests passed; launcher tests passed with one platform skip.
-- [ ] Run bounded qualification, independently review the patch and open the PR.
+- [x] (2026-11-14 01:44Z) Completed affected native suites: ASIC 9, timestamp 10, ASERT 5, treasury 4 (1 existing ignored), ordinary production bounds 3.
+- [x] (2026-11-14 01:44Z) Independent source review found no correctness defect; draft PR #212 opened.
+- [x] (2026-11-14 01:44Z) Reproduced both sync failures on exact unchanged base and PR head; isolated HTTP test passed on both. Recorded all readiness blockers without changing unrelated code or authority.
 
 ## Surprises & Discoveries
 
@@ -26,6 +28,8 @@ The intended pre-mainnet activation is H28,860, aimed at Friday November 20, 202
 The active source is ahead of `main`: v0.11.4 plus sync recovery is on `codex/sync-recovery-current-network-20261110`. The PR must initially stack on that branch to avoid presenting earlier releases as this change. `Cargo.lock` is a transaction-proof relation input, so a product release label must not be implemented by changing internal crate versions or lockfile bytes.
 
 Timestamp is currently bound twice: canonical V2 mining prehash and final 80-byte proof-of-work header. Removing a Stratum equality check alone would admit shares that native consensus reconstructs differently. The new profile therefore normalizes timestamp only in its mining prehash and requires exact whole-second native timestamps. Old rules retain their full-millisecond prehash.
+
+Normal CI initially rejected the new label through its historical v0.11.4 formatting/artifact policy. The additive v0.11.5 formatting checker now retains only the original 38 debt paths when byte-identical to the immutable ad77c8d predecessor; it grants no changed-file exemptions or release authority. The changed node implementation was formatted instead of adding an exception. Dependency audit separately reports four inherited lockfile advisories, recorded in release preparation; they remain a release blocker because lockfile remediation changes a proof-relation input.
 
 The network only has about seven hours of post-ASERT history at planning time, with a hashpower burst. A week-long extrapolation of its recent 33–52 second intervals is unsuitable; the height estimate uses the 60-second target and records timing uncertainty.
 
@@ -43,7 +47,7 @@ H28,860 was chosen from a November 14 01:07 UTC snapshot at H19,354. At 60 secon
 ## Outcomes & Retrospective
 
 
-Source implementation and independent source review are complete; native execution qualification and PR creation are in progress. Physical ASIC/MRR acceptance remains distinct from software tests; no physical-hardware success is claimed by this PR. Release packaging, production authorization and deployment are separate work.
+Source implementation, independent review and affected native execution qualification are complete. Draft PR #212 is open; release readiness also requires resolving the inherited dependency-audit findings. Physical ASIC/MRR acceptance remains distinct from software tests; no physical-hardware success is claimed by this PR. Release packaging, production authorization and deployment are separate work. The source PR objective is complete: bounded rolling and its RPC/adapter contract are implemented, the affected suites passed and the reviewable draft is open. Draft status records inherited dependency/sync blockers, the unreproduced full-suite HTTP failure and unchanged release-review bindings rather than declaring readiness.
 
 ## Context and Orientation
 
@@ -72,7 +76,7 @@ All commands below run from the isolated worktree `/private/tmp/hegemon-v0115-nt
     CARGO_TARGET_DIR=/private/tmp/hegemon-v0115-consensus-build CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 cargo test --locked -p consensus-light-client --features combined-upgrade-rehearsal
     python3 -I -B scripts/test_bitcoin_asic_stratum.py
     python3 -B scripts/test_package_v011_release.py
-    CARGO_TARGET_DIR=/private/tmp/hegemon-v0115-build CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 cargo test --locked -p hegemon-node --no-default-features --features development-candidate,combined-upgrade-rehearsal,wallet/rpc-client,wallet/private-spend-dev-artifacts --lib time_rolling
+    CARGO_TARGET_DIR=/private/tmp/hegemon-v0115-build CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 cargo test --locked -p hegemon-node --no-default-features --features development-candidate,combined-upgrade-rehearsal,asert-rehearsal,wallet/rpc-client,wallet/private-spend-dev-artifacts --lib time_rolling
 
 Native qualification additionally uses `CARGO_PROFILE_TEST_DEBUG=0 CARGO_PROFILE_TEST_OPT_LEVEL=2`, matching the existing CI optimization of expensive circuit loops. An initial unoptimized lifecycle run was stopped after sustained CPU work; it was not recorded as a pass. The rehearsal suite requires the existing Development candidate and wallet test features listed above.
 
@@ -107,3 +111,9 @@ RPC time fields are eight-character lowercase hexadecimal seconds. Activation he
 Revision November 14, 2026: initial implementation plan records the live-network base, H28,860 estimate and exact consensus/RPC boundary before integration.
 
 Revision November 14, 2026: recorded source completion, exact consensus/adapter/source-gate results, source-only CI, required rehearsal wallet features and optimized test profile after an unoptimized execution was stopped.
+
+Revision November 14, 2026: recorded draft PR #212, native ASIC (9) and timestamp (10) test passes, strict successor formatting integration, and the inherited dependency-audit release blocker. ASERT regression execution explicitly enables its own rehearsal feature to prevent an empty test filter.
+
+Revision November 14, 2026: recorded completed native execution, final strict formatting, fresh governance execution and unchanged review-binding blockers. Broader CI baseline diagnosis completed: two identical failures reproduce on the base, while the HTTP case passes in isolation on both sources. No unrelated sync/RPC fix, dependency waiver, proof requalification or production-review refresh is included.
+
+Revision November 14, 2026: completed baseline comparison and source-preparation outcome; retained draft status and explicit unresolved release/CI boundaries. All focused local tests, formatting and unchanged proof-input checks passed.

@@ -9,6 +9,8 @@ on:
       - 'node/src/native/**'
       - 'protocol/versioning/**'
       - 'scripts/*ntime*'
+      - 'scripts/check-core.sh'
+      - 'scripts/test_check_qualified_formatting.py'
       - 'scripts/*bitcoin_asic*'
       - 'scripts/v011_join.py'
       - 'scripts/test_package_v011_release.py'
@@ -39,6 +41,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Check source preparation and unchanged transaction-proof identity
         run: |
           python3 -I -B scripts/test_check_ntime_rolling_source.py
@@ -58,8 +61,16 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Select the source-pinned Rust toolchain
         run: rustup show
+      - name: Check strict source formatting without release-artifact authority
+        run: |
+          python3 -I -B scripts/test_check_ntime_candidate_formatting.py
+          python3 -I -B scripts/test_check_qualified_formatting.py
+          python3 -I -B scripts/check_ntime_candidate_formatting.py --manifest workspace
+          python3 -I -B scripts/check_ntime_candidate_formatting.py --manifest htlc
+          python3 -I -B scripts/check_ntime_candidate_formatting.py --manifest proof-backend
       - name: Check historical and new consensus profiles
         run: |
           cargo test --locked -p consensus-light-client
@@ -73,15 +84,17 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Select the source-pinned Rust toolchain
         run: rustup show
       - name: Check ordinary production-height time bounds
         run: cargo test --locked -p hegemon-node --no-default-features --lib native_timestamp_rolling
       - name: Check activation, solved work, sync, restart and reorg
         env:
-          NTIME_TEST_FEATURES: development-candidate,combined-upgrade-rehearsal,wallet/rpc-client,wallet/private-spend-dev-artifacts
+          NTIME_TEST_FEATURES: development-candidate,combined-upgrade-rehearsal,asert-rehearsal,wallet/rpc-client,wallet/private-spend-dev-artifacts
         run: |
           cargo test --locked -p hegemon-node --no-default-features --features "$NTIME_TEST_FEATURES" --lib native::bitcoin_asic_tests::
           cargo test --locked -p hegemon-node --no-default-features --features "$NTIME_TEST_FEATURES" --lib native::timestamp_admission_tests::
           cargo test --locked -p hegemon-node --no-default-features --features "$NTIME_TEST_FEATURES" --lib native::asert_tests::
+          cargo test --locked -p hegemon-node --no-default-features --features "$NTIME_TEST_FEATURES" --lib treasury_cadence
       - run: git diff --exit-code -- Cargo.lock

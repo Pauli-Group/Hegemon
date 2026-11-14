@@ -93,9 +93,9 @@ From the repository root run:
     cargo test --locked -p consensus-light-client
     cargo test --locked -p consensus-light-client --features combined-upgrade-rehearsal
     python3 -B scripts/test_bitcoin_asic_stratum.py
-    cargo test --locked -p hegemon-node --no-default-features --features development-candidate,combined-upgrade-rehearsal,wallet/rpc-client,wallet/private-spend-dev-artifacts --lib time_rolling
-    cargo test --locked -p hegemon-node --no-default-features --features development-candidate,combined-upgrade-rehearsal,wallet/rpc-client,wallet/private-spend-dev-artifacts --lib bitcoin_asic
-    cargo test --locked -p hegemon-node --no-default-features --features development-candidate,combined-upgrade-rehearsal,wallet/rpc-client,wallet/private-spend-dev-artifacts --lib timestamp_admission
+    cargo test --locked -p hegemon-node --no-default-features --features development-candidate,combined-upgrade-rehearsal,asert-rehearsal,wallet/rpc-client,wallet/private-spend-dev-artifacts --lib time_rolling
+    cargo test --locked -p hegemon-node --no-default-features --features development-candidate,combined-upgrade-rehearsal,asert-rehearsal,wallet/rpc-client,wallet/private-spend-dev-artifacts --lib bitcoin_asic
+    cargo test --locked -p hegemon-node --no-default-features --features development-candidate,combined-upgrade-rehearsal,asert-rehearsal,wallet/rpc-client,wallet/private-spend-dev-artifacts --lib timestamp_admission
 
 The isolated `combined-upgrade-rehearsal` feature activates combined rules at
 H120 and time rolling at H180 only for its dedicated Development identity.

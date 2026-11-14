@@ -31,7 +31,10 @@ run_lint() {
   python3 -I -B scripts/test_check_qualified_formatting.py
   python3 -I -B scripts/test_check_qualified_clippy.py
   local formatting_checker=scripts/check_qualified_formatting.py
-  if [ -f config/combined-upgrade-candidate-20261108.json ]; then
+  if [ -f config/ntime-rolling-v0115.json ]; then
+    python3 -I -B scripts/test_check_ntime_candidate_formatting.py
+    formatting_checker=scripts/check_ntime_candidate_formatting.py
+  elif [ -f config/combined-upgrade-candidate-20261108.json ]; then
     formatting_checker=scripts/check_combined_candidate_formatting.py
   fi
   python3 -I -B "$formatting_checker" --manifest workspace
