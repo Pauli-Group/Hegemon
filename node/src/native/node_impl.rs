@@ -6832,11 +6832,14 @@ impl NativeNode {
         })
         .map_err(native_work_template_admission_error)?;
         let cumulative_work = cumulative_work.map_err(native_work_template_admission_error)?;
-        // Native ordering is in milliseconds. Bitcoin80 commits the complete
-        // native timestamp through its work prehash and projects nTime to seconds;
-        // fixed job time does not require adding one second for every block.
-        let template_timestamp_ms =
-            native_next_work_timestamp_ms(best.timestamp_ms, native_admission_time_ms())?;
+        // Historical profiles bind the full millisecond timestamp in the
+        // prehash. Time-rolling blocks instead use exact whole-second nTime.
+        let template_timestamp_ms = native_next_work_timestamp_ms_at_height(
+            &self.config.chain_id(),
+            height,
+            best.timestamp_ms,
+            native_admission_time_ms(),
+        )?;
         self.retain_current_asset_reference_candidates(&mut pending_actions, &best, height)?;
         retain_one_native_controlled_asset_action(&mut pending_actions);
         let v8_actions = pending_actions
@@ -7373,6 +7376,12 @@ impl NativeNode {
         {
             return Ok(None);
         }
+        validate_native_rolling_timestamp(
+            &self.config.chain_id(),
+            work.height,
+            snapshot.best.timestamp_ms,
+            work.timestamp_ms,
+        )?;
         validate_native_fresh_timestamp_at(work.timestamp_ms, native_admission_time_ms())?;
         let expected_pow_bits = self.expected_child_pow_bits(&snapshot.best)?;
         if work.pow_bits != expected_pow_bits {

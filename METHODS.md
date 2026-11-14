@@ -1901,9 +1901,15 @@ Its double-SHA256 digest is the raw Merkle-root field of the 80-byte work header
 fixed version `0x20000000` little-endian, reversed native parent hash, raw mining
 root, checked `timestamp_ms / 1000` as little-endian u32, compact bits little-endian,
 then `nonce[0..4]`. Reverse the raw double-SHA256 header digest before comparing
-with the native big-endian target. Out-of-range Bitcoin seconds reject; native
-templates use whole-second timestamps. The canonical prehash still binds the
-full timestamp and every original block commitment.
+with the native big-endian target. Out-of-range Bitcoin seconds reject. Before
+the v0.11.5 time-rolling activation, the canonical prehash binds the
+full timestamp and every original block commitment. From H28,860 the new
+profile zeros timestamp only in that prehash, requires canonical whole-second
+native time, and binds the actual seconds in the final 80-byte header. The
+accepted range is strictly after the parent through node-now plus 90 seconds,
+inclusive; it may precede the suggested job time. Original ASERT and treasury
+activation origins are preserved. See
+[the time-rolling specification](docs/consensus/NTIME_ROLLING.md).
 
 ASIC nBits must be positive and canonical, with maximum `0x207fffff`. Normalize
 the legacy unsigned retarget result by re-encoding its target with Bitcoin's

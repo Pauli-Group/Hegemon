@@ -176,10 +176,11 @@ class PackagingTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             join.verify_bundle(bundle, check_host=False)
 
-    def test_runtime_bundle_preserves_old_versions_and_accepts_exact_v0114(self):
+    def test_runtime_bundle_preserves_old_versions_and_accepts_exact_v0115(self):
         bundle, _ = self.fixture_bundle()
         for software_release, software_version in (("v0.11", "0.11.0"), ("v0.11.1", "0.11.1"),
-                ("v0.11.2", "0.11.2"), ("v0.11.3", "0.11.3"), ("v0.11.4", "0.11.4")):
+                ("v0.11.2", "0.11.2"), ("v0.11.3", "0.11.3"), ("v0.11.4", "0.11.4"),
+                ("v0.11.5", "0.11.5")):
             with self.subTest(release=software_release):
                 self.set_bundle_software(bundle, software_release, software_version)
                 self.assertEqual(join.verify_bundle(bundle, check_host=False), bundle / "bin/hegemon-node")
@@ -187,9 +188,11 @@ class PackagingTests(unittest.TestCase):
     def test_runtime_bundle_rejects_unknown_future_and_mismatched_versions_even_when_resealed(self):
         bundle, _ = self.fixture_bundle()
         for software_release, software_version, metadata_pair in (
-                ("v0.11.5", "0.11.5", None), ("v1.0", "1.0.0", None),
+                ("v0.11.6", "0.11.6", None), ("v1.0", "1.0.0", None),
                 ("v0.11.4", "0.11.3", None), ("v0.11.3", "0.11.4", None),
-                ("v0.11.4", "0.11.4", ("v0.11.3", "0.11.3"))):
+                ("v0.11.4", "0.11.4", ("v0.11.3", "0.11.3")),
+                ("v0.11.5", "0.11.4", None), ("v0.11.4", "0.11.5", None),
+                ("v0.11.5", "0.11.5", ("v0.11.4", "0.11.4"))):
             with self.subTest(release=software_release, version=software_version, metadata=metadata_pair):
                 self.set_bundle_software(bundle, software_release, software_version, metadata_pair=metadata_pair)
                 with self.assertRaisesRegex(ValueError, "software identities disagree"):
@@ -236,7 +239,7 @@ class PackagingTests(unittest.TestCase):
         with mock.patch.object(join, "verify_bundle", return_value=binary):
             with self.assertRaisesRegex(ValueError, "exact v0.11.3"):
                 join.launch_command(bundle, join.arguments(["--public-submit-rpc"]), {})
-            for version in ("0.11.3", "0.11.4"):
+            for version in ("0.11.3", "0.11.4", "0.11.5"):
                 with self.subTest(version=version):
                     record = json.loads((bundle / "bundle.json").read_text())
                     record.update(software_release="v" + version, software_version=version)
@@ -249,17 +252,30 @@ class PackagingTests(unittest.TestCase):
                     self.assertIn("--rpc-external", command)
                     self.assertEqual(command[command.index("--rpc-cors") + 1], "chrome-extension://test-wallet")
 
+    def test_exact_v0115_bundle_passes_integrity_before_public_submit_launch(self):
+        bundle, _ = self.fixture_bundle()
+        self.set_bundle_software(bundle, "v0.11.5", "0.11.5")
+        with mock.patch.object(join.sys, "platform", "linux"), mock.patch.object(join.platform, "machine", return_value="x86_64"):
+            command, _ = join.launch_command(bundle, join.arguments(["--public-submit-rpc"]), {})
+            self.assertEqual(command[0], str(bundle / "bin/hegemon-node"))
+            self.assertEqual(command[command.index("--rpc-methods") + 1], "public-submit")
+            self.assertNotIn("--rpc-external", command)
+            self.set_bundle_software(bundle, "v0.11.5", "0.11.5", metadata_pair=("v0.11.4", "0.11.4"))
+            with self.assertRaisesRegex(ValueError, "software identities disagree"):
+                join.launch_command(bundle, join.arguments(["--public-submit-rpc"]), {})
+
     def test_public_rpc_rejects_old_future_and_mismatched_software_pairs(self):
         bundle, _ = self.fixture_bundle()
         with mock.patch.object(join, "verify_bundle", return_value=bundle / "bin/hegemon-node"):
             for software_release, software_version in (("v0.11", "0.11.0"), ("v0.11.1", "0.11.1"),
-                    ("v0.11.2", "0.11.2"), ("v0.11.5", "0.11.5"),
-                    ("v0.11.4", "0.11.3"), ("v0.11.3", "0.11.4")):
+                    ("v0.11.2", "0.11.2"), ("v0.11.6", "0.11.6"),
+                    ("v0.11.4", "0.11.3"), ("v0.11.3", "0.11.4"),
+                    ("v0.11.5", "0.11.4"), ("v0.11.4", "0.11.5")):
                 with self.subTest(release=software_release, version=software_version):
                     record = json.loads((bundle / "bundle.json").read_bytes())
                     record.update(software_release=software_release, software_version=software_version)
                     (bundle / "bundle.json").write_bytes(pack.encoded(record))
-                    with self.assertRaisesRegex(ValueError, "exact v0.11.3 or v0.11.4"):
+                    with self.assertRaisesRegex(ValueError, "exact v0.11.3, v0.11.4 or v0.11.5"):
                         join.launch_command(bundle, join.arguments(["--public-submit-rpc"]), {})
 
     def test_public_rpc_rejects_unsafe_combinations_and_wildcard_origins(self):
@@ -275,7 +291,7 @@ class PackagingTests(unittest.TestCase):
                     ["--public-submit-rpc", "--rpc-cors", "https://wallet.example:invalid"],
                     ["--public-submit-rpc", "--rpc-cors", "null"])
         with mock.patch.object(join, "verify_bundle", return_value=bundle / "bin/hegemon-node"):
-            for version in ("0.11.3", "0.11.4"):
+            for version in ("0.11.3", "0.11.4", "0.11.5"):
                 record = json.loads((bundle / "bundle.json").read_bytes())
                 record.update(software_release="v" + version, software_version=version)
                 (bundle / "bundle.json").write_bytes(pack.encoded(record))

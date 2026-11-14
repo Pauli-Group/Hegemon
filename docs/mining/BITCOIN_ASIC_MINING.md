@@ -97,9 +97,20 @@ The adapter rejects any bit outside the last negotiated mask and constructs
 `nVersion = (job_version & ~mask) | version_bits`. Consensus independently
 restricts changes to the 24 mining bits `0x1fffffe0` at the active height.
 Those bits are reserved for mining; no deployment signaling is encoded there.
-Time rolling remains disabled, so submissions must repeat the job's exact
-`ntime`. Version rolling does not ease a target or change the 60-second target
-spacing, fixed job timestamp policy, or parent-driven ASERT gap behavior.
+Before the v0.11.5 activation at H28,860, submissions must repeat the job's
+exact `ntime`. At activation the node advertises `ntime_rolling: true`,
+`ntime_activation_height`, `min_ntime`, `max_ntime`, `server_time` and
+`max_future_skew_seconds: 90`. Time fields are eight-character numeric hex.
+The inclusive minimum is the first whole second strictly after the parent;
+the maximum is the node clock plus 90 seconds at the response. Miners may
+submit before or after the suggested time inside those bounds. Old RPCs
+without range fields retain fixed-time behavior. The adapter advances observed
+node time using monotonic elapsed time and refreshes it on polls; final native
+admission checks its current clock. Polling never renews the original
+120-second job expiry. See [the consensus specification](../consensus/NTIME_ROLLING.md)
+for exact commitment and activation semantics. Version and time rolling do
+not ease the target or change the 60-second target spacing and parent-driven
+ASERT behavior.
 
 The adapter authenticates `mining.authorize` against its configured worker and
 password, announces the configured share difficulty or the easier network
@@ -112,9 +123,9 @@ identities include that version. The node makes the final admission
 decision. A locally accepted share below the network target is a measurement
 of miner work, not a mined Hegemon block.
 
-## Coordinated testnet reset
+## Historical Bitcoin80 genesis reset
 
-This follow-up changes consensus and selects rules hash
+The initial Bitcoin80 transition changed consensus and selected rules hash
 `a08fc9ec383eec2bff554c64085bed809160241b89cee84cf2c8f27170a7e41f`
 with genesis domain `hegemon-native-genesis-bitcoin80-v1`. It is not a
 compatible upgrade of a running V2 chain. The new binary refuses to open
@@ -127,8 +138,8 @@ verified seeds, and the intended miner addresses. Start the new era together,
 then confirm genesis and rules hashes, peer connections, accepted mining work,
 and cross-node tip agreement. Keep old data and the previous binary available
 for rollback. Do not delete the old databases or expect old testnet notes to
-become spendable automatically on the new genesis. This PR does not perform
-that reset or select its release authority.
+become spendable automatically on the new genesis. The later v0.11.4 and
+v0.11.5 height-activated upgrades preserve the existing Bitcoin80 genesis and databases; they do not require this historical reset.
 
 The dev genesis target is CPU-bootstrap difficulty, not a TH/s launch setting.
 Before connecting high-throughput miners, select and test a common appropriate
@@ -154,8 +165,9 @@ malformed input, stale jobs, wrong passwords, duplicate shares, job retention,
 cache saturation, stalled clients, fixed time, fixed-version compatibility,
 24+4 compatibility, default 20+8, negotiated device subsets, below-minimum
 diagnostics, malformed configuration, out-of-mask rejection, exact rolled
-header bytes, version-aware duplicate identity, and activation/reorg mask
-notifications.
+header bytes, version-aware duplicate identity, activation/reorg mask
+notifications, solved backward/forward time rolling, refreshed node-clock
+bounds, clock rollback and original job expiry.
 They do not show that a physical ASIC, a real node,
 or the shared testnet accepted a block. Hardware validation still requires an
 approved node release and genesis, a connected ASIC, a full-target solution,

@@ -1,0 +1,87 @@
+name: v0.11.5 time rolling
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/ntime-rolling.yml'
+      - 'consensus-light-client/**'
+      - 'consensus/**'
+      - 'node/src/native/**'
+      - 'protocol/versioning/**'
+      - 'scripts/*ntime*'
+      - 'scripts/*bitcoin_asic*'
+      - 'scripts/v011_join.py'
+      - 'scripts/test_package_v011_release.py'
+      - 'config/ntime-rolling-v0115.json'
+      - 'Cargo.lock'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ntime-rolling-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_BUILD_JOBS: '2'
+  CARGO_INCREMENTAL: '0'
+  CARGO_PROFILE_DEV_DEBUG: '0'
+  CARGO_PROFILE_TEST_DEBUG: '0'
+  CARGO_PROFILE_TEST_OPT_LEVEL: '2'
+  CARGO_TARGET_DIR: target/v0115
+
+jobs:
+  source-and-adapter:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+      - name: Check source preparation and unchanged transaction-proof identity
+        run: |
+          python3 -I -B scripts/test_check_ntime_rolling_source.py
+          python3 -I -B scripts/check_ntime_rolling_source.py
+      - name: Exercise real Stratum TCP submissions
+        run: python3 -I -B scripts/test_bitcoin_asic_stratum.py
+      - name: Check release identity and launcher boundaries
+        run: |
+          python3 -B scripts/test_package_v011_release.py
+          python3 -B scripts/test_release_launcher_boundaries.py
+          python3 -B scripts/test_check_release_launcher_policy.py
+      - run: git diff --exit-code -- Cargo.lock
+  consensus:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+      - name: Select the source-pinned Rust toolchain
+        run: rustup show
+      - name: Check historical and new consensus profiles
+        run: |
+          cargo test --locked -p consensus-light-client
+          cargo test --locked -p consensus-light-client --features combined-upgrade-rehearsal
+          cargo check --locked -p consensus-light-client --no-default-features
+      - run: git diff --exit-code -- Cargo.lock
+  native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+      - name: Select the source-pinned Rust toolchain
+        run: rustup show
+      - name: Check ordinary production-height time bounds
+        run: cargo test --locked -p hegemon-node --no-default-features --lib native_timestamp_rolling
+      - name: Check activation, solved work, sync, restart and reorg
+        env:
+          NTIME_TEST_FEATURES: development-candidate,combined-upgrade-rehearsal,wallet/rpc-client,wallet/private-spend-dev-artifacts
+        run: |
+          cargo test --locked -p hegemon-node --no-default-features --features "$NTIME_TEST_FEATURES" --lib native::bitcoin_asic_tests::
+          cargo test --locked -p hegemon-node --no-default-features --features "$NTIME_TEST_FEATURES" --lib native::timestamp_admission_tests::
+          cargo test --locked -p hegemon-node --no-default-features --features "$NTIME_TEST_FEATURES" --lib native::asert_tests::
+      - run: git diff --exit-code -- Cargo.lock

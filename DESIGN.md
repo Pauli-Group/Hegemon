@@ -1952,8 +1952,15 @@ future limit. The comparison uses the complete committed native timestamp. A
 shared typed rejection permits the identical bytes to be admitted once timely;
 it does not create a permanent invalid-hash cache. Startup, canonical duplicates
 and deterministic historical replay remain independent of the current clock.
-Authoring selects `max(now_ms, parent_ms + 1)` with checked addition and pauses
-when no legal next timestamp exists. Bitcoin80 nTime remains fixed for each job.
+Historical authoring selects `max(now_ms, parent_ms + 1)` with checked addition
+and pauses when no legal next timestamp exists. Bitcoin80 nTime remains fixed
+before the v0.11.5 time-rolling activation. At
+H28,860 the additive profile permits exact whole-second timestamps strictly
+after the parent and at most 90 seconds beyond the admitting node clock.
+Only its mining prehash normalizes timestamp to zero; the final Bitcoin80
+header binds the submitted time. Historical prehashes, the original ASERT
+anchor and treasury cadence remain unchanged. See
+[bounded time rolling](docs/consensus/NTIME_ROLLING.md) for the exact contract.
 
 An issued ASIC solution can become temporarily future-dated after local clock
 rollback. The node retains only unexpired jobs matching the current tip; its

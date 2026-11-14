@@ -214,3 +214,87 @@ fn native_timestamp_cached_work_clock_rollback_rebuilds_and_fast_authoring_uses_
     let _ = mine_at(&node, horizon);
     assert!(with_native_admission_time(now, || node.prepare_work()).is_err());
 }
+
+#[test]
+fn native_timestamp_rolling_bounds_use_parent_and_fresh_node_clock() {
+    let parent = 1_000_999;
+    let now = 1_100_999;
+    let (minimum, maximum) = native_ntime_bounds(parent, now).unwrap();
+    assert_eq!((minimum, maximum), (1_001, 1_190));
+    assert!(u64::from(minimum) * 1_000 > parent);
+    validate_native_fresh_timestamp_at(u64::from(maximum) * 1_000, now).unwrap();
+    assert!(validate_native_fresh_timestamp_at(u64::from(maximum + 1) * 1_000, now).is_err());
+
+    // The parent's last millisecond excludes that entire second. A rollback
+    // updates the upper bound while leaving the same parent-derived minimum.
+    assert_eq!(
+        native_ntime_bounds(parent, now - 70_000).unwrap(),
+        (1_001, 1_120)
+    );
+    assert_eq!(
+        native_ntime_bounds(1_089_999, 1_000_999).unwrap(),
+        (1_090, 1_090)
+    );
+    let empty = native_ntime_bounds(1_090_000, 1_000_999).unwrap_err();
+    assert!(empty.downcast_ref::<NativeFutureTimestamp>().is_some());
+    assert_eq!(
+        native_ntime_bounds(1_090_000, 1_001_000).unwrap(),
+        (1_091, 1_091)
+    );
+}
+
+#[test]
+fn native_timestamp_rolling_bounds_clamp_without_wrapping_32_bit_ntime() {
+    let last = u64::from(u32::MAX);
+    assert_eq!(
+        native_ntime_bounds((last - 1) * 1_000 + 999, u64::MAX).unwrap(),
+        (u32::MAX, u32::MAX)
+    );
+    assert!(native_ntime_bounds(last * 1_000, u64::MAX).is_err());
+    assert!(native_ntime_bounds(u64::MAX, u64::MAX).is_err());
+}
+
+#[test]
+fn native_timestamp_rolling_activation_preserves_legacy_and_canonicalizes_new_work() {
+    #[cfg(feature = "combined-upgrade-rehearsal")]
+    let chain = consensus_light_client::COMBINED_REHEARSAL_CHAIN_ID;
+    #[cfg(not(feature = "combined-upgrade-rehearsal"))]
+    let chain = consensus_light_client::PREMAINNET_CHAIN_ID;
+    let activation = consensus_light_client::native_time_rolling_activation_height(&chain).unwrap();
+    let parent = 1_000_789;
+    let now = 1_200_123;
+    assert_eq!(
+        native_next_work_timestamp_ms_at_height(&chain, activation - 1, parent, now).unwrap(),
+        now,
+        "the last historical profile retains all timestamp milliseconds"
+    );
+    for height in [activation, activation + 1] {
+        let timestamp =
+            native_next_work_timestamp_ms_at_height(&chain, height, parent, now).unwrap();
+        assert_eq!(timestamp, 1_200_000);
+        validate_native_rolling_timestamp(&chain, height, parent, timestamp).unwrap();
+        assert!(validate_native_rolling_timestamp(&chain, height, parent, timestamp + 1).is_err());
+        assert!(validate_native_rolling_timestamp(&chain, height, 1_200_000, timestamp).is_err());
+        assert!(validate_native_rolling_timestamp(
+            &chain,
+            height,
+            parent,
+            (u64::from(u32::MAX) + 1) * 1_000,
+        )
+        .is_err());
+        assert_eq!(
+            native_next_work_timestamp_ms_at_height(&chain, height, timestamp, now).unwrap(),
+            timestamp + 1_000,
+            "same-second authoring must still advance strictly past its parent"
+        );
+        assert!(native_next_work_timestamp_ms_at_height(
+            &chain,
+            height,
+            now + consensus::reward::MAX_FUTURE_SKEW_MS,
+            now,
+        )
+        .unwrap_err()
+        .downcast_ref::<NativeFutureTimestamp>()
+        .is_some());
+    }
+}
