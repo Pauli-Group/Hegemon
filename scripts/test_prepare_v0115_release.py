@@ -147,6 +147,64 @@ class WorkflowTests(unittest.TestCase):
             with self.subTest(step=replacement), self.assertRaises(ValueError):
                 preparation.verify_preparation(self.release, self.workflow.replace(step, replacement, 1))
 
+    def test_windows_lean_auth_is_only_for_fixed_metadata_and_cleared_before_assets(self):
+        windows = re.split(r'\n(?=  [a-z0-9-]+:\n)',
+                           self.workflow.split('  build-windows:\n', 1)[1], maxsplit=1)[0]
+        step = windows.split('      - name: Install candidate qualification Lean toolchain\n', 1)[1]
+        step = step.split('\n      - name:', 1)[0]
+        metadata = ('            $release = Invoke-RestMethod -Uri '
+                    '"https://api.github.com/repos/leanprover/elan/releases/tags/$version" '
+                    '-Headers $metadataHeaders -MaximumRedirection 0\n')
+        asset = '          Invoke-WebRequest -Uri $assets[0].browser_download_url -OutFile $archive\n'
+        guard = "          if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) { throw 'GitHub metadata token is required' }\n"
+        cleanup = '            Remove-Item -Path Env:GH_TOKEN, Env:GITHUB_TOKEN -ErrorAction SilentlyContinue\n'
+        self.assertEqual(self.workflow.count('          GH_TOKEN: ${{ github.token }}\n'), 1)
+        self.assertIn('        env:\n          GH_TOKEN: ${{ github.token }}\n', step)
+        self.assertIn(guard, step)
+        self.assertIn("          $version = 'v4.2.2'\n", step)
+        self.assertIn(metadata, step)
+        self.assertEqual(step.count('-Headers '), 1)
+        self.assertIn('            Authorization = "Bearer $env:GH_TOKEN"\n', step)
+        self.assertIn("            Accept = 'application/vnd.github+json'\n", step)
+        self.assertIn("            'X-GitHub-Api-Version' = '2022-11-28'\n", step)
+        self.assertIn('          } finally {\n            $metadataHeaders.Clear()\n            Remove-Variable metadataHeaders\n' + cleanup, step)
+        self.assertLess(step.index(guard), step.index(metadata))
+        self.assertLess(step.index(cleanup), step.index(asset))
+        self.assertIn(asset, step)
+        for retained in ("if ($release.tag_name -ne $version)", "$assets.Count -ne 1",
+                         "'^sha256:[0-9a-f]{64}$'", "'elan asset SHA256 differs'",
+                         "Get-Content -Raw 'formal/asert/lean-toolchain'", 'toolchain install $toolchain'):
+            self.assertIn(retained, step)
+        self.assertNotIn('PreserveAuthorizationOnRedirect', step)
+        self.assertNotIn('WebSession', step)
+        self.assertNotIn('PSDefaultParameterValues', step)
+
+    def test_windows_lean_missing_token_unauthenticated_or_leaked_headers_fail_policy(self):
+        mutations = (
+            ('          GH_TOKEN: ${{ github.token }}\n', ''),
+            ("          if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) { throw 'GitHub metadata token is required' }\n", ''),
+            (' -Headers $metadataHeaders -MaximumRedirection 0', ''),
+            (' -MaximumRedirection 0', ''),
+            ('https://api.github.com/repos/leanprover/elan/releases/tags/$version', 'https://example.com/metadata'),
+            ('            Remove-Variable metadataHeaders\n', ''),
+            ('            Remove-Item -Path Env:GH_TOKEN, Env:GITHUB_TOKEN -ErrorAction SilentlyContinue\n', ''),
+            ('Invoke-WebRequest -Uri $assets[0].browser_download_url -OutFile $archive',
+             'Invoke-WebRequest -Uri $assets[0].browser_download_url -Headers $metadataHeaders -OutFile $archive'),
+        )
+        for before, after in mutations:
+            with self.subTest(before=before), self.assertRaises(ValueError):
+                preparation.verify_preparation(self.release, self.workflow.replace(before, after, 1))
+
+    def test_changed_windows_lean_metadata_anchor_requires_generator_review(self):
+        historical = preparation.historical.expected_workflow(self.release, v0113=True, combined=True)
+        for before, after in (("$version = 'v4.2.2'", "$version = 'v4.2.3'"),
+                              ('https://api.github.com/repos/leanprover/elan/releases/tags/$version',
+                               'https://example.com/metadata')):
+            changed = historical.replace(before, after, 1)
+            with self.subTest(before=before), patch.object(preparation.historical, 'expected_workflow', return_value=changed):
+                with self.assertRaisesRegex(ValueError, 'review changed preparation anchor'):
+                    preparation.expected_workflow(self.release)
+
 
 class FastWindowsWorkflowTests(unittest.TestCase):
     @classmethod

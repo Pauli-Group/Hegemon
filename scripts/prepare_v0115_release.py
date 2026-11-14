@@ -89,6 +89,31 @@ def expected_workflow(release):
             anchor = '      - name: Install LLVM\n'
             body = replace_exact(body, anchor, WINDOWS_OWNERSHIP_STEP + '\n'
                                  + PROOF_EXECUTION_TEST_STEP + '\n' + anchor)
+            anchor = ('      - name: Install candidate qualification Lean toolchain\n'
+                      '        shell: pwsh\n        run: |\n')
+            body = replace_exact(body, anchor,
+                                 anchor.replace('        run: |\n', '        env:\n'
+                                                '          GH_TOKEN: ${{ github.token }}\n'
+                                                '        run: |\n'))
+            anchor = ('          $version = \'v4.2.2\'\n'
+                      '          $release = Invoke-RestMethod -Uri "https://api.github.com/repos/leanprover/elan/releases/tags/$version"\n')
+            # The token authenticates only the fixed metadata origin. Refuse
+            # redirects and clear credentials before downloading/running assets.
+            body = replace_exact(body, anchor, '''          $version = 'v4.2.2'
+          if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) { throw 'GitHub metadata token is required' }
+          $metadataHeaders = @{
+            Authorization = "Bearer $env:GH_TOKEN"
+            Accept = 'application/vnd.github+json'
+            'X-GitHub-Api-Version' = '2022-11-28'
+          }
+          try {
+            $release = Invoke-RestMethod -Uri "https://api.github.com/repos/leanprover/elan/releases/tags/$version" -Headers $metadataHeaders -MaximumRedirection 0
+          } finally {
+            $metadataHeaders.Clear()
+            Remove-Variable metadataHeaders
+            Remove-Item -Path Env:GH_TOKEN, Env:GITHUB_TOKEN -ErrorAction SilentlyContinue
+          }
+''')
         command = (f'python3 -I -B scripts/check_ntime_rolling_candidate.py --require-authorized '
                    f'--predecessor-root target/v011-predecessor --artifact-manifest '
                    f'{directory}/hegemon-release-artifacts.json --require-final-artifact')

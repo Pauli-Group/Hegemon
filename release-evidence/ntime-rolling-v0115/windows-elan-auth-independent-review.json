@@ -1,0 +1,114 @@
+{
+  "schema": "hegemon.v0115.windows-elan-metadata.independent-review.v1",
+  "reviewer": "/root/prior_asic_context",
+  "reviewed_at_utc": "2026-11-14T21:33:57.567472+00:00",
+  "base_commit": "5833985c31a0eae841bb87687e24f91a9ace8e86",
+  "scope": "Three-file generator, generator controls and generated Windows preparation step metadata-authentication delta only.",
+  "status": "PASS_NARROW_SOURCE_REVIEW_NATIVE_REQUEST_EXECUTION_PENDING",
+  "reviewed_source": [
+    {
+      "path": "scripts/prepare_v0115_release.py",
+      "bytes": 15443,
+      "sha256": "eda1c7c0577b8b65df780627075330dfac3e935a473e183d678cc221696ddc9e"
+    },
+    {
+      "path": "scripts/test_prepare_v0115_release.py",
+      "bytes": 23803,
+      "sha256": "2f489db5a37e5aabad081d8f24d148cf9257519b2fcd2d14ddb7868f66b0b071"
+    },
+    {
+      "path": ".github/workflows/prepare-premainnet-release.yml",
+      "bytes": 42589,
+      "sha256": "db92244a877156ad865023e93d99454e5ca74a925197f20961efa6d9e15cacad"
+    }
+  ],
+  "unresolved_findings": [],
+  "observed_failure": {
+    "log_path": "/private/tmp/hegemon-v0115-ci-5833985c31/build-windows-132590520213-failure.log",
+    "log_sha256": "face6c55b35ccab051bb6a678513a2cf597e1968d0075b1e4579eed5f74b7712",
+    "job_id": 132590520213,
+    "failure": "GitHub public release-by-tag metadata request rejected by unauthenticated runner-IP API rate limit. Failure occurred at Windows Lean toolchain setup before final proof/H0/lifecycle qualification.",
+    "cause_boundary": "The retained API response directly identifies rate limiting; this review does not claim successful authenticated retry or final Windows artifact qualification."
+  },
+  "confirmed_properties": [
+    "The workflow keeps contents: read and adds only the built-in github.token as GH_TOKEN in the single Windows Lean setup step. No PAT, new external secret, job/workflow-wide token environment, write permission or publication path is introduced.",
+    "A missing or blank GH_TOKEN fails before the metadata request; there is no unauthenticated fallback or weakened qualification path.",
+    "Authorization Bearer, GitHub JSON Accept and API version headers are local to the exact HTTPS api.github.com leanprover/elan release-by-tag request. MaximumRedirection 0 blocks forwarding to another endpoint.",
+    "No persistent web session, default request headers or PreserveAuthorizationOnRedirect switch is introduced. The only -Headers call is metadata retrieval.",
+    "Finally clears the header hashtable, removes its variable and removes both GH_TOKEN and GITHUB_TOKEN from the step process environment before asset download, archive extraction, installer execution or elan children. The credential itself retains GitHub per-job lifetime; cleanup narrows local exposure rather than changing token expiry.",
+    "The public browser_download_url archive request remains unauthenticated and receives neither headers nor session; no token is passed in command-line arguments, GITHUB_ENV, outputs or explicit logs.",
+    "Elan tag v4.2.2, exactly-one Windows asset selection, SHA256 metadata shape check, downloaded-byte hash comparison and pinned formal/asert/lean-toolchain install/execution checks remain unchanged.",
+    "The generator uses exact original anchors inside the Windows job only; changed tag/metadata-origin anchors require fresh review. Generated workflow remains bound by full-string generator equality.",
+    "Three new policy tests check metadata-only header routing/cleanup, reject missing token/redirect guard/credential cleanup or authenticated asset mutations, and reject changed historical metadata/tag anchors.",
+    "All inherited nine preparation jobs, proof/security/formal gates, read-only publication posture and unchanged release workflow remain intact."
+  ],
+  "validation": {
+    "independent_methods": [
+      "Read exact three-file diff against base commit.",
+      "Read retained failure response and workflow ordering.",
+      "Inspect current generator auth block and all new regression definitions.",
+      "Independently hash final three reviewed files.",
+      "git diff --check for three reviewed paths: PASS.",
+      "Compare Cargo.lock, formal/asert/lean-toolchain and immutable release.yml bytes directly to base commit: unchanged.",
+      "Cross-check GitHub token/REST and PowerShell redirect/environment semantics using primary documentation through independent docs worker."
+    ],
+    "reviewer_executed_tests": [],
+    "reviewer_authenticated_api_requests": 0,
+    "reviewer_native_powershell_executions": 0,
+    "author_reported": {
+      "current_workflow_controls_passed": 20,
+      "historical_preparation_controls_passed": 31,
+      "v0113_controls_passed": 6,
+      "generator_write_and_check": "PASS",
+      "diff_check": "PASS",
+      "network_requests": 0,
+      "cargo_builds": 0
+    },
+    "native_qualification_for_new_bytes": false
+  },
+  "immutable_inputs": {
+    "cargo_lock_sha256": "1c243bf3858f4ee22fa4441c7a2ee6d49b16d264147b0f3a2de845e760821719",
+    "lean_toolchain_sha256": "2bdc48adfa58d0017e538a0ad117c5d73d35deec879978f909406a80c8037273",
+    "release_workflow_sha256": "d03f65f4eb9a27ce5616c31c90b3b41652e9aaf23d29da9cb1f8707eea64ff81"
+  },
+  "primary_sources": [
+    {
+      "url": "https://docs.github.com/en/rest/authentication/authenticating-to-the-rest-api",
+      "supports": "REST Bearer token authentication."
+    },
+    {
+      "url": "https://docs.github.com/en/actions/concepts/security/github_token",
+      "supports": "Built-in per-job installation token, repository scope and configurable least-privilege permissions."
+    },
+    {
+      "url": "https://docs.github.com/en/rest/releases/releases#get-a-release-by-tag-name",
+      "supports": "Release-by-tag metadata endpoint; read-only public metadata lookup."
+    },
+    {
+      "url": "https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.utility/invoke-restmethod?view=powershell-7.5",
+      "supports": "Explicit request headers and redirect limits; authorization-on-redirect behavior."
+    },
+    {
+      "url": "https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_environment_variables?view=powershell-7.5",
+      "supports": "Process environment inheritance by child processes and removal through Env provider."
+    }
+  ],
+  "limitations": [
+    "Source and finite local text-policy review only. Authenticated metadata retrieval and Windows PowerShell execution have not been observed for the new source.",
+    "Read-only authentication avoids the unauthenticated IP quota; it does not guarantee API availability or eliminate authenticated quotas. Requests continue to fail closed.",
+    "Archive SHA verification retains the existing API-supplied digest trust model; this change does not introduce an independently hardcoded archive digest.",
+    "No reviewer source changes, native build, proof execution, node operation, commit, push, dispatch, publication, activation or deployment performed. Fresh refreeze and exact-source CI remain required."
+  ],
+  "boundaries": {
+    "source_review_only": true,
+    "native_windows_qualified": false,
+    "all_ci_passing_verified": false,
+    "physical_asic_qualified": false,
+    "production_authorized": false,
+    "mainnet_authorized": false,
+    "activation_authorized": false,
+    "public_cutover_authorized": false,
+    "deployment_verified": false,
+    "publication_authorized": false
+  }
+}

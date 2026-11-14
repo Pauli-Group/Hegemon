@@ -1,7 +1,7 @@
 {
   "activation_authorized": false,
   "baseline_commit": "ad77c8d564944972b6ae5e7cab26fcf500972aff",
-  "candidate_binding_sha256": "9bf3a3f4b190fada6ed414ddceb25c633e322462be4bc0b78b0031940047dce6",
+  "candidate_binding_sha256": "2bf9ad53ba70048d56ebbc20034bd77ef19a0758586781e686ea6395de370938",
   "component_reviews": [
     {
       "bytes": 9176,
@@ -77,6 +77,11 @@
       "bytes": 10084,
       "path": "release-evidence/ntime-rolling-v0115/windows-descendant-wait-independent-review.json",
       "sha256": "c9850aea0cc4844912790d796745ba5bca0d4690b8e58eabde07d82ea44d5ec0"
+    },
+    {
+      "bytes": 7436,
+      "path": "release-evidence/ntime-rolling-v0115/windows-elan-auth-independent-review.json",
+      "sha256": "817dde6ad3c0195e0d6a48f1aaa54ae3b656fc3085e1af3ac1a86407fbf99462"
     }
   ],
   "decision": "ACCEPT_SOFTWARE_CANDIDATE_SCOPE",
@@ -91,28 +96,28 @@
     "Native Windows ownership tests and all four final-binary proof/H0/lifecycle checks must execute in fresh CI; local portable controls and static review do not establish Windows qualification.",
     "The failed 1bcfa01 Windows preparation attempt is retained and grants no artifact acceptance. Formal policy files and their declared input fingerprints remain byte-identical; no unrelated review or execution record was renewed.",
     "The 2a40080796 native Windows ownership controls failed and grant no qualification. This incremental review covers only the cleanup wait and its fail-closed diagnostic controls; all other source rows match the prior reviewed candidate. Fresh Windows and four-platform CI remain mandatory.",
-    "The a0bbc32c40 native Windows ownership controls failed and grant no qualification. This incremental review covers only the owned-process cleanup and its fail-closed controls; all other source rows match the prior reviewed candidate. Fresh Windows and four-platform CI remain mandatory."
+    "The a0bbc32c40 native Windows ownership controls failed and grant no qualification. This incremental review covers only the owned-process cleanup and its fail-closed controls; all other source rows match the prior reviewed candidate. Fresh Windows and four-platform CI remain mandatory.",
+    "The 5833985c31 Windows preparation stopped on a rate-limited unauthenticated Lean-installer metadata request, before final proof/H0/lifecycle execution. This incremental review covers only authentication of that CI metadata request and generated workflow controls; all other source rows match the prior reviewed candidate. Prior successful source/focused runs retain their original attribution; fresh full CI and four-platform qualification remain required."
   ],
   "mainnet_authorized": false,
   "physical_asic_qualified": false,
   "prior_candidate_review": {
-    "bytes": 5981,
-    "path": "release-evidence/ntime-rolling-v0115/independent-review-a0bbc32c40.json",
-    "sha256": "965796bf90453ba159c74301f194948aec2cbe80e548cd7037951b30aefb71a8"
+    "bytes": 6604,
+    "path": "release-evidence/ntime-rolling-v0115/independent-review-5833985c31.json",
+    "sha256": "d4eedd63f6f00e9342e1f3f0c7d217a23955a9fcbd2e9763ec5e817a8669d045"
   },
   "production_authorized": false,
   "public_cutover_authorized": false,
   "qualification_commands_sha256": "8de8ed193d36e3f2d12bf9a7e6287665f18758d5e3e262eaf9167b5c54c8db36",
   "review_kind": "independent_model_review",
-  "reviewed_at_utc": "2026-11-14T19:13:33.483009+00:00",
+  "reviewed_at_utc": "2026-11-14T21:34:21.090072+00:00",
   "reviewer": "Codex independent reviewers /root/prior_asic_context and /root/ntime_native; original component reviews retained for unchanged source, scoped Windows/process/workflow/document review aggregated by coordinator",
   "schema": "hegemon.ntime-rolling.independent-review.v1",
-  "source_inventory_sha256": "3ccfa78295b8106b194700664807c180981b4d485584524cb7047d7ab921c12b",
-  "supplemental_review_base": "a0bbc32c4013bebf453044198bbe686744530203",
+  "source_inventory_sha256": "ece41acfccd04d079fe4083f2dba14c2466a0e836a1d4debfa3305d0766dc27d",
+  "supplemental_review_base": "5833985c31a0eae841bb87687e24f91a9ace8e86",
   "supplemental_reviewed_paths": [
-    "scripts/check_v0115_current_binary_proofs.py",
-    "scripts/test_check_v0115_current_binary_proofs.py",
-    "scripts/test_v0115_process_ownership.py",
-    "scripts/v0115_process_ownership.py"
+    ".github/workflows/prepare-premainnet-release.yml",
+    "scripts/prepare_v0115_release.py",
+    "scripts/test_prepare_v0115_release.py"
   ]
 }
