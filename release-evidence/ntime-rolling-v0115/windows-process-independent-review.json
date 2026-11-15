@@ -1,0 +1,193 @@
+{
+  "schema": "hegemon.v0115.windows-process-owner.independent-source-review.v1",
+  "reviewer": "/root/prior_asic_context",
+  "reviewed_at_utc": "2026-11-14T18:46:51.915716+00:00",
+  "worktree": "/private/tmp/hegemon-v0115-ntime-20261113",
+  "base_head": "1bcfa01a6afd1bda2df7bc6e150c00d1c6b409b8",
+  "status": "PASS_BOUNDED_SOURCE_REVIEW_NATIVE_WINDOWS_QUALIFICATION_PENDING",
+  "scope": "Additive v0.11.5 process owner, new proof-execution harness attribution, candidate invocation and mandatory portable receipt predicate; source-only independent review.",
+  "reviewed_source": [
+    {
+      "path": "scripts/v0115_process_ownership.py",
+      "bytes": 25093,
+      "sha256": "73c768134bd006a311fd84d205cc9a6d7bee4f68f4ff53a899f7fe4ea45f5662"
+    },
+    {
+      "path": "scripts/test_v0115_process_ownership.py",
+      "bytes": 22134,
+      "sha256": "2d6a437747cf280df9443271c0f3a22ea974530c5d2ea022a06bf614ef18828b"
+    },
+    {
+      "path": "scripts/check_v0115_current_binary_proofs.py",
+      "bytes": 10640,
+      "sha256": "cc3ceb032ea2ea259c848aa40be8d7d480162975ef51e1d847b38a7a276e19e9"
+    },
+    {
+      "path": "scripts/test_check_v0115_current_binary_proofs.py",
+      "bytes": 9288,
+      "sha256": "53f5803ea9b7c3976d6a473878658e7049e5a9dc31a2ef61005dbde1db7f4b5f"
+    },
+    {
+      "path": "scripts/check_ntime_rolling_candidate.py",
+      "bytes": 43079,
+      "sha256": "5f2543fa9e2c61245f94f09c8e12eb195f167165eecbe16946cd78f3a7d12cb5"
+    },
+    {
+      "path": "scripts/test_check_ntime_rolling_candidate.py",
+      "bytes": 23174,
+      "sha256": "9e9d3e5f2b38f4ae2470d56395042a85435044d591abeb367846c723b1cb8b45"
+    }
+  ],
+  "original_failure": {
+    "message": "cannot assign owned job",
+    "runner": "scripts/check_v011_current_binary_proofs.py",
+    "cause": "Unproven. The historical post-start assignment did not preserve GetLastError; fast exit and inherited/nested job restrictions cannot be distinguished from retained failure evidence."
+  },
+  "confirmed_source_properties": [
+    "Windows JOB_LIST=0x0002000D and HANDLE_LIST=0x00020002; typed 32-bit DWORD/BOOL and x64 structure layouts match the Microsoft contracts.",
+    "Noninherited KILL_ON_JOB_CLOSE job configured before CreateProcessW; creation-time JOB_LIST associates the child before execution. No assignment-after-start or breakaway fallback.",
+    "Exactly three inheritable duplicated stdio handles in HANDLE_LIST; process/thread handles retained, exact job membership checked before ResumeThread, prior suspension count must equal one.",
+    "Caller-owned PROCESS_INFORMATION exists before CreateProcessW. Catchable signals deferred across handle/FD/thread adoption. Failed operations preserve Win32 error and cleanup cannot produce a successful receipt.",
+    "Exit uses signaled process handle, not exit code 259. Root handle closes before job ActiveProcesses accounting; success requires no active descendant, readers joined and bounded retained logs.",
+    "Failure cleanup terminates the job, waits for root, releases references, checks job drainage, closes job; parent death closes the noninherited last job handle on Windows.",
+    "New wrapper executes the same checked .py bytes with compile/exec, bypassing unpinned Python bytecode caches for imported historical proof logic and new owner. Candidate imports wrapper from the same checked bytes.",
+    "Historical proof helper remains byte-identical and only its run_command callback is replaced. Five positive proof cases and thirty historical negative controls still execute unchanged predicates.",
+    "Every one of 35 runs requires typed ownership metadata; harness identifies historical logic and new source pins separately, before/after source snapshots match, legacy-only receipt is rejected.",
+    "Candidate executes the additive wrapper and portable final receipt validator unconditionally requires new harness plus unchanged historical proof predicate.",
+    "New eight-case attribution/cache suite is blocking at all four intended CI/preparation call sites; actual native ownership controls use --require-windows before Windows build tools. Existing workflow jobs and immutable release workflow remain intact."
+  ],
+  "resolved_review_findings": [
+    {
+      "id": "WOWN-001",
+      "issue": "Native process/thread handles could exist before Python caller adoption on exception or signal.",
+      "resolution": "Caller-owned PROCESS_INFORMATION plus catchable-signal deferral and abort adoption; low-level after-CreateProcess failure and signal controls."
+    },
+    {
+      "id": "WOWN-002",
+      "issue": "SourceFileLoader can read ignored/unfrozen pyc despite -B, so checked .py hashes did not identify imported owner/wrapper code.",
+      "resolution": "Compile/exec same digest-checked raw source bytes; forged unchecked-hash pyc controls in wrapper and candidate tests."
+    },
+    {
+      "id": "WOWN-003",
+      "issue": "os.kill(self,SIGTERM) terminates a Windows test controller rather than invoking its signal handler.",
+      "resolution": "Deterministic signal.raise_signal(SIGTERM); separate actual forced-parent-exit control retained."
+    },
+    {
+      "id": "WOWN-004",
+      "issue": "Synthetic wrapper execution used POSIX target fixture regardless of real Windows runtime.",
+      "resolution": "Synthetic fixture follows os.name for the execute routing control; validator-only fixtures still exercise both platforms."
+    }
+  ],
+  "unresolved_source_findings": [],
+  "integration_note": {
+    "id": "WOWN-CI-001",
+    "status": "resolved-source-wiring-verified",
+    "finding": "Wrapper attribution/cache controls were initially uninvoked. Final workflow delta invokes all eight in focused source, fast native Windows after --require-windows owner controls, preparation policy, and early Windows before LLVM/Cargo. Generator and mutation controls require these blocking call sites; no weakened condition/continue-on-error/fallback was introduced.",
+    "scope": "Read-only delta and call-site review; no workflow execution by reviewer."
+  },
+  "verification": {
+    "reviewer_executed_tests": [],
+    "reviewer_method": [
+      "Read all six final source files and incremental implementation delta.",
+      "Cross-check Win32 constants, structures and lifecycle against primary Microsoft docs.",
+      "Inspect CPython source and official Windows os.kill behavior.",
+      "Inspect native/synthetic test definitions and mandatory candidate receipt routing.",
+      "Independently compute exact final file SHA256s; no Cargo builds, node launch, repository writes or CI execution."
+    ],
+    "author_reported_local_results": {
+      "process_owner": {
+        "total": 22,
+        "passed_local_portable_and_posix": 13,
+        "native_windows_unexecuted_skips": 9
+      },
+      "new_proof_wrapper": {
+        "passed": 8,
+        "kind": "synthetic source/receipt controls"
+      },
+      "candidate": {
+        "passed_interim_policy_controls": 18,
+        "real_current_frozen_source_control": "preserved but not selected for interim run; must pass after refreeze"
+      },
+      "qualifier_controls_passed": 16,
+      "consumer_controls_passed": 13,
+      "packager_controls_passed": 32
+    },
+    "native_windows_required_controls": [
+      "32 rapid normal 0/1 exits",
+      "Refused exact membership never resumes real suspended child",
+      "Root exit with surviving descendant and writer handles fails and reaps",
+      "Timeout reaps root and descendant and joins readers",
+      "Nested creation-time jobs without breakaway",
+      "Forced controller exit kills root and descendant through noninherited kill-on-close job"
+    ],
+    "native_windows_results": "Not executed or observed by this reviewer. Local skips are not Windows qualification.",
+    "author_reported_workflow_results": {
+      "workflow_controls_passed": 17,
+      "wrapper_controls_passed": 8,
+      "historical_controls_passed": 31,
+      "v0113_controls_passed": 6,
+      "preparation_generator_check": "PASS"
+    }
+  },
+  "immutable_inputs": {
+    "historical_proof_helper_sha256": "d2f0fae819828482093676f831a5d6c621013c02368cdddafcdf491d294eb2f2",
+    "cargo_lock_sha256": "1c243bf3858f4ee22fa4441c7a2ee6d49b16d264147b0f3a2de845e760821719",
+    "proof_fixture_manifest_sha256": "50a1c137b7d8d7d03181b7b9e1d353d98cfd26e708e178c75dd7925dff271a8c"
+  },
+  "boundaries": {
+    "source_review_only": true,
+    "actual_new_proof_verification_executed_by_reviewer": false,
+    "windows_native_qualified": false,
+    "all_ci_passing_verified": false,
+    "physical_asic_qualified": false,
+    "production_authorized": false,
+    "activation_authorized": false,
+    "mainnet_authorized": false,
+    "public_cutover_authorized": false,
+    "deployment_verified": false,
+    "publication_authorized": false
+  },
+  "limitations": [
+    "Fresh source freeze plus complete required CI/preparation remain necessary; stale first-attempt source contract is not accepted as current.",
+    "No historical funded HTLC/recovery/live CPU evidence rerun or reattributed.",
+    "Windows Job Objects here establish release-verifier process ownership, not a general hostile-code sandbox.",
+    "Exact-source loading statement covers new wrapper/owner and explicitly loaded immutable proof logic; this review does not certify the Python interpreter/standard-library supply chain or broaden immutable historical source review."
+  ],
+  "primary_sources": [
+    "https://devblogs.microsoft.com/oldnewthing/20230209-00/?p=107812/",
+    "https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-updateprocthreadattribute",
+    "https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessw",
+    "https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-jobobject_basic_limit_information",
+    "https://learn.microsoft.com/en-us/windows/win32/procthread/nested-jobs",
+    "https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-resumethread",
+    "https://learn.microsoft.com/en-us/windows/win32/api/jobapi2/nf-jobapi2-terminatejobobject",
+    "https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-jobobject_basic_accounting_information",
+    "https://raw.githubusercontent.com/microsoft/win32metadata/main/generation/WinSDK/RecompiledIdlHeaders/um/WinBase.h",
+    "https://docs.python.org/3/using/cmdline.html#cmdoption-B",
+    "https://raw.githubusercontent.com/python/cpython/3.13/Lib/importlib/_bootstrap_external.py",
+    "https://docs.python.org/3.13/library/os.html#os.kill"
+  ],
+  "final_workflow_delta_reviewed_at_utc": "2026-11-14T18:48:27.993555+00:00",
+  "reviewed_workflow_delta": [
+    {
+      "path": ".github/workflows/ntime-rolling.yml",
+      "bytes": 5277,
+      "sha256": "9155e7669acba532cfe6495e28108d378b47b5381cc2b54f17855ecefa70a135"
+    },
+    {
+      "path": ".github/workflows/prepare-premainnet-release.yml",
+      "bytes": 41963,
+      "sha256": "90514baf4c48be36cd77d8af4cfd0e175e81be714fee1642bbe15047603f9e3d"
+    },
+    {
+      "path": "scripts/prepare_v0115_release.py",
+      "bytes": 13871,
+      "sha256": "06fb7b8927d902f5672c8cdd5535426cf7f67198fb6e0ec094bfe672f008e8f1"
+    },
+    {
+      "path": "scripts/test_prepare_v0115_release.py",
+      "bytes": 19487,
+      "sha256": "3b846dfb4a2ab4bd3129b0622f59c961dd98caf724464cf95a6e09bde903bc70"
+    }
+  ]
+}

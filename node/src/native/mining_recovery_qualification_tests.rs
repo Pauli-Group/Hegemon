@@ -207,6 +207,7 @@ async fn unknown_equal_height_and_higher_hints_keep_retained_asic_solution_gated
     assert!(node.header_by_hash(&higher.hash).unwrap().is_none());
     let (_network, handle) = recovery_network(tmp.path());
     let peer = [0xd3; 32];
+    let original_rows = snapshot_native_database_trees(&node.db);
 
     announce_recovery_tip(&node, &handle, peer, &loser).await;
     assert_eq!(
@@ -215,9 +216,29 @@ async fn unknown_equal_height_and_higher_hints_keep_retained_asic_solution_gated
     );
     assert!(node.sync_target_evidence_snapshot().unverified_peer_hint);
     assert_gate_rejects_solution_without_write(&node, &solution);
+    assert_eq!(snapshot_native_database_trees(&node.db), original_rows);
 
-    // The same peer may advance its exact unresolved target while retaining
-    // ordinary request pacing. Neither unknown row is mining authority.
+    // A moving unauthenticated horizon cannot displace an anchored target
+    // while its exact request is fresh, even when the same peer advances it.
+    let original_target = node.sync_target_evidence_snapshot();
+    let original_request = node.outbound_sync_requests.lock()[&Some(peer)];
+    announce_recovery_tip(&node, &handle, peer, &higher).await;
+    assert_eq!(node.sync_target_evidence_snapshot(), original_target);
+    assert_eq!(
+        node.outbound_sync_requests.lock()[&Some(peer)],
+        original_request
+    );
+    assert_gate_rejects_solution_without_write(&node, &solution);
+    assert_eq!(snapshot_native_database_trees(&node.db), original_rows);
+
+    // Once that original lease expires, ordinary bounded admission may follow
+    // the higher hint. It still provides no block or mining authority.
+    node.outbound_sync_requests
+        .lock()
+        .get_mut(&Some(peer))
+        .unwrap()
+        .requested_at =
+        Instant::now() - (NATIVE_SYNC_REQUEST_RETRY_AFTER + Duration::from_millis(1));
     announce_recovery_tip(&node, &handle, peer, &higher).await;
     let higher_target = node.sync_target_evidence_snapshot();
     assert_eq!(
@@ -226,16 +247,26 @@ async fn unknown_equal_height_and_higher_hints_keep_retained_asic_solution_gated
     );
     assert!(higher_target.unverified_peer_hint);
     assert_gate_rejects_solution_without_write(&node, &solution);
+    assert_eq!(snapshot_native_database_trees(&node.db), original_rows);
+    assert_eq!(node.header_by_hash(&higher.hash).unwrap(), None);
+    assert_eq!(
+        node.outbound_sync_requests.lock()[&Some(peer)]
+            .context
+            .target_tip,
+        Some((higher.height, higher.hash))
+    );
 
     assert_eq!(
         node.import_announced_block_with_outcome(loser.clone())
             .unwrap(),
         NativeAnnouncedBlockImportOutcome::StoredNoncanonical
     );
+    let stored_rows = snapshot_native_database_trees(&node.db);
     announce_recovery_tip(&node, &handle, [0xd4; 32], &loser).await;
     assert_eq!(node.sync_target_evidence_snapshot(), higher_target);
     assert_eq!(node.best_meta(), winner);
     assert_gate_rejects_solution_without_write(&node, &solution);
+    assert_eq!(snapshot_native_database_trees(&node.db), stored_rows);
 }
 
 #[tokio::test]

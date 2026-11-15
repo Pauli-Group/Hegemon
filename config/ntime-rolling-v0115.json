@@ -1,0 +1,35 @@
+{
+  "schema": "hegemon.ntime-rolling.source-preparation.v1",
+  "software_version": "0.11.5",
+  "baseline_commit": "ad77c8d564944972b6ae5e7cab26fcf500972aff",
+  "network": "pre-mainnet",
+  "chain_id": "7b7b0899d5444ffd92c38b38188e9ce4f891913ca7cca854fdcae0aa22ca1b49",
+  "genesis_hash": "d9a8cfc158790b0251c7493d7261da771f7d57be63bce750ba8c1af5d92a9ad3",
+  "combined_activation_height": 18660,
+  "ntime_activation_height": 28860,
+  "ntime_rules_hash": "d5f91874cea4e4eade6ac7f31b2ada7a2902e71e065d02a476dc6e646da1a38f",
+  "max_future_skew_ms": 90000,
+  "planned_activation": {
+    "date": "2026-11-20",
+    "time": "09:00",
+    "location": "Calgary",
+    "utc_offset": "-06:00",
+    "planning_only": true,
+    "height_governs": true
+  },
+  "estimate_observation": {
+    "observed_utc": "2026-11-14T16:07:00Z",
+    "height": 20217,
+    "tip_timestamp_utc": "2026-11-14T16:04:25.567Z",
+    "target_seconds_per_block": 60,
+    "target_projection_local": "2026-11-20T10:07:25-06:00"
+  },
+  "boundaries": {
+    "release_artifacts_qualified": false,
+    "activation_authorized": false,
+    "deployment_verified": false,
+    "physical_asic_qualified": false,
+    "mainnet_authorized": false
+  },
+  "specification": "docs/consensus/NTIME_ROLLING.md"
+}

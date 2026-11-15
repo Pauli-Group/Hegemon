@@ -2,8 +2,9 @@ name: Monorepo CI
 
 on:
   push:
-    branches: [ main, 'codex/combined-*' ]
+    branches: [ main, 'codex/combined-*', 'codex/v0.11.5-*' ]
   pull_request:
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -46,6 +47,8 @@ jobs:
         run: cargo install cargo-audit --version 0.22.2 --locked
       - name: Dependency audit policy regressions
         run: python3 -B scripts/test_dependency_audit_gate.py
+      - name: Packaged dependency reachability regressions
+        run: python3 -I -B scripts/test_check_release_dependency_reachability.py
       - name: Dependency audit waiver gate
         run: ./scripts/dependency-audit-gate.sh
 
@@ -441,6 +444,9 @@ jobs:
           cache-targets: false
       - name: Release binary build
         run: ./scripts/check-core.sh build
+
+      - name: Check v0.11.5 artifact consumer rejection controls
+        run: python3 -I -B scripts/test_check_v0115_crypto_consumer.py
 
       - name: Check bounded successor receipt rejection controls
         run: python3 -I -B scripts/test_check_v011_crypto_consumer.py

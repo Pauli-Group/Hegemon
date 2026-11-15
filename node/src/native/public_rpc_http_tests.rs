@@ -5,8 +5,60 @@
 //! The lock-controlled workers below never fabricate a proof or source authority.
 
 use super::*;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use tokio::io::AsyncWriteExt;
+
+static RPC_WORKER_START_OBSERVERS: Mutex<BTreeMap<usize, tokio::sync::mpsc::Sender<()>>> =
+    Mutex::new(BTreeMap::new());
+
+/// Observe the production blocking closure, after it owns the request permit.
+/// Admission counts alone also include handlers still collecting request bodies.
+pub(super) fn observe_public_rpc_worker_start(node: &NativeNode) {
+    if let Some(observer) = RPC_WORKER_START_OBSERVERS
+        .lock()
+        .get(&(node as *const NativeNode as usize))
+    {
+        let _ = observer.try_send(());
+    }
+}
+
+struct ObservedRpcWorkers {
+    // Keep the address unique until its observer is removed, including unwind.
+    node: Arc<NativeNode>,
+    started: tokio::sync::mpsc::Receiver<()>,
+}
+
+impl ObservedRpcWorkers {
+    fn watch(node: Arc<NativeNode>) -> Self {
+        let (observer, started) = tokio::sync::mpsc::channel(2);
+        assert!(RPC_WORKER_START_OBSERVERS
+            .lock()
+            .insert(Arc::as_ptr(&node) as usize, observer)
+            .is_none());
+        Self { node, started }
+    }
+
+    async fn wait_for(&mut self, count: usize) {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            for _ in 0..count {
+                self.started
+                    .recv()
+                    .await
+                    .expect("RPC worker observer remains installed");
+            }
+        })
+        .await
+        .expect("RPC requests must enter their permit-owning blocking workers");
+    }
+}
+
+impl Drop for ObservedRpcWorkers {
+    fn drop(&mut self) {
+        RPC_WORKER_START_OBSERVERS
+            .lock()
+            .remove(&(Arc::as_ptr(&self.node) as usize));
+    }
+}
 
 struct HttpRpc {
     _temp: tempfile::TempDir,
@@ -443,8 +495,13 @@ async fn public_http_disconnected_safe_read_workers_keep_bounded_reservations_un
     )
     .await;
     let state = HeldStateWriter::acquire(Arc::clone(&rpc.node)).await;
+    let mut workers = ObservedRpcWorkers::watch(Arc::clone(&rpc.node));
     let first = rpc.raw_post(call(1, "chain_getHeader", json!([]))).await;
     let second = rpc.raw_post(call(2, "chain_getHeader", json!([]))).await;
+    // Disconnect only once each blocking worker owns its reservation. A body
+    // collector may legitimately be cancelled and release an unstarted slot.
+    workers.wait_for(2).await;
+    drop(workers);
     wait_counts(&rpc.node, 2, 0).await;
     drop(first);
     drop(second);

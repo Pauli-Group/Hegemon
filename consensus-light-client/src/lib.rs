@@ -14,6 +14,8 @@ mod bitcoin_pow;
 mod pow_rules;
 pub use asert::{asert_next_bits, AsertAnchor};
 pub use pow_rules::*;
+#[cfg(test)]
+mod time_rolling_tests;
 mod v3;
 pub use bitcoin_pow::{
     bitcoin80_coinbase_prefix, bitcoin80_hash_header, bitcoin80_header,
@@ -120,6 +122,7 @@ pub enum LightClientError {
     TimestampNotAfterMedian,
     TimestampTooFarInFuture,
     TimestampOutOfRange,
+    TimestampNotWholeSecond,
     PowBitsMismatch,
     CumulativeWorkMismatch,
     CumulativeWorkOverflow,
@@ -472,15 +475,18 @@ impl PowHeaderV2 {
     }
 
     pub fn pre_hash(&self) -> Hash32 {
-        // Version rolling changes only the final 80-byte header. A chip cannot
-        // rebuild the coinbase prehash for each version it tries. The payload
-        // remains explicit in canonical/SCALE carriage; only this profile's
-        // valid tagged field is normalized for the mining prehash.
-        if self.rules_hash == HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_COMBINED
+        // A chip changes version/time only in the final 80-byte header. Their
+        // canonical values remain explicit in native carriage. Normalize only
+        // the source-selected profile's valid mining fields; malformed version
+        // payloads never acquire the valid profile's coinbase commitment.
+        if is_combined_rules(&self.rules_hash)
             && bitcoin80_mining_version_from_payload(&self.version_commitment).is_ok()
         {
             let mut normalized = self.clone();
             normalized.version_commitment = [0; 48];
+            if is_time_rolling_rules(&self.rules_hash) {
+                normalized.timestamp_ms = 0;
+            }
             hash32(&normalized.canonical_bytes())
         } else {
             hash32(&self.canonical_bytes())
@@ -488,7 +494,7 @@ impl PowHeaderV2 {
     }
 
     pub fn mining_version(&self) -> Result<u32, LightClientError> {
-        if self.rules_hash == HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_COMBINED {
+        if is_combined_rules(&self.rules_hash) {
             bitcoin80_mining_version_from_payload(&self.version_commitment)
         } else {
             Ok(BITCOIN80_VERSION)
@@ -497,6 +503,10 @@ impl PowHeaderV2 {
 
     pub fn pow_hash(&self) -> Hash32 {
         if is_bitcoin80_rules(&self.rules_hash) {
+            if bitcoin80_validate_timestamp_for_rules(&self.rules_hash, self.timestamp_ms).is_err()
+            {
+                return [0xff; 32];
+            }
             let Ok(mining_version) = self.mining_version() else {
                 return [0xff; 32];
             };
@@ -1504,9 +1514,8 @@ fn verify_pow_header_v2_with_expected_bits_and_schedule(
     if header.timestamp_ms <= parent.timestamp_ms {
         return Err(LightClientError::TimestampDidNotAdvance);
     }
-    if is_bitcoin80_rules(&header.rules_hash) && u32::try_from(header.timestamp_ms / 1_000).is_err()
-    {
-        return Err(LightClientError::TimestampOutOfRange);
+    if is_bitcoin80_rules(&header.rules_hash) {
+        bitcoin80_validate_timestamp_for_rules(&header.rules_hash, header.timestamp_ms)?;
     }
     if header.pow_bits != expected_pow_bits {
         return Err(LightClientError::PowBitsMismatch);

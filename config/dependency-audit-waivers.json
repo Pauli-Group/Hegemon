@@ -1,5 +1,172 @@
 {
   "schema": 1,
-  "generated_at_utc": "2026-10-01",
-  "waivers": []
+  "generated_at_utc": "2026-11-14",
+  "waivers": [
+    {
+      "id": "RUSTSEC-2026-0524",
+      "package": "quinn-proto",
+      "version": "0.11.18",
+      "kind": "vulnerability",
+      "expires": "2026-12-14",
+      "tracking": "DEP-2026-0524",
+      "reason": "QUIC Retry tokens; fixed in quinn-proto0.11.19. Dormant in the reviewed exact lock: Quinn is reachable only through optional Reqwest http3, which no workspace manifest enables; Reqwest is confined to node development/examples and security-tests. The source-bound guard requires all four release targets and all three packaging feature sets to exclude the affected crates before this exact exception is accepted. This is release-scope nonreachability evidence, not an upstream fix or general-purpose dependency approval.",
+      "owner": "release-maintainers",
+      "reviewed_at": "2026-11-14",
+      "remediation": "Remove or reassess on any source/lock/packaging/feature drift or by expiry. Upgrade to the patched upstream version only through a separately qualified and authorized proof-identity transition because exact Cargo.lock bytes bind the accepted PrivateSpend relation.",
+      "scope": "packaged-release-nonreachability-v1"
+    },
+    {
+      "id": "RUSTSEC-2026-0523",
+      "package": "quinn-proto",
+      "version": "0.11.18",
+      "kind": "vulnerability",
+      "expires": "2026-12-14",
+      "tracking": "DEP-2026-0523",
+      "reason": "MAX_STREAM_DATA stream admission; fixed in quinn-proto0.11.19. Dormant in the reviewed exact lock: Quinn is reachable only through optional Reqwest http3, which no workspace manifest enables; Reqwest is confined to node development/examples and security-tests. The source-bound guard requires all four release targets and all three packaging feature sets to exclude the affected crates before this exact exception is accepted. This is release-scope nonreachability evidence, not an upstream fix or general-purpose dependency approval.",
+      "owner": "release-maintainers",
+      "reviewed_at": "2026-11-14",
+      "remediation": "Remove or reassess on any source/lock/packaging/feature drift or by expiry. Upgrade to the patched upstream version only through a separately qualified and authorized proof-identity transition because exact Cargo.lock bytes bind the accepted PrivateSpend relation.",
+      "scope": "packaged-release-nonreachability-v1"
+    },
+    {
+      "id": "RUSTSEC-2026-0538",
+      "package": "quinn-udp",
+      "version": "0.5.15",
+      "kind": "vulnerability",
+      "expires": "2026-12-14",
+      "tracking": "DEP-2026-0538",
+      "reason": "recvmsg truncation receive-loop spin on affected Unix paths; fixed in quinn-udp0.5.16 or0.6.3. Dormant in the reviewed exact lock: Quinn is reachable only through optional Reqwest http3, which no workspace manifest enables; Reqwest is confined to node development/examples and security-tests. The source-bound guard requires all four release targets and all three packaging feature sets to exclude the affected crates before this exact exception is accepted. This is release-scope nonreachability evidence, not an upstream fix or general-purpose dependency approval.",
+      "owner": "release-maintainers",
+      "reviewed_at": "2026-11-14",
+      "remediation": "Remove or reassess on any source/lock/packaging/feature drift or by expiry. Upgrade to the patched upstream version only through a separately qualified and authorized proof-identity transition because exact Cargo.lock bytes bind the accepted PrivateSpend relation.",
+      "scope": "packaged-release-nonreachability-v1"
+    },
+    {
+      "id": "RUSTSEC-2026-0486",
+      "package": "rustix",
+      "version": "1.1.4",
+      "kind": "unsound",
+      "expires": "2026-12-14",
+      "tracking": "DEP-2026-0486",
+      "reason": "Zero-length xattr buffers; fixed in rustix1.1.6. Tempfile, the only locked parent, calls rename/unlink/fstat/renameat_with and none of the six affected xattr APIs. Dormant in the reviewed exact lock: Rustix is reachable only through Tempfile development/test dependencies, absent from packaged normal/build graphs. The source-bound guard requires all four release targets and all three packaging feature sets to exclude the affected crates before this exact exception is accepted. This is release-scope nonreachability evidence, not an upstream fix or general-purpose dependency approval.",
+      "owner": "release-maintainers",
+      "reviewed_at": "2026-11-14",
+      "remediation": "Remove or reassess on any source/lock/packaging/feature drift or by expiry. Upgrade to the patched upstream version only through a separately qualified and authorized proof-identity transition because exact Cargo.lock bytes bind the accepted PrivateSpend relation.",
+      "scope": "packaged-release-nonreachability-v1"
+    }
+  ],
+  "release_dependency_reachability": {
+    "schema": 1,
+    "scope": "packaged-release-nonreachability-v1",
+    "targets": [
+      "x86_64-unknown-linux-gnu",
+      "x86_64-apple-darwin",
+      "aarch64-apple-darwin",
+      "x86_64-pc-windows-msvc"
+    ],
+    "packages": [
+      {
+        "package": "hegemon-node",
+        "feature_args": [
+          "--no-default-features"
+        ]
+      },
+      {
+        "package": "wallet",
+        "feature_args": [
+          "--no-default-features",
+          "--features",
+          "rpc-client"
+        ]
+      },
+      {
+        "package": "walletd",
+        "feature_args": []
+      }
+    ],
+    "excluded_packages": [
+      "quinn",
+      "quinn-proto",
+      "quinn-udp",
+      "reqwest",
+      "rustix",
+      "tempfile"
+    ],
+    "upstream_advisories": {
+      "RUSTSEC-2026-0524": "https://rustsec.org/advisories/RUSTSEC-2026-0524.html",
+      "RUSTSEC-2026-0523": "https://rustsec.org/advisories/RUSTSEC-2026-0523.html",
+      "RUSTSEC-2026-0538": "https://rustsec.org/advisories/RUSTSEC-2026-0538.html",
+      "RUSTSEC-2026-0486": "https://rustsec.org/advisories/RUSTSEC-2026-0486.html"
+    },
+    "source_sha256": {
+      ".agent/hardening/hvzk-whir-backend-adapter/Cargo.toml": "893536cb68ccdd64778bc6585a011f284b4efcb42f4846d24b146f0c2cbda3a2",
+      ".cargo/config.toml": "7f30caa1659fc8e0f55618d78c6da0a976de0fd49a27d1a53d599b545ae0e20c",
+      "Cargo.lock": "1c243bf3858f4ee22fa4441c7a2ee6d49b16d264147b0f3a2de845e760821719",
+      "Cargo.toml": "5d70ee21856d12c36244d7ca57d03c3b4ba3ae19a28e5f057e48d40a6a5fa83f",
+      "circuits/block-recursion/Cargo.toml": "fdb7548839f3389ff0b252237c70cedae145e6d4c3a8e43da76ad02b8f900906",
+      "circuits/block/Cargo.toml": "b9eb4d4bea9a420828f545bb7f3da0bbb4468a4ee7934fcda0dc15fa543ca772",
+      "circuits/hegemon-field/Cargo.toml": "5406424dc4ff0cdbd7fd13abb7da1aa17f8527e876ae57e1f5b99435f15b5f0a",
+      "circuits/standalone-full-shake256-relation-prototype/Cargo.toml": "274e8500c5fe6e27fdda2b4b7834de74eb1b3f00c3f327f95671562a446af4b6",
+      "circuits/standalone-pay1x2-relation-prototype/Cargo.toml": "0d80ea3bbd81783e92b8e00268b6ff5fc5c93aec7388d43dcd77eec3a2533f69",
+      "circuits/standalone-pay1x2-statement-prototype/Cargo.toml": "8032a14f95fa96fd73741dc4b33abe6d1076cb71f56b7aeb7d14c35e7361b215",
+      "circuits/standalone-proof-envelope-prototype/Cargo.toml": "43f46fc090ef042adeb0321e3772dd1e4c3c00a7cc2d40df451647430e42cdf3",
+      "circuits/standalone-shake256-prototype/Cargo.toml": "7a5833deb0316b57a48a037851b6d4f2409db5968b43335b49c119c19335e1e0",
+      "circuits/superneo-backend-lattice/Cargo.toml": "26e2eee6549b55afe2fdd1ffeed70eb1b264f18fecec782d6ae3e2b9f3899b8a",
+      "circuits/superneo-bench/Cargo.toml": "c9fe37e21db0b8ca4b9ae110329c2b06bd947d5f6919994e1fb77603b8e0657c",
+      "circuits/superneo-ccs/Cargo.toml": "80851f214966f5f17b585ab5de1052032299db03457b5d224f788aa46d1c0391",
+      "circuits/superneo-core/Cargo.toml": "afcded314e0d676c15e42601bce5863434124d0ad401d53d403ff06fea5b1f51",
+      "circuits/superneo-hegemon/Cargo.toml": "3f56fcbf73ea2f72d1620cd3591283cfbcca16d71db52499f967861389f921fa",
+      "circuits/superneo-ring/Cargo.toml": "45c1838803e6a0ae50eccf121d2a9ebf6c2bd2854be06d8344afde76cb0d42bb",
+      "circuits/transaction-core/Cargo.toml": "32a5892a266332257b8b30224c166b8c41e64d0c701a41d76aad1c24acb8130c",
+      "circuits/transaction/Cargo.toml": "04748c258bdbc6e024089d1df155ab5e660ebf087c8a643bc5343620fc6937e0",
+      "circuits/tx-proof-manifest/Cargo.toml": "4ba0d69f81777d67be9790f611b465f9526cb8106c02393fdacec1d9015d0992",
+      "consensus-light-client/Cargo.toml": "1dbf7acbdf6ab1d3dae6788322dbab3cc1c2eba34a38b5334dc0bb5c4b2cec1e",
+      "consensus/Cargo.toml": "39a0228a446ad4a7ea4e140e16bf572ac597284dad4a85367049a676b7b19888",
+      "crypto/Cargo.toml": "6ee9a541f7d5c164b686570d5361afd2f0abba40072181db81aeb3e8d9fbedf0",
+      "crypto/hash384/Cargo.toml": "1f4ba9c4461bc02849150918a7a714c973347015141193b700e55f4e5c8485c8",
+      "crypto/hash448/Cargo.toml": "9add3ca3b00ec8c163fac76bd85ecc941f8e46c55c831f9426957bfb7f5337bd",
+      "experimental/htlc-prototype/Cargo.toml": "3cc5065cffca7abad8af0f8cf11d2e2952cb6eb08258055a193ec81da8350e9d",
+      "experimental/htlc-prototype/proof-backend/Cargo.toml": "c06cd6b113e0f642681eb4cb96f04a50f77d8cbe6789a327e0bd345683ab81ec",
+      "fuzz/Cargo.toml": "a8de16aa093137ec419b881633fa2cc295c3ef2c9b2588cba280355cb44ae0cb",
+      "network/Cargo.toml": "3b79feb31433bdc1faf3c4af1e49ddc76a42f18213bf810373141e780cfe37dc",
+      "node/Cargo.toml": "99aaf257ac10bd654930db2223c93c13c88b5048877721e3680d1b8bd44f4cee",
+      "pq-noise/Cargo.toml": "7116bb76c5a76d800fd4ad7cac5d3c068de3fc521cf6c9a7e927e86e5d739286",
+      "protocol/kernel/Cargo.toml": "09657eb825346933a9e6011901cd286fa522e2566dd5d1d8f70744752e2a4a4f",
+      "protocol/shielded-pool/Cargo.toml": "d5d5a50cf9ce81e82e051e03292faf467cb6ee4604720233d03cee0f2303d086",
+      "protocol/versioning/Cargo.toml": "e79fd53a3def9cf8bc439eb5e9aebfe21f05e38d6cfff34fe2c7522839fcb23a",
+      "prototypes/standalone-shake256-binius/all-private-patch/harness/Cargo.toml": "80c5066a238b48b5ed29d8c5d6b618ac7b05e1222cc36d3c64fa9f69bf00ffb4",
+      "prototypes/standalone-shake256-binius/backend/Cargo.toml": "d5a5901d7a10b4416965ad98c30ba1611b687066b4586af81513880fbdc8fbc2",
+      "prototypes/standalone-shake256-binius/m4-full-blake448-e384-candidate/Cargo.toml": "6cf6df39fabe088eeec5e377346b2969a97eda75f8d908aaab1f609176015cff",
+      "prototypes/standalone-shake256-binius/m4-full-pay1x2-prototype/Cargo.toml": "457d039e7f82baf28431bf119c0058d3a370921c90d587b87faac454855ef600",
+      "prototypes/standalone-shake256-binius/m4-full-production-prototype/Cargo.toml": "d0171d32d7c6be11843f7e2eea0235d7ddf9d4a6d512c9a9aa88c5cfd45e8d33",
+      "prototypes/standalone-shake256-binius/m4-pay1x2-prototype/Cargo.toml": "a709d1a5e26ed9b3f3bf1ad72266be3a145990a17ee13c6d4ee0d2d51607ca6a",
+      "prototypes/standalone-shake256-binius/m4-strict-full-baseline-v0/Cargo.toml": "72fb4692856f7aae73919b3e5daf5a9563ac37489bdb08a917c245389d934996",
+      "prototypes/standalone-shake256-binius/m4-strict-full-shake400-v1/Cargo.toml": "cb1bf4c6de3a5c1087d836490fd439a24aa0b359f7ce77008bc1d0e275d09fdd",
+      "prototypes/standalone-shake256-binius/m4-strict-full-shake400-v1/source/m4-strict-full-baseline-v0/Cargo.toml": "3a2fe23ebbc3a6b592b20370de7660a629f36c407cae0a4837523580082f33f1",
+      "prototypes/standalone-shake256-binius/m4-strict-full-shake400-v1/source/strict-hash-profile/Cargo.toml": "e0c39546ca04848f1e0224a1198fef178b05e9442592e7dbfe1419f3b1cfc9a8",
+      "prototypes/standalone-shake256-binius/m4-zk-pay1x2-prototype/Cargo.toml": "f2b5455383ae897b813df74a65898646e9e1439b61e1ed5b7a65fae783d8861c",
+      "prototypes/standalone-shake256-binius/pay1x2-backend/Cargo.toml": "5a16d82ab9b4092356a5a255f31e108639e21524beb368c76977be7b48230804",
+      "prototypes/standalone-shake256-binius/strict-e256x2-iop/Cargo.toml": "c2d1613926a2e5e288e324caa5eae60b379486e857f59c72a307b049417f6fa7",
+      "prototypes/standalone-shake256-binius/strict-hash-profile-shake400/Cargo.toml": "e0c39546ca04848f1e0224a1198fef178b05e9442592e7dbfe1419f3b1cfc9a8",
+      "prototypes/standalone-shake256-binius/strict-hash-profile/Cargo.toml": "e0c39546ca04848f1e0224a1198fef178b05e9442592e7dbfe1419f3b1cfc9a8",
+      "prototypes/standalone-shake256-binius/strict-mixed-field/Cargo.toml": "1b86369326d45e719442a94945b5c41d0a99316340a79367c46d176a37e03b4f",
+      "rust-toolchain.toml": "b84d00b8767f77f522f340f9c417da28d5f8ed55ee6cd825fc854abeda9ce852",
+      "scripts/build_release_artifacts.sh": "91f8c8a1225f3ee9fc88b5755737236cc7b19032caa474873e7a6767bf15d025",
+      "scripts/check_release_dependency_reachability.py": "e08970b74923feb02dadb895116be3da07455aeb616a7da5403c17f2d674e331",
+      "scripts/dependency-audit-gate.sh": "c8a1ee09d1b47ff0fcc4eebc0c26743b4e7815f0d5cf52defa1be49dea616469",
+      "scripts/hegemon_formal_core/Cargo.toml": "239968d8999fa9aa9c43fc161cdc9660538a080e35c3195e13d9b09baa8392f5",
+      "scripts/poseidon2_constants/Cargo.toml": "e0534bc799744bbb710fe5e563d05691857ed3737588d7362ce184a9c486b3b3",
+      "state/da/Cargo.toml": "4d1e5db3c0e0e39eb21d2c609f4269196711086be5e48866e824f80b240511d3",
+      "state/merkle/Cargo.toml": "77f0a62a8baba3b003519ced6e9d45175fe64c112d183667ced63f2a58a2fb30",
+      "tests/Cargo.toml": "131022a577bc28582a62b5ccb17b58a04a868e33b0248bb01e77083687c48f90",
+      "third_party/reed-solomon-erasure/Cargo.toml": "02f0a29ce9a31266c6b268ab5c80917a0410b46e00eb8ef8337d727734be07f9",
+      "tools/native-backend-ref/Cargo.toml": "a68be94fdbef0e47354965767b92391cd05772420f68a4d1dbfb07e550094a33",
+      "tools/native-backend-timing/Cargo.toml": "63c5c3dc7bde206d948ea7a00e081deb2b1ecd5902feb5f0a1e988d3e02e634a",
+      "tools/poseidon2-width16-p3-reference/Cargo.toml": "762244292d126fca435cf3f461d776a5dc5bd1025d0e7374bba53325f1db1e19",
+      "wallet/Cargo.toml": "ee7e79cd38afe57c668e634871d2a2cbf52b50c348449336c85bb3902cd41242",
+      "wallet/bench/Cargo.toml": "3d5d6c46ce65ef436363e081e734afcbd8d72c48586f1679aa5f0d23eae4540a",
+      "walletd/Cargo.toml": "2dd99cd810bf4c20a184144ccb066d5154d6b5f3b966f2f5b4bc0692ea792c9a",
+      "zk/cashvm-bridge/Cargo.toml": "931c7b74bf289d79a752f128df1260a8074e5bd405569fe769a76da8d6ca4c36"
+    }
+  }
 }

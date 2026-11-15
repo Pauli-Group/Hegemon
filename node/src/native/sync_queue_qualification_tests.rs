@@ -92,6 +92,28 @@ async fn queue_announce(fixture: &QueueFixture, peer: PeerId, tip: &NativeBlockM
     .unwrap();
 }
 
+async fn queue_announce_with_pending_work(
+    fixture: &QueueFixture,
+    queue: &NativeSyncImportQueue,
+    bodies: &NativeBlockBodyTransport,
+    peer: PeerId,
+    tip: &NativeBlockMeta,
+) {
+    process_native_sync_tip_announcement_with_pending_work(
+        &fixture.node,
+        &fixture.handle,
+        peer,
+        NativeSyncTipAnnouncement {
+            best_height: tip.height,
+            best_hash: tip.hash,
+        },
+        bodies,
+        queue,
+    )
+    .await
+    .unwrap();
+}
+
 /// Apply the same successful inline-response ingress checks as the receive
 /// loop, retaining the actual request token issued by compact-tip scheduling.
 fn enqueue_served_response(
@@ -291,7 +313,9 @@ async fn live_blocked_queue_old_completion_preserves_new_target_and_continues() 
     let mut bodies = NativeBlockBodyTransport::for_chain(fixture.node.config.chain_id());
     let (sender, mut receiver) = tokio::sync::mpsc::channel(2);
     queue_announce(&fixture, peer, old_target).await;
-    enqueue_served_response(&fixture, &mut queue, peer, Some(1));
+    // Complete the exact old target before following the moving horizon.
+    // A partial ancestry page cannot prove that a newer tip extends it.
+    enqueue_served_response(&fixture, &mut queue, peer, None);
     let permit = Arc::clone(&fixture.node.block_import_semaphore)
         .acquire_owned()
         .await
@@ -307,12 +331,12 @@ async fn live_blocked_queue_old_completion_preserves_new_target_and_continues() 
         .import_mined_block(&work, seal)
         .unwrap()
         .unwrap();
-    queue_announce(&fixture, peer, &new_target).await;
+    queue_announce_with_pending_work(&fixture, &queue, &bodies, peer, &new_target).await;
     assert_eq!(fixture.node.best_meta(), *local);
     assert_eq!(queue.reserved_bytes(), reserved);
     assert_eq!(
         fixture.node.sync_target_tip_snapshot(),
-        (new_target.height, Some(peer), Some(new_target.hash))
+        (old_target.height, Some(peer), Some(old_target.hash))
     );
     assert!(!fixture.node.mining_sync_gate_allows_work());
     assert!(
@@ -320,8 +344,65 @@ async fn live_blocked_queue_old_completion_preserves_new_target_and_continues() 
         "semaphore-blocked import cannot complete"
     );
     drop(permit);
-    finish_queued_response(&fixture, &mut queue, &mut bodies, &mut receiver, peer).await;
-    assert_eq!(fixture.node.best_meta(), *local);
+    let completion = tokio::time::timeout(Duration::from_secs(20), receiver.recv())
+        .await
+        .expect("real import worker completion timeout")
+        .expect("completion channel remains open");
+    match &completion {
+        NativeSyncImportCompletion::Response {
+            peer_id, result, ..
+        } => {
+            assert_eq!(*peer_id, peer);
+            let report = result.as_ref().expect("blocking import succeeded");
+            assert!(report.failure.is_none());
+            assert!(!report.progress.stopped_on_error);
+            assert!(!report.progress.stopped_on_missing_parent);
+            assert!(report.progress.imported_blocks > 0);
+            assert_eq!(
+                report.progress.attempted_blocks,
+                report.progress.response_block_count
+            );
+        }
+        _ => panic!("expected actual response import completion"),
+    }
+    assert_eq!(fixture.node.best_meta(), *old_target);
+    assert!(!fixture.node.sync_import_in_flight());
+    assert_eq!(queue.active_peer(), Some(peer));
+    assert_eq!(queue.reserved_bytes(), reserved);
+    let completed_target = fixture.node.sync_target_evidence_snapshot();
+    // The worker has released the node flag, but the receive loop still owns
+    // its completion. Both this peer and another peer must wait for release.
+    for announcing_peer in [peer, [0xd3; 32]] {
+        queue_announce_with_pending_work(&fixture, &queue, &bodies, announcing_peer, &new_target)
+            .await;
+        assert_eq!(
+            fixture.node.sync_target_evidence_snapshot(),
+            completed_target
+        );
+        assert_eq!(queue.reserved_bytes(), reserved);
+    }
+    finish_native_sync_import_owner(&mut queue, &completion);
+    assert_eq!(queue.active_peer(), None);
+    assert_eq!(queue.reserved_bytes(), 0);
+    // At the owner-free boundary a higher target is legitimately admitted.
+    // Its state must survive consumption of the already finished old result.
+    queue_announce_with_pending_work(&fixture, &queue, &bodies, peer, &new_target).await;
+    let newer_evidence = fixture.node.sync_target_evidence_snapshot();
+    let newer_request = fixture.node.outbound_sync_requests.lock()[&Some(peer)];
+    handle_native_sync_import_completion(
+        &fixture.node,
+        &fixture.handle,
+        &fixture.handle.sender(),
+        &mut bodies,
+        completion,
+    )
+    .await;
+    assert_eq!(fixture.node.best_meta(), *old_target);
+    assert_eq!(fixture.node.sync_target_evidence_snapshot(), newer_evidence);
+    assert_eq!(
+        fixture.node.outbound_sync_requests.lock()[&Some(peer)],
+        newer_request
+    );
     assert_eq!(
         fixture.node.sync_target_tip_snapshot(),
         (new_target.height, Some(peer), Some(new_target.hash))
@@ -334,12 +415,10 @@ async fn live_blocked_queue_old_completion_preserves_new_target_and_continues() 
     );
     assert!(!fixture.node.mining_sync_gate_allows_work());
     let next = fixture.node.outbound_sync_requests.lock()[&Some(peer)];
-    assert_eq!(next.range.from_height, 2);
+    assert_eq!(next.range.from_height, old_target.height + 1);
     assert_eq!(next.range.to_height, new_target.height);
-    assert_eq!(
-        next.context.expected_parent_hash,
-        Some(fixture.remote[1].hash)
-    );
+    assert!(!next.context.recovery_page);
+    assert_eq!(next.context.expected_parent_hash, None);
     assert_eq!(
         next.context.target_tip,
         Some((new_target.height, new_target.hash))

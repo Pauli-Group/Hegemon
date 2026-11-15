@@ -144,6 +144,27 @@ class DependencyAuditGateTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("unused dependency audit waivers", result.stdout)
 
+    def test_expired_exact_vulnerability_waiver_fails(self):
+        waiver = valid_waiver("vulnerability", "RUSTSEC-2099-0001")
+        waiver["expires"] = "2026-01-01"
+        result = self.run_gate(self.audit([vulnerability()]), [waiver])
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("expired on", result.stderr)
+
+    def test_unused_blocking_exception_fails(self):
+        result = self.run_gate(self.audit(), [valid_waiver("vulnerability", "RUSTSEC-2099-0001")])
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("unused dependency audit waivers", result.stdout)
+
+    def test_unrelated_vulnerability_still_blocks_with_an_exact_waiver(self):
+        result = self.run_gate(
+            self.audit([vulnerability(), vulnerability("RUSTSEC-2099-9999")]),
+            [valid_waiver("vulnerability", "RUSTSEC-2099-0001")],
+        )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("RUSTSEC-2099-9999", result.stdout)
+        self.assertIn("1 unwaived", result.stdout)
+
     def test_unknown_warning_kind_fails_closed(self):
         audit = self.audit(warnings={"future-warning-kind": []})
         result = self.run_gate(audit)

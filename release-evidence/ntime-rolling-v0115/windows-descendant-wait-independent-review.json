@@ -1,0 +1,156 @@
+{
+  "schema": "hegemon.v0115.windows-descendant-wait.independent-review.v1",
+  "reviewer": "/root/prior_asic_context",
+  "reviewed_at_utc": "2026-11-14T19:13:17.199691+00:00",
+  "base_commit": "a0bbc32c4013bebf453044198bbe686744530203",
+  "worktree": "/private/tmp/hegemon-v0115-ntime-20261113",
+  "status": "PASS_BOUNDED_SOURCE_REVIEW_NATIVE_VALIDATION_REQUIRED",
+  "scope": "Four-file additive descendant retained-HANDLE cleanup and single-process accepted proof-harness predicate delta, relative to the a0 candidate. No general supervisor redesign or native success claim.",
+  "reviewed_source": [
+    {
+      "path": "scripts/v0115_process_ownership.py",
+      "bytes": 28668,
+      "sha256": "a92f7f38f9a816f08e908fea5e3dd8a6bb1db6fc692491e6619f1b1ac9b2625c"
+    },
+    {
+      "path": "scripts/test_v0115_process_ownership.py",
+      "bytes": 32680,
+      "sha256": "389bf766aa9f867074f9c0a8955f14676056dbdc9fb625c7e421630d8b6bcd50"
+    },
+    {
+      "path": "scripts/check_v0115_current_binary_proofs.py",
+      "bytes": 10654,
+      "sha256": "9bcd68f9794ac926217f815ca7d5c6991218105ab0fe053a148e3197521d655e"
+    },
+    {
+      "path": "scripts/test_check_v0115_current_binary_proofs.py",
+      "bytes": 9340,
+      "sha256": "1a4490aa1fd4dba067a258f2308a9cf2f2ccc02c80a944aa96620aef77c2f54c"
+    }
+  ],
+  "unresolved_findings": [],
+  "observed_failure": {
+    "run_id": 43630134632,
+    "job_id": 132554764879,
+    "log_path": "/private/tmp/hegemon-v0115-ci-a0bbc32c40/process-ownership-windows-132554764879-failure.log",
+    "log_sha256": "4b7b384e665ac7c61186357b57570960ec020811b1accbf97f9138a10a878131",
+    "native_controls_ran": 24,
+    "native_controls_failed": 1,
+    "failing_control": "test_root_exit_with_leaf_retaining_writers_fails_and_kills_leaf",
+    "pid": 5668,
+    "before": {
+      "creation_time_100ns": 134391567797379308,
+      "exit_code": 259,
+      "exit_time_100ns": 0,
+      "wait_status": 258
+    },
+    "after": {
+      "creation_time_100ns": 134391567797379308,
+      "exit_code": 1,
+      "exit_time_100ns": 134391567808880689,
+      "wait_status": 258,
+      "image_error": 5
+    },
+    "supported_conclusion": "The observed same-creation-identity leaf was still nonsignaled after cleanup despite exit metadata. PID reuse is not shown. Job-accounting zero and exit metadata do not establish process-object signaling.",
+    "causal_limit": "This evidence identifies the remaining completion-barrier gap. The new patch still requires native execution before its behavior or complete cause of earlier failures is established."
+  },
+  "confirmed_source_properties": [
+    "JobObjectBasicProcessIdList class 3 uses two DWORD counts and a bounded ULONG_PTR-compatible SIZE_T array of 4096 PIDs. Incomplete, oversized, duplicate and invalid PID snapshots fail closed before acceptance.",
+    "Every snapshot member is opened noninheritable with SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION and verified by IsProcessInJob against the exact owned job. Partial capture failures close retained handles and remain cleanup errors.",
+    "The caller defers catchable interruption across capture and return-value adoption, preventing a successful native OpenProcess handle from being discarded before cleanup ownership.",
+    "Before termination, cumulative TotalProcesses must equal the unique captured member PID set plus known root identity. Any unobserved historical descendant prevents a clean completion claim.",
+    "After TerminateJobObject, retained root and every captured member handle are waited to signaling with one shared absolute cleanup deadline. Exit codes or job counters never replace those per-process waits.",
+    "Retained member/root/thread references close after the wait attempts and before final active accounting drain. Query/capture/request/wait/close/drain errors remain fatal; no exception hides them.",
+    "Final cumulative TotalProcesses must equal the pre-capture total. A new process created during capture or termination permanently increments the lifetime count and therefore fails closed even if absent from later PID snapshots.",
+    "The Windows proof receipt validator now requires exactly one typed lifetime process, active zero and limit-terminated zero for every accepted verifier run. This confines successful proof qualification to the actual single-process verifier commands and rejects unseen prior descendants on the success path.",
+    "New portable controls cover job-zero with an unsignaled retained descendant, historical/newborn coverage mismatches, signal-time handle adoption, exact API snapshot membership and partial-handle cleanup, plus oversized snapshot rejection. Existing native immediate liveness assertions and no-resume sentinel remain strict.",
+    "The native membership-refusal injector now refuses creation only; cleanup still performs actual exact membership verification. The failed creation still cannot resume or create its sentinel."
+  ],
+  "resolved_review_comments": [
+    {
+      "id": "WDESC-001",
+      "issue": "Capturing new native process handles reintroduced an interruption window before list/caller adoption.",
+      "resolution": "Existing deferred_interruption spans retain_members call plus caller assignment; signal injection verifies capture ownership and fatal cleanup reporting."
+    },
+    {
+      "id": "WDESC-002",
+      "issue": "A stable before/after total alone cannot account for an already-removed historical descendant, while successful generic owner receipts previously admitted total > 1.",
+      "resolution": "Abort requires complete known-root/captured-member lifetime coverage; accepted Windows proof-harness rows require exactly one lifetime process with a negative total=2 mutation."
+    }
+  ],
+  "validation": {
+    "independent_review_methods": [
+      "Read exact four-file delta and complete affected capture/abort/predicate branches.",
+      "Read retained native failure log and process-identity diagnostics.",
+      "Cross-check supported Win32 structures, membership rights, lifetime counters and process-handle completion contract against primary Microsoft documentation.",
+      "Inspect all added controls and unchanged strict native assertions.",
+      "Independently hash final four files.",
+      "git diff --check -- four reviewed paths: PASS."
+    ],
+    "reviewer_executed_tests": [],
+    "reviewer_native_windows_qualified": false,
+    "author_reported_owner_controls": {
+      "total": 29,
+      "portable_or_local_passed": 20,
+      "native_windows_unexecuted_skips": 9
+    },
+    "coordinator_reported_wrapper_controls": {
+      "passed": 8,
+      "kind": "synthetic source/receipt controls"
+    },
+    "native_result_for_new_patch": "Not executed or observed by this reviewer; previous native failure does not qualify the new bytes."
+  },
+  "primary_sources": [
+    {
+      "url": "https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-waitforsingleobject",
+      "supports": "WAIT_TIMEOUT is nonsignaled; WAIT_OBJECT_0 is the process completion predicate."
+    },
+    {
+      "url": "https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-terminateprocess",
+      "supports": "External termination is asynchronous and requires a retained-handle wait to establish completion."
+    },
+    {
+      "url": "https://learn.microsoft.com/en-us/windows/win32/api/jobapi2/nf-jobapi2-terminatejobobject",
+      "supports": "Job termination requests termination of associated processes and nested descendants."
+    },
+    {
+      "url": "https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-jobobject_basic_process_id_list",
+      "supports": "Snapshot structure and complete member counts, including nested child-job processes."
+    },
+    {
+      "url": "https://learn.microsoft.com/en-us/windows/win32/api/jobapi/nf-jobapi-isprocessinjob",
+      "supports": "Exact-job membership accepts QUERY_LIMITED_INFORMATION process access."
+    },
+    {
+      "url": "https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-jobobject_basic_accounting_information",
+      "supports": "TotalProcesses is a lifetime counter including terminated or failed-limit associations; conservative coverage mismatch is permitted."
+    },
+    {
+      "url": "https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects",
+      "supports": "Job-handle signaling is tied to the end-of-job time-limit event, not a generic completion barrier."
+    },
+    {
+      "url": "https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-jobobject_associate_completion_port",
+      "supports": "Active-zero notification is accounting; ordinary notification delivery is not guaranteed and PID identity requires retained handles."
+    }
+  ],
+  "limitations": [
+    "The count-coverage argument assumes the existing exclusive unnamed/noninherited job, no breakaway and bounded member/count limits; failures or uncertainty reject rather than certify closure.",
+    "Failed associations or raced exits can conservatively cause cleanup rejection. No test retry, polling relaxation or broad alternate success path was introduced.",
+    "The accepted proof harness is deliberately one process per Windows proof command. This source review does not certify general historical descendant tracking for arbitrary generic API callers.",
+    "No reviewer native Windows tests, Cargo builds, proof execution, node operation or source changes were performed. Local controls and source review do not replace fresh native CI/four-platform qualification.",
+    "No historical proof predicates, fixtures, lock, proof identity or release authority were modified or reattributed by this delta."
+  ],
+  "boundaries": {
+    "source_review_only": true,
+    "native_windows_qualified": false,
+    "all_ci_passing_verified": false,
+    "physical_asic_qualified": false,
+    "production_authorized": false,
+    "mainnet_authorized": false,
+    "activation_authorized": false,
+    "public_cutover_authorized": false,
+    "deployment_verified": false,
+    "publication_authorized": false
+  }
+}

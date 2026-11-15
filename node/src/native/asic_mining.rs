@@ -71,8 +71,23 @@ fn parse_u32_field(request: &Value, name: &str) -> Result<u32> {
     Ok(u32::from_be_bytes(parse_hex_field::<4>(request, name)?))
 }
 
-fn job_response(job_id: &str, job: &BitcoinAsicJob) -> Result<Value> {
+fn job_response(
+    job_id: &str,
+    job: &BitcoinAsicJob,
+    parent_timestamp_ms: u64,
+    now_ms: u64,
+) -> Result<Value> {
     let work = &job.work;
+    let time_rolling =
+        consensus_light_client::native_time_rolling_active(&job.chain_id, work.height);
+    let ntime = u32::try_from(work.timestamp_ms / 1_000)
+        .map_err(|_| anyhow!("ASIC work timestamp exceeds 32-bit nTime"))?;
+    let (minimum, maximum) = if time_rolling {
+        native_ntime_bounds(parent_timestamp_ms, now_ms)?
+    } else {
+        validate_native_fresh_timestamp_at(work.timestamp_ms, now_ms)?;
+        (ntime, ntime)
+    };
     let header = bitcoin80_header_with_version(
         &work.pre_hash,
         &work.parent_hash,
@@ -84,8 +99,6 @@ fn job_response(job_id: &str, job: &BitcoinAsicJob) -> Result<Value> {
     .map_err(|err| anyhow!("ASIC work header construction failed: {err:?}"))?;
     let target = consensus_light_client::compact_to_target(work.pow_bits)
         .map_err(|err| anyhow!("ASIC work target invalid: {err:?}"))?;
-    let ntime = u32::try_from(work.timestamp_ms / 1_000)
-        .map_err(|_| anyhow!("ASIC work timestamp exceeds 32-bit nTime"))?;
     Ok(json!({
         "available": true,
         "algorithm": "sha256d-bitcoin80",
@@ -97,6 +110,12 @@ fn job_response(job_id: &str, job: &BitcoinAsicJob) -> Result<Value> {
             &job.chain_id, work.height
         ) { consensus_light_client::BITCOIN80_VERSION_ROLLING_MASK } else { 0 }),
         "ntime": format!("{ntime:08x}"),
+        "ntime_rolling": time_rolling,
+        "ntime_activation_height": consensus_light_client::native_time_rolling_activation_height(&job.chain_id),
+        "min_ntime": format!("{minimum:08x}"),
+        "max_ntime": format!("{maximum:08x}"),
+        "server_time": format!("{:08x}", u32::try_from(now_ms / 1_000).unwrap_or(u32::MAX)),
+        "max_future_skew_seconds": consensus::reward::MAX_FUTURE_SKEW_MS / 1_000,
         "nbits": format!("{:08x}", work.pow_bits),
         "target": hex32(&target),
         "pre_hash": hex32(&work.pre_hash),
@@ -130,15 +149,18 @@ impl NativeNode {
         };
         if let Some((id, job)) = prior {
             let state = self.state.read();
-            if job.pending_generation == pending_generation
-                && asic_job_valid_for_tip(&job, &state)
-                && validate_native_fresh_timestamp_at(
-                    job.work.timestamp_ms,
-                    native_admission_time_ms(),
-                )
-                .is_ok()
+            if job.pending_generation == pending_generation && asic_job_valid_for_tip(&job, &state)
             {
-                return job_response(&id, &job);
+                match job_response(
+                    &id,
+                    &job,
+                    state.best.timestamp_ms,
+                    native_admission_time_ms(),
+                ) {
+                    Ok(response) => return Ok(response),
+                    Err(error) if error.downcast_ref::<NativeFutureTimestamp>().is_some() => {}
+                    Err(error) => return Err(error),
+                }
             }
         }
 
@@ -181,7 +203,7 @@ impl NativeNode {
                 "ASIC work pending-action state changed before issuance; retry"
             ));
         }
-        {
+        let parent_timestamp_ms = {
             let state = self.state.read();
             if !asic_job_valid_for_tip(
                 &BitcoinAsicJob {
@@ -194,7 +216,8 @@ impl NativeNode {
             ) {
                 return Err(anyhow!("ASIC work became stale during preparation"));
             }
-        }
+            state.best.timestamp_ms
+        };
         let mut random_id = [0u8; 16];
         OsRng.fill_bytes(&mut random_id);
         let id = hex::encode(random_id);
@@ -204,7 +227,7 @@ impl NativeNode {
             created_at: Instant::now(),
             pending_generation,
         };
-        let response = job_response(&id, &job)?;
+        let response = job_response(&id, &job, parent_timestamp_ms, native_admission_time_ms())?;
         self.bitcoin_asic_jobs.lock().insert(id, job);
         Ok(response)
     }
@@ -241,13 +264,23 @@ impl NativeNode {
             cache.jobs.get(id).cloned()
         }
         .ok_or_else(|| anyhow!("unknown or expired ASIC job"))?;
-        let ntime = u32::try_from(job.work.timestamp_ms / 1_000)
+        let job_ntime = u32::try_from(job.work.timestamp_ms / 1_000)
             .map_err(|_| anyhow!("ASIC job timestamp exceeds 32-bit nTime"))?;
-        if let Some(raw) = request.get("ntime") {
-            if !raw.is_string() || parse_u32_field(&params, "ntime")? != ntime {
-                return Err(anyhow!("ASIC solution ntime differs from job template"));
-            }
+        let ntime = if request.contains_key("ntime") {
+            parse_u32_field(&params, "ntime")?
+        } else {
+            job_ntime
+        };
+        let time_rolling =
+            consensus_light_client::native_time_rolling_active(&job.chain_id, job.work.height);
+        if !time_rolling && ntime != job_ntime {
+            return Err(anyhow!("ASIC solution ntime differs from job template"));
         }
+        let timestamp_ms = if time_rolling {
+            u64::from(ntime) * 1_000
+        } else {
+            job.work.timestamp_ms
+        };
         let mut nonce = [0u8; 32];
         nonce[..4].copy_from_slice(&nonce_number.to_le_bytes());
         nonce[4..].copy_from_slice(&extranonce);
@@ -259,6 +292,16 @@ impl NativeNode {
                     "stale ASIC job: canonical tip or prepared actions changed"
                 ));
             }
+            validate_native_rolling_timestamp(
+                &job.chain_id,
+                job.work.height,
+                state.best.timestamp_ms,
+                timestamp_ms,
+            )?;
+            // Evaluate the submitted time against a new node-clock snapshot,
+            // never against the job's suggestion or issuance-time horizon.
+            validate_native_fresh_timestamp_at(timestamp_ms, native_admission_time_ms())
+                .map_err(|_| anyhow!(NATIVE_ASIC_FUTURE_SOLUTION_MESSAGE))?;
         }
         let mining_version = if request.contains_key("mining_version") {
             parse_u32_field(&params, "mining_version")?
@@ -273,7 +316,7 @@ impl NativeNode {
         let work_hash = bitcoin80_work_hash_with_version(
             &job.work.pre_hash,
             &job.work.parent_hash,
-            job.work.timestamp_ms,
+            timestamp_ms,
             job.work.pow_bits,
             nonce,
             mining_version,
@@ -290,6 +333,7 @@ impl NativeNode {
             .map_err(|_| anyhow!("ASIC block import busy; retry solution"))?;
         let mut submitted_work = job.work.clone();
         submitted_work.mining_version = mining_version;
+        submitted_work.timestamp_ms = timestamp_ms;
         let imported = self
             .import_mined_block(&submitted_work, NativeSeal { nonce, work_hash })
             .map_err(|error| {

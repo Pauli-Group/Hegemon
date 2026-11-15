@@ -65,12 +65,18 @@ class PreparationWorkflowTests(unittest.TestCase):
         self.assertTrue(all(line == line.rstrip() for line in self.workflow.splitlines()))
         self.assertEqual(self.workflow.count("./scripts/check-app-no-ssh-e2e.sh --review-only"), 1)
         self.assertIn("fundedTransactionsExercised:false", self.workflow)
-        preparation.verify_preparation(
-            self.release,
-            (ROOT / ".github/workflows/prepare-premainnet-release.yml").read_text(),
-            v0113=True,
-            combined=(ROOT / "config/combined-upgrade-candidate-20261108.json").is_file(),
-        )
+        checked_in = (ROOT / ".github/workflows/prepare-premainnet-release.yml").read_text()
+        if (ROOT / "config/ntime-rolling-v0115.json").is_file():
+            spec = importlib.util.spec_from_file_location("v0115_current_preparation",
+                    ROOT / "scripts/prepare_v0115_release.py")
+            current = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(current)
+            current.verify_preparation(self.release, checked_in)
+        else:
+            preparation.verify_preparation(
+                self.release, checked_in, v0113=True,
+                combined=(ROOT / "config/combined-upgrade-candidate-20261108.json").is_file(),
+            )
 
     def test_preparation_arm_runner_override_preserves_tag_workflow(self) -> None:
         old = "  build-macos-arm:\n    runs-on: macos-14\n"

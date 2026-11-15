@@ -13,6 +13,9 @@ pub const ASERT_HALF_LIFE_MS: u64 = 3_600_000;
 /// The v0.11.4 coordinated pre-mainnet activation is source-owned, never a
 /// runtime configuration option.
 pub const PREMAINNET_COMBINED_UPGRADE_ACTIVATION_HEIGHT: Option<u64> = Some(18_660);
+/// Additive timestamp-rolling successor. The original combined boundary remains
+/// the ASERT anchor and treasury cadence origin.
+pub const PREMAINNET_TIME_ROLLING_ACTIVATION_HEIGHT: Option<u64> = Some(28_860);
 /// ASERT, mining version rolling and treasury cadence share one migration height.
 pub const PREMAINNET_ASERT_ACTIVATION_HEIGHT: Option<u64> =
     PREMAINNET_COMBINED_UPGRADE_ACTIVATION_HEIGHT;
@@ -23,11 +26,20 @@ pub const COMBINED_REHEARSAL_CHAIN_ID: Hash32 = [
     0xd0, 0xf9, 0x6d, 0x13, 0x8a, 0xcc, 0x0a, 0xa2, 0x16, 0xdb, 0x4f, 0x76, 0x18, 0xbe, 0x30, 0xf0,
 ];
 pub const COMBINED_REHEARSAL_ACTIVATION_HEIGHT: u64 = 120;
+pub const TIME_ROLLING_REHEARSAL_ACTIVATION_HEIGHT: u64 = 180;
 /// Exact composed profile; activation height is selected separately below.
 pub const HEGEMON_LIGHT_CLIENT_RULES_BITCOIN_COMBINED_PREIMAGE: &[u8] = b"hegemon.native.rules-bitcoin-combined-v1\nbase-asert-rules-hash=992a6a04c320f65fb55dd0576f01d174981e56b959fa50294bad7fffc333c205\npow-envelope=bitcoin80;fixed-bits=0x20000000;rolling-mask=0x1fffffe0\npow-version-commitment=u32le(version)||44byte-tag:hegemon.bitcoin80.mining-version-v1:9nul\npow-prehash=blake3(v2-canonical-header-without-nonce:713bytes;validated-version-commitment-zeroed)\npow-final-version=exact-u32le-version;sha256d-header-binds-rolling-bits\npow-extranonce=28bytes;split-is-adapter-only\nmetadata=hegemon-mining-metadata-v1:6nul||u32le(version)||legacy-bincode\nreward-treasury=hegemon-treasury-exact-per-height-1of5-60-blocks-independent-miner-claim-v1\nreward-accrual=sum(floor(scheduled-subsidy(h)/5));all-accepted-active-heights;no-historical-reaccrual\nreward-boundary=(height-activation)%60==59;positive-due-mandatory;zero-due-no-note\nreward-miner=scheduled-subsidy-floor(scheduled-subsidy/5)+fees;per-block;omission-forfeits-miner-only\nreward-treasury-recipient=existing-authorized-funding-recipient;action12-contextual-primary-or-secondary\nreward-issued-supply-digest=gross-actual-created-coinbase-note-values;recycled-fees-included;pending-entitlement-separate\nreward-maturity=creation-height+120;proof-geometry=unchanged-fixed-two-input-private-spend\nactivation=source-owned-chain-id-height-schedule;H>=2;H%60==0;genesis-identity-preserved";
 pub const HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_COMBINED: Hash32 = [
     0xec, 0x30, 0x45, 0x29, 0xf4, 0x9e, 0x7d, 0xdc, 0x77, 0x7e, 0x0c, 0xa7, 0x8b, 0x18, 0x9a, 0xce,
     0xc7, 0x53, 0xd4, 0xfb, 0x18, 0xaa, 0xfe, 0x15, 0x76, 0x1e, 0x68, 0x6e, 0xa3, 0x59, 0x6b, 0x7f,
+];
+/// The successor preserves the combined profile's proof, monetary, version,
+/// target and original activation semantics. Only timestamp work binding and
+/// canonical timestamp precision change; the final SHA256d header binds time.
+pub const HEGEMON_LIGHT_CLIENT_RULES_BITCOIN_TIME_ROLLING_PREIMAGE: &[u8] = b"hegemon.native.rules-bitcoin-time-rolling-v1\nbase-combined-rules-hash=ec304529f49e7ddc777e0ca78b189acec753d4fb18aafe15761e686ea3596b7f\npow-prehash=blake3(v2-canonical-header-without-nonce:713bytes;validated-version-commitment-zeroed;timestamp-ms-zeroed)\npow-final-time=timestamp-ms/1000:u32le-at-header-bytes68..72;sha256d-header-binds-time\ntimestamp-canonical=whole-seconds;timestamp-ms%1000=0;timestamp-ms/1000<=u32max\ntimestamp-order=strictly-after-parent-native-timestamp-ms\ntimestamp-fresh-admission=local-now-ms+90000-inclusive;historical-replay-clock-independent\npow-version-and-target=combined-unchanged\nasert-anchor=original-combined-activation-H-1;reference-time=H-2;no-reset\nreward-treasury-cadence=original-combined-activation;no-reset\nproof-and-body=combined-unchanged\nactivation=source-owned-chain-id-height-schedule;after-combined;genesis-identity-preserved";
+pub const HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_TIME_ROLLING: Hash32 = [
+    0xd5, 0xf9, 0x18, 0x74, 0xce, 0xa4, 0xe4, 0xea, 0xde, 0x6a, 0xc7, 0xf3, 0x1b, 0x2a, 0xda, 0x7a,
+    0x29, 0x02, 0xe7, 0x1e, 0x06, 0x5d, 0x02, 0xa4, 0x76, 0xdc, 0x6e, 0x64, 0x6d, 0xa1, 0xa3, 0x8f,
 ];
 pub const PREMAINNET_CHAIN_ID: Hash32 = [
     0x7b, 0x7b, 0x08, 0x99, 0xd5, 0x44, 0x4f, 0xfd, 0x92, 0xc3, 0x8b, 0x38, 0x18, 0x8e, 0x9c, 0xe4,
@@ -37,6 +49,12 @@ const _: () = if let Some(height) = PREMAINNET_ASERT_ACTIVATION_HEIGHT {
     assert!(
         height >= 2 && height % 60 == 0,
         "combined activation needs ASERT ancestors and a multiple-of-60 height"
+    );
+};
+const _: () = if let Some(time_height) = PREMAINNET_TIME_ROLLING_ACTIVATION_HEIGHT {
+    assert!(
+        matches!(PREMAINNET_COMBINED_UPGRADE_ACTIVATION_HEIGHT, Some(combined) if time_height > combined),
+        "time rolling must follow the original combined activation"
     );
 };
 
@@ -52,12 +70,14 @@ pub const HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_ASERT: Hash32 = [
 pub struct PowRulesSchedule {
     asert_activation_height: Option<u64>,
     combined_upgrade: bool,
+    time_rolling_activation_height: Option<u64>,
 }
 
 impl PowRulesSchedule {
     pub const LEGACY: Self = Self {
         asert_activation_height: None,
         combined_upgrade: false,
+        time_rolling_activation_height: None,
     };
 
     /// Construct a deterministic schedule, including for explicit test fixtures.
@@ -69,6 +89,7 @@ impl PowRulesSchedule {
             Ok(Self {
                 asert_activation_height: Some(height),
                 combined_upgrade: false,
+                time_rolling_activation_height: None,
             })
         }
     }
@@ -82,6 +103,24 @@ impl PowRulesSchedule {
             Ok(Self {
                 asert_activation_height: Some(height),
                 combined_upgrade: true,
+                time_rolling_activation_height: None,
+            })
+        }
+    }
+
+    /// Add a later time-rolling boundary without changing the original ASERT
+    /// anchor or the combined profile's monetary activation height.
+    pub const fn combined_with_time_rolling_at(
+        combined_height: u64,
+        time_height: u64,
+    ) -> Result<Self, LightClientError> {
+        if combined_height < 2 || combined_height % 60 != 0 || time_height <= combined_height {
+            Err(LightClientError::InvalidPowRulesSchedule)
+        } else {
+            Ok(Self {
+                asert_activation_height: Some(combined_height),
+                combined_upgrade: true,
+                time_rolling_activation_height: Some(time_height),
             })
         }
     }
@@ -90,7 +129,16 @@ impl PowRulesSchedule {
         self.asert_activation_height
     }
 
+    pub const fn time_rolling_activation_height(self) -> Option<u64> {
+        self.time_rolling_activation_height
+    }
+
     pub const fn rules_hash(self, height: u64) -> Hash32 {
+        if let Some(activation) = self.time_rolling_activation_height {
+            if height >= activation {
+                return HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_TIME_ROLLING;
+            }
+        }
         match self.asert_activation_height {
             Some(activation) if height >= activation => {
                 if self.combined_upgrade {
@@ -116,8 +164,27 @@ pub fn native_combined_upgrade_activation_height(chain_id: &Hash32) -> Option<u6
     None
 }
 
+pub fn native_time_rolling_activation_height(chain_id: &Hash32) -> Option<u64> {
+    if *chain_id == PREMAINNET_CHAIN_ID {
+        return PREMAINNET_TIME_ROLLING_ACTIVATION_HEIGHT;
+    }
+    #[cfg(feature = "combined-upgrade-rehearsal")]
+    if *chain_id == COMBINED_REHEARSAL_CHAIN_ID {
+        return Some(TIME_ROLLING_REHEARSAL_ACTIVATION_HEIGHT);
+    }
+    None
+}
+
+pub fn native_time_rolling_active(chain_id: &Hash32, height: u64) -> bool {
+    native_time_rolling_activation_height(chain_id).is_some_and(|activation| height >= activation)
+}
+
 pub fn native_pow_rules(chain_id: &Hash32) -> PowRulesSchedule {
     if let Some(height) = native_combined_upgrade_activation_height(chain_id) {
+        if let Some(time_height) = native_time_rolling_activation_height(chain_id) {
+            return PowRulesSchedule::combined_with_time_rolling_at(height, time_height)
+                .expect("source-owned time-rolling schedule is valid");
+        }
         return PowRulesSchedule::combined_at(height)
             .expect("source-owned combined schedule is valid");
     }
@@ -134,14 +201,36 @@ pub fn native_rules_hash(chain_id: &Hash32, height: u64) -> Hash32 {
 }
 
 pub fn is_asert_rules(rules: &Hash32) -> bool {
-    *rules == HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_ASERT
-        || *rules == HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_COMBINED
+    *rules == HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_ASERT || is_combined_rules(rules)
+}
+
+pub fn is_time_rolling_rules(rules: &Hash32) -> bool {
+    *rules == HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_TIME_ROLLING
+}
+
+/// Both profiles inherit the original combined version and monetary rules.
+pub fn is_combined_rules(rules: &Hash32) -> bool {
+    *rules == HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_COMBINED || is_time_rolling_rules(rules)
+}
+
+/// Validate native timestamp carriage and return its exact Bitcoin nTime.
+/// Historical profiles retain their full millisecond commitment and truncation.
+pub fn bitcoin80_validate_timestamp_for_rules(
+    rules: &Hash32,
+    timestamp_ms: u64,
+) -> Result<u32, LightClientError> {
+    let ntime =
+        u32::try_from(timestamp_ms / 1_000).map_err(|_| LightClientError::TimestampOutOfRange)?;
+    if is_time_rolling_rules(rules) && timestamp_ms % 1_000 != 0 {
+        return Err(LightClientError::TimestampNotWholeSecond);
+    }
+    Ok(ntime)
 }
 
 pub fn is_bitcoin80_rules(rules: &Hash32) -> bool {
     *rules == HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_ASIC
         || *rules == HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_ASERT
-        || *rules == HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_COMBINED
+        || is_combined_rules(rules)
 }
 
 /// Generic historical checkpoints can retain their own fixed rules profile.
@@ -205,9 +294,7 @@ mod tests {
             da_root: [0; 48],
             action_root: [0; 32],
             tx_statements_commitment: [0; 48],
-            version_commitment: if schedule.rules_hash(height)
-                == HEGEMON_LIGHT_CLIENT_RULES_HASH_BITCOIN_COMBINED
-            {
+            version_commitment: if is_combined_rules(&schedule.rules_hash(height)) {
                 crate::bitcoin80_mining_version_payload(crate::BITCOIN80_VERSION)
             } else {
                 [0; 48]
@@ -267,7 +354,10 @@ mod tests {
         assert_eq!(native_combined_upgrade_activation_height(&[0x55; 32]), None);
         #[cfg(feature = "combined-upgrade-rehearsal")]
         {
-            assert_eq!(native_pow_rules(&COMBINED_REHEARSAL_CHAIN_ID), schedule);
+            assert_eq!(
+                native_pow_rules(&COMBINED_REHEARSAL_CHAIN_ID),
+                PowRulesSchedule::combined_with_time_rolling_at(120, 180).unwrap()
+            );
             assert_eq!(
                 native_combined_upgrade_activation_height(&COMBINED_REHEARSAL_CHAIN_ID),
                 Some(120)
@@ -334,7 +424,11 @@ mod tests {
         assert_eq!(PREMAINNET_ASERT_ACTIVATION_HEIGHT, Some(18_660));
         assert_eq!(
             native_pow_rules(&PREMAINNET_CHAIN_ID),
-            PowRulesSchedule::combined_at(18_660).unwrap()
+            PowRulesSchedule::combined_with_time_rolling_at(
+                18_660,
+                PREMAINNET_TIME_ROLLING_ACTIVATION_HEIGHT.unwrap()
+            )
+            .unwrap()
         );
         assert_eq!(native_pow_rules(&[0x55; 32]), PowRulesSchedule::LEGACY);
         #[cfg(feature = "asert-rehearsal")]

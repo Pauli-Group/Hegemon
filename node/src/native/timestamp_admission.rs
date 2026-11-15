@@ -36,6 +36,60 @@ pub(crate) fn native_next_work_timestamp_ms(parent_ms: u64, now_ms: u64) -> Resu
     Ok(timestamp_ms)
 }
 
+/// A clock snapshot for an immutable job. The lower bound is determined by
+/// canonical parent ordering; the upper bound moves with fresh admission time.
+pub(crate) fn native_ntime_bounds(parent_ms: u64, now_ms: u64) -> Result<(u32, u32)> {
+    let minimum = (parent_ms / 1_000)
+        .checked_add(1)
+        .and_then(|seconds| u32::try_from(seconds).ok())
+        .ok_or_else(|| anyhow!("native nTime cannot advance beyond 32-bit seconds"))?;
+    let maximum = u32::try_from(
+        native_announced_future_limit(now_ms, consensus::reward::MAX_FUTURE_SKEW_MS) / 1_000,
+    )
+    .unwrap_or(u32::MAX);
+    if minimum > maximum {
+        return Err(NativeFutureTimestamp.into());
+    }
+    Ok((minimum, maximum))
+}
+
+pub(crate) fn native_next_work_timestamp_ms_at_height(
+    chain_id: &[u8; 32],
+    height: u64,
+    parent_ms: u64,
+    now_ms: u64,
+) -> Result<u64> {
+    if !consensus_light_client::native_time_rolling_active(chain_id, height) {
+        return native_next_work_timestamp_ms(parent_ms, now_ms);
+    }
+    let (minimum, maximum) = native_ntime_bounds(parent_ms, now_ms)?;
+    let seconds = u32::try_from(now_ms / 1_000)
+        .unwrap_or(u32::MAX)
+        .clamp(minimum, maximum);
+    Ok(u64::from(seconds) * 1_000)
+}
+
+pub(crate) fn validate_native_rolling_timestamp(
+    chain_id: &[u8; 32],
+    height: u64,
+    parent_ms: u64,
+    timestamp_ms: u64,
+) -> Result<()> {
+    if consensus_light_client::native_time_rolling_active(chain_id, height) {
+        if timestamp_ms % 1_000 != 0 || u32::try_from(timestamp_ms / 1_000).is_err() {
+            return Err(anyhow!(
+                "native rolling timestamp must be exact 32-bit nTime seconds"
+            ));
+        }
+        if timestamp_ms <= parent_ms {
+            return Err(anyhow!(
+                "native rolling timestamp must be greater than its parent"
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn native_admission_time_ms() -> u64 {
     #[cfg(test)]
     if let Some(now_ms) = TEST_ADMISSION_TIME_MS.with(std::cell::Cell::get) {

@@ -1,0 +1,69 @@
+{
+  "boundaries": {
+    "activation_authorized": false,
+    "deployment_authorized": false,
+    "mainnet_authorized": false,
+    "physical_asic_qualified": false,
+    "publication_authorized": false
+  },
+  "build_index_tree": "18e557d5effcc31d3df4f52848644ec9d5c111c3",
+  "build_source_head": "311214bae54f7f36323c8fcf62da077e25e4f737",
+  "cargo_lock_sha256": "1c243bf3858f4ee22fa4441c7a2ee6d49b16d264147b0f3a2de845e760821719",
+  "ci_artifacts": {
+    "api_record_sha256": "09a70ee938d34ff8ca5b02d0dc8689df4c60c87cac3be5235173598836fb48bb",
+    "artifacts": {
+      "premainnet-release-assets": {
+        "id": 14142489925,
+        "sha256": "64ceb1364e09cb8cfc092d61142a6b07ed2cce7235ab1962f1303081123bd81e",
+        "size": 85633653
+      },
+      "v0115-preparation-evidence": {
+        "id": 14142574752,
+        "sha256": "db1b1084f7796b3aae28cefb80a355c1775cb9dca142e9813ccbf04bfcdccaae",
+        "size": 69414
+      }
+    }
+  },
+  "ci_preparation": {
+    "conclusion": "success",
+    "event": "push",
+    "head_branch": "codex/v0.11.5-ntime-rolling",
+    "head_sha": "311214bae54f7f36323c8fcf62da077e25e4f737",
+    "repository": "Pauli-Group/Hegemon",
+    "run_id": 43654861360,
+    "run_record_sha256": "138ed9e6bbbb0ebdbce2e5dcef213e653f0d16fa6dfaf5ca57bd142bb120542b",
+    "run_url": "https://github.com/Pauli-Group/Hegemon/actions/runs/43654861360",
+    "status": "completed",
+    "successful_jobs": [
+      "app-no-ssh-e2e",
+      "assemble-prepared-release",
+      "build-linux",
+      "build-macos-arm",
+      "build-macos-intel",
+      "build-windows",
+      "preparation-policy",
+      "security-gates",
+      "transaction-proof-authorization"
+    ],
+    "workflow": "Prepare pre-mainnet release"
+  },
+  "network_release": "v0.11",
+  "platform_manifests_sha256": {
+    "linux-x86_64": "61c7e008f7aaaafbfc947294f6cfa8938d49448ac0dc8607435afb72a29a269b",
+    "macos-arm64": "f68506ffdd82084430d867d011bee7a4429c38c53bd981fd11f6a9643295d275",
+    "macos-x86_64": "54b5a65bf0db387309e5d2feca80077cdf419fc3f7bb8b911ae57f07d3afb950",
+    "windows-x86_64": "9e43407c8cb7f6e42ed2333641dff9784e5ae04d702219d04f49feb147585333"
+  },
+  "qualification_receipts_sha256": {
+    "linux-x86_64": "4fa1b2d71523bfa9195268cb691347d89e2878df246e90c5a6eccb2fd971afc9",
+    "macos-arm64": "29f246cfd5327059f4486c625f507d2d549adc74500aaef05f81c879619150eb",
+    "macos-x86_64": "b8286727f2fcb04d33b9ec1325631f19be30373b8dd57ab89a762bd18a74dd6f",
+    "windows-x86_64": "c2b47a790dd56b5913b112e0627e36d0cfbb8d9766f58853a4825d7c4bfa0d68"
+  },
+  "release_source_head": "311214bae54f7f36323c8fcf62da077e25e4f737",
+  "schema": "hegemon.v0115.release-artifacts.v1",
+  "software_release": "v0.11.5",
+  "software_version": "0.11.5",
+  "source_tree_sha256": "ccedf2a00fd7ef3e5bf75abfa7dd17849278e03998804c5f6d81ff2ec2cca168",
+  "status": "accepted"
+}

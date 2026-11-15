@@ -1,0 +1,104 @@
+{
+  "schema": "hegemon.independent-windows-socket-portability-review.v1",
+  "reviewer": "/root/prior_asic_context",
+  "reviewed_at_utc": "2026-11-14T23:43:54.069297+00:00",
+  "base_commit": "a0179fe4a115cbd4b888e0d5d76bdc9108c2ade7",
+  "status": "PASS_NARROW_SOURCE_REVIEW_NATIVE_WINDOWS_PENDING",
+  "scope": "Three-path source-only portability fix and early Windows adapter coverage; no runtime, consensus, proof identity, lockfile, release authority or historical receipt changes.",
+  "reviewed_source": [
+    {
+      "path": "scripts/test_bitcoin_asic_stratum.py",
+      "bytes": 55494,
+      "sha256": "1bf600a5625780c44921ca01c11d4cfb9ddffd6f61bd3ad35a0028f48631ad7f"
+    },
+    {
+      "path": ".github/workflows/ntime-rolling.yml",
+      "bytes": 5424,
+      "sha256": "367f2268140cc1ccf72afd38d4317632bfb6efe70165929f434793ba7525a61e"
+    },
+    {
+      "path": "scripts/test_prepare_v0115_release.py",
+      "bytes": 23959,
+      "sha256": "af4cfca2320fa078804fa9419919f0541593d0307a5dfb74c2245a031fca7cbd"
+    }
+  ],
+  "unresolved_findings": [],
+  "confirmed_properties": [
+    "The adapter test delta removes exactly one socket.MSG_DONTWAIT argument from send; socket.setblocking(False) remains in force, so send without flags is nonblocking on supported Python socket implementations.",
+    "The unread peer and deliberately small send buffer retain the buffer-fill precondition; BlockingIOError is still the only successful exit from the prefill loop, and setblocking(True) is restored before the client writer is exercised.",
+    "All latency, notification method and stalled-client eviction assertions are unchanged; no test skip, runtime adapter edit or assertion relaxation is introduced.",
+    "The focused process-ownership-windows job invokes the exact same isolated adapter script after native ownership and proof wrapper controls, under the existing five-minute job timeout, without a build prerequisite, condition or continue-on-error.",
+    "The workflow contract assertion exactly includes the new Windows adapter command, retaining checks against needs, conditions, continue-on-error and cargo builds.",
+    "Only the three reviewed source paths are modified relative to the reviewed base at this snapshot."
+  ],
+  "observed_failure": {
+    "path": "/private/tmp/hegemon-v0115-ci-a0179fe4a1/build-windows-132623414870-failure.log",
+    "sha256": "69b263c42d9721cba95e5c6ddd7b4cec33f00c5478b32ba951485f768e91e906",
+    "failure": "Windows Python raised AttributeError for absent socket.MSG_DONTWAIT in the stalled-client test; the existing 59-test suite reported one error.",
+    "cause_boundary": "This is a test API portability failure. The log does not establish a runtime adapter incompatibility or full final release qualification."
+  },
+  "independent_validation": [
+    {
+      "check": "git diff --check",
+      "result": "PASS"
+    },
+    {
+      "check": "Read exact three-path diff and surrounding socket, writer and workflow contract context",
+      "result": "PASS"
+    },
+    {
+      "check": "AST comparison of full adapter test module against HEAD with only one MSG_DONTWAIT argument removed from expected AST",
+      "result": "PASS; exactly one argument removal and no other semantic changes"
+    },
+    {
+      "check": "Final byte counts and SHA256 identity",
+      "result": "Captured for all three reviewed source paths"
+    }
+  ],
+  "coordinator_reported_validation": [
+    {
+      "check": "Current preparation policy controls",
+      "result": "20 PASS",
+      "independently_executed_by_reviewer": false
+    },
+    {
+      "check": "Windows current binary proof controls and H0 before adapter failure",
+      "result": "5 positive plus 30 negative proof controls and H0 reported PASS by coordinator; no final receipt",
+      "independently_executed_by_reviewer": false
+    }
+  ],
+  "author_reported_validation": {
+    "adapter_suite": "59 PASS; 0 failures, errors or skips; macOS; 12.803 seconds",
+    "receipt_path": "/private/tmp/hegemon-v0115-windows-socket-fix/result.json",
+    "receipt_sha256": "34da913a3f9d5281f9d0e9e9119a2a6fe45e9be5b354620a3aaf2d1ed162062c",
+    "initial_sandbox_attempt": "Local fixture bind denied by sandbox; retained separately; authorized elevated local-loopback invocation succeeded",
+    "independently_executed_by_reviewer": false,
+    "receipt_bytes_independently_hashed": true,
+    "native_windows_qualification": false
+  },
+  "limitations": [
+    "The existing prefill while loop has no explicit local attempt or time bound; the unread finite-capacity socket buffer is expected to reach BlockingIOError. This pre-existing behavior is unchanged by the portability fix; the focused CI job retains its five-minute outer timeout.",
+    "The existing socket cleanup try/finally begins after buffer prefill; this pre-existing placement is unchanged.",
+    "Reviewer did not rerun the 59-test suite, launch nodes, execute Cargo/builds or perform native Windows qualification.",
+    "A fresh Windows CI run is required to establish execution success for the exact new source; source review and reported component checks do not establish final receipt completion."
+  ],
+  "primary_sources": [
+    {
+      "url": "https://docs.python.org/3.12/library/socket.html#socket.socket.setblocking",
+      "supports": "setblocking(False) is equivalent to settimeout(0.0); setblocking(True) restores blocking mode"
+    },
+    {
+      "url": "https://docs.python.org/3.12/library/socket.html#socket.socket.send",
+      "supports": "send accepts optional flags with default zero and returns the bytes sent"
+    },
+    {
+      "url": "https://docs.python.org/3.12/library/socket.html#notes-on-socket-timeouts",
+      "supports": "Nonblocking socket operations fail immediately when they cannot be completed"
+    }
+  ],
+  "native_windows_qualification": false,
+  "final_release_qualification": false,
+  "production_authorized": false,
+  "publication_authorized_by_this_review": false,
+  "deployment_authorized_by_this_review": false
+}
