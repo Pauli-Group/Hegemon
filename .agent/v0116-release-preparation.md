@@ -11,8 +11,8 @@ Build a v0.11.6 candidate for the existing pre-mainnet network. The release cont
 - [x] 2026-11-18. Created codex/v0.11.6-payout-rotation from the rotation branch and applied the separate V6 fix.
 - [x] 2026-11-18. Ran 19 V6 relation and statement tests successfully on the combined source.
 - [x] 2026-11-18. Downloaded the published macOS arm64 v0.11.5 node, checked its SHA-256 against the public asset and confirmed its product version.
-- [ ] Build the release executables with the production feature sets, record their actual artifacts and make an extractable v0.11.6 archive.
-- [ ] Run the two-version acceptance and packaged wallet recovery test and record exact artifact hashes and canonical block outcomes.
+- [x] 2026-11-18. Built the four release executables for macOS arm64 from aecbd5e0e6 and verified the candidate archive, its launcher and every archived checksum.
+- [x] 2026-11-18. Ran the two-version acceptance and packaged wallet restore-and-spend test successfully. Both versions confirmed the same spending transaction in block 122.
 
 ## Decisions
 
@@ -36,10 +36,22 @@ From the isolated checkout, run the proof diagnostic and normal artifact build. 
 
 The reference executable is the macOS arm64 v0.11.5 published asset named hegemon-node-macos-arm64. Verify SHA-256 d27e6be9eeb057de7f31bb5799d6f4584e80a9ec5ed7a950f283c6e512b40c23 before allowing it to start. Use the separate test output directory to keep the extracted archive and record of tested binaries.
 
+Build the test-only fixture issuer and locate the `hegemon_node` test executable in `target/release/deps` from Cargo's build output. Use an empty output path for the rehearsal. Supply the archive SHA-256 from its sidecar.
+
+    cargo test --release --locked -p hegemon-node --lib --features solo-payout-rehearsal --no-run
+    python3 -B scripts/test_v0116_rotation_compatibility.py \
+      --package /path/to/candidate-archive.tar.gz --package-sha256 ARCHIVE_SHA256 \
+      --previous-node /path/to/v0.11.5/hegemon-node-macos-arm64 \
+      --fixture-binary /path/to/hegemon_node-test-binary --out /path/to/new-rehearsal-output
+
 ## Validation and acceptance
 
 Compare the packaged manifest and product versions with the build manifest. Confirm that the active PrivateSpend source digest, genesis, network identity and scheduled activation height match the published v0.11.5 settings. The compatibility receipt must name the v0.11.5 binary hash, both accepted reward block hashes and spending transaction inclusion. Count recovered amounts through the packaged wallet, including the inputs it spent and their fee-adjusted change.
 
 ## Outcomes
 
-The integrated V6 regression completed with 19 passing tests. Remaining outcomes will be recorded after packaging and the two-version rehearsal.
+The integrated V6 regression passed all 19 tests. The macOS arm64 candidate archive from aecbd5e0e60208a1502717951b7285b0b25f97e7 has SHA-256 d9aaf8412f395c5de8371904db3e5314ba703561c7345d86fc674c3067ecbec2. Its verifier passed five retained valid proofs and rejected all 30 negative controls. All 41 inputs to the active PrivateSpend source digest matched v0.11.5.
+
+On the first isolated branch, the released v0.11.5 node imported both blocks authored by the packaged v0.11.6 miner and matched the expected recipient and spending authorizations. On a second branch, the same wallet's reward addresses were used at heights 1 and 2 by the historical fixture. Through the published v0.11.5 node, the packaged wallet restored the pre-rotation backup and recovered two mature rewards of 400,000,000 atoms each. It submitted a single ordinary spend and both node versions confirmed the canonical action bytes in block 122, hash 000006adb570a99a2dcdb9dab397634750152b52252cf249a515833469121bbb. The restored wallet then reported the 500,000,000-atom payment and the 299,999,000-atom change after the 1,000-atom fee.
+
+The mixed-version run covers low-height public pre-mainnet rules on isolated loopback nodes. Native executable and package qualification here covers macOS arm64. Other platform binaries and their release qualification remain pending.
