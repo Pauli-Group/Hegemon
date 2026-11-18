@@ -8,8 +8,8 @@
       "command": "cargo test --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml governance_",
       "status": "passed",
       "exit_code": 0,
-      "executed_at": "2026-10-27T04:59:06Z",
-      "policy_inputs_blake3": "94109ea4905258a2156a7687be6c14bc5806f894048739326ff6e4acc39efb9b",
+      "executed_at": "2026-11-18T07:31:50Z",
+      "policy_inputs_blake3": "7ca107a70a25bced12a79c55ad0b721657daca24bb9bd5c02e9a56b2203b7823",
       "report": {
         "passed": true,
         "test_filter": "governance_",
@@ -71,8 +71,8 @@
         "status": "needs_review",
         "reviewer": "Codex (internal CI hygiene review)",
         "reviewed_at": "2026-10-02",
-        "notes": "Pending independent review. Internal source review on 2026-10-02: unmaintained findings remain visible as nonblocking maintenance notices; vulnerabilities, unsoundness, and yanked findings still block unless covered by exact current waivers; unknown warning kinds and malformed warning shapes fail closed; unused waivers still reject. The focused gate regression suite passes. This is not an independent review or assurance of advisory database completeness. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content. The current dependency lock has four security updates; current-source proof qualification remains separate from retained predecessor evidence.",
-        "content_blake3": "c931674c5c206d48a53ac341df8018afe5a04726a8caa2f9fd53268447de68a7"
+        "notes": "Pending independent review. Internal source review on 2026-10-02: unmaintained findings remain visible as nonblocking maintenance notices; vulnerabilities, unsoundness, and yanked findings still block unless covered by exact current waivers; unknown warning kinds and malformed warning shapes fail closed; unused waivers still reject. The focused gate regression suite passes. This is not an independent review or assurance of advisory database completeness. Internal v0.11 metadata freshness reconciliation (2026-10-23): this record now binds the current integration/CI source bytes. This metadata refresh changes no theorem statement, claim class or assurance level and leaves independent review and existing conditional premises unresolved. It is not an independent security audit, proof qualification or production authorization. The shared formal-core wrapper now selects the existing validated feed-forward fixture test; that selector/CI wiring change is distinct from theorem content. The October 2026 lock carried four security updates. Internal dependency review on 2026-11-18 checked three additional patch releases against the RustSec advisories and the resolved workspace graph. The dependency audit passed with zero blocking findings. Independent review and current-source proof qualification remain pending.",
+        "content_blake3": "62e39bc225fb2b4b5454735b2723ed5e5145d4a1a0101898839a2889f5203000"
       },
       "falsification_cases": [
         {

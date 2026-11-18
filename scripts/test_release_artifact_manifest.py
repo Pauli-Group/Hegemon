@@ -38,12 +38,15 @@ def main() -> None:
     target_root.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="release-manifest-test-", dir=target_root) as raw:
         temp = Path(raw)
-        sources = [Path("/bin/echo"), Path("/bin/ls"), Path("/bin/cat"), Path("/bin/date")]
-        if not all(source.is_file() for source in sources):
-            raise SystemExit("release artifact manifest test requires standard host executables")
+        source = Path("/bin/echo")
+        if not source.is_file():
+            raise SystemExit("release artifact manifest test requires /bin/echo")
+        executable = source.read_bytes()
         binaries = [temp / "hegemon-node", temp / "wallet", temp / "walletd", temp / "private-spend"]
-        for source, destination in zip(sources, binaries, strict=True):
-            shutil.copyfile(source, destination)
+        # Multicall systems can ship byte-identical copies of different commands.
+        # Give each fixture distinct bytes after the native executable header.
+        for destination in binaries:
+            destination.write_bytes(executable + destination.name.encode("ascii"))
             destination.chmod(0o755)
 
         specs = [
@@ -152,8 +155,12 @@ def main() -> None:
         )
 
         original_wallet = binaries[1].read_bytes()
-        shutil.copyfile(sources[0], binaries[1])
+        shutil.copyfile(binaries[0], binaries[1])
         binaries[1].chmod(0o755)
+        expect_rejection(
+            lambda: manifest.create_manifest(ROOT, temp / "duplicate-digest.json", host_triple(), specs),
+            "SHA-256 digests must be distinct",
+        )
         expect_rejection(
             lambda: manifest.verify_manifest(ROOT, manifest_path, specs),
             "digest/metadata mismatch",
