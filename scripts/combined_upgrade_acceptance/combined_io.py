@@ -1,16 +1,13 @@
 """Bounded loopback I/O for the disposable combined-upgrade acceptance runner."""
 import base64
-import fcntl
 import hashlib
 import http.client
 import json
 import os
 from pathlib import Path
-import pty
 import select
 import signal
 import subprocess
-import termios
 import time
 
 MAX_RPC = 12 * 1024 * 1024
@@ -84,6 +81,10 @@ def stop_process(proc, grace=20):
 
 def wallet_cli(binary, arguments, prompts, log_path, timeout, check=True):
     """Use hidden TTY prompts; neither argv nor retained output contains secrets."""
+    import fcntl
+    import pty
+    import termios
+
     master, slave = pty.openpty()
     attrs = termios.tcgetattr(slave)
     attrs[3] &= ~termios.ECHO

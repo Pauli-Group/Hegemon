@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Run the packaged macOS arm64 solo rotation rehearsal on disposable loopback nodes.
+"""Run the packaged solo payout rotation rehearsal on disposable loopback nodes.
 
-Provide the macOS candidate archive, the published v0.11.5 arm64 node, and
+Provide the candidate archive, its platform’s published v0.11.5 node, and
 the release-mode hegemon-node library test executable built with solo-payout-rehearsal.
 The output directory must be fresh. It contains disposable encrypted wallets,
 private operator logs, and a machine-readable compatibility receipt.
@@ -12,33 +12,72 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import platform
 import re
 import socket
 import subprocess
+import sys
 import tarfile
 import time
+import zipfile
 
+# CI runs this script with isolated Python, which omits the script directory.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from combined_upgrade_acceptance import combined_io as io
+from package_v011_release import native as verify_native_header
 
-PREVIOUS_SHA = "d27e6be9eeb057de7f31bb5799d6f4584e80a9ec5ed7a950f283c6e512b40c23"
+if os.name == "nt":
+    import v0116_rotation_windows_io as windows_io
+
+# SHA-256 of each raw hegemon-node release asset published for v0.11.5.
+PREVIOUS_SHA = {
+    "linux-x86_64": "5230ea81befe3913b123c4a48e6328a2211ff160f0bcf45a1a1c5bbc2d60ae0b",
+    "macos-arm64": "d27e6be9eeb057de7f31bb5799d6f4584e80a9ec5ed7a950f283c6e512b40c23",
+    "macos-x86_64": "0904bb7ad5bbec89bac0da495b7c76a2a7f7fb5c7aec9a1f2b823ef26ced8315",
+    "windows-x86_64": "87dc56d22b1266a2706c3cd2fab3c6ca48278199d0aa0a5678f07db64d7ff81d",
+}
 MANIFEST_SHA = "386f21b8d9b474fce096c0691ec7d625f292e9aadf0cd5f06fb4088442ec6754"
 CHAIN = "0x7b7b0899d5444ffd92c38b38188e9ce4f891913ca7cca854fdcae0aa22ca1b49"
 GENESIS = "0xd9a8cfc158790b0251c7493d7261da771f7d57be63bce750ba8c1af5d92a9ad3"
 FIXTURE_TEST = "native::treasury_lifecycle_tests::solo_payout_rotation::issue_public_profile_rotation_fixture"
-ARCHIVE_ROOT = "hegemon-v0.11.6-local-candidate-macos-arm64"
 MANIFEST_PATH = "config/testnet/0.11/network-manifest.json"
 
 
-def unpack(archive, out, expected_sha):
+def host_platform():
+    os_label = {"darwin": "macos", "linux": "linux", "win32": "windows"}.get(sys.platform)
+    machine = platform.machine().lower()
+    arch = {"amd64": "x86_64", "aarch64": "arm64"}.get(machine, machine)
+    return f"{os_label}-{arch}"
+
+
+def executable_name(name, selected):
+    return name + ".exe" if selected == "windows-x86_64" else name
+
+
+def unpack(archive, out, expected_sha, selected):
     io.require(io.sha(archive) == expected_sha, "candidate archive SHA-256 mismatch")
-    names = ["bin/hegemon-node", "bin/private-spend", "bin/wallet", MANIFEST_PATH]
-    with tarfile.open(archive, "r:gz") as bundle:
-        members = bundle.getmembers()
-        io.require(len({m.name for m in members}) == len(members), "duplicate archive member")
-        def read(name):
-            member = bundle.getmember(f"{ARCHIVE_ROOT}/{name}")
-            io.require(member.isfile() and member.size <= 160 * 1024 * 1024, "invalid package member")
-            return bundle.extractfile(member).read()
+    prefix = f"hegemon-v0.11.6-local-candidate-{selected}"
+    binaries = ["bin/" + executable_name(name, selected) for name in ["hegemon-node", "private-spend", "wallet"]]
+    names = [*binaries, MANIFEST_PATH, "bundle.json"]
+    with ExitStack() as stack:
+        if selected == "windows-x86_64":
+            bundle = stack.enter_context(zipfile.ZipFile(archive))
+            members = bundle.namelist()
+
+            def read(name):
+                member = bundle.getinfo(f"{prefix}/{name}")
+                io.require(not member.is_dir() and member.file_size <= 160 * 1024 * 1024, "invalid package member")
+                return bundle.read(member)
+        else:
+            bundle = stack.enter_context(tarfile.open(archive, "r:gz"))
+            members = bundle.getnames()
+
+            def read(name):
+                member = bundle.getmember(f"{prefix}/{name}")
+                io.require(member.isfile() and member.size <= 160 * 1024 * 1024, "invalid package member")
+                return bundle.extractfile(member).read()
+
+        io.require(len(set(members)) == len(members), "duplicate archive member")
         sums = {}
         for line in read("SHA256SUMS").decode("ascii").splitlines():
             digest, name = line.split("  ", 1)
@@ -47,13 +86,20 @@ def unpack(archive, out, expected_sha):
         for name in names:
             data = read(name)
             io.require(hashlib.sha256(data).hexdigest() == sums[name], f"package checksum mismatch: {name}")
+            if name in binaries:
+                verify_native_header(data, selected)
             path = out / name
             path.parent.mkdir(parents=True, exist_ok=True)
             io.private(path, data)
-            if name.startswith("bin/"):
+            if name in binaries:
                 path.chmod(0o700)
     io.require(sums[MANIFEST_PATH] == MANIFEST_SHA, "package network manifest differs from release")
-    return {name: sums[name] for name in names}
+    record = json.loads((out / "bundle.json").read_text(encoding="utf-8"))
+    io.require(record["platform"] == selected and record["software_version"] == "0.11.6"
+               and record["build_channel"] == "local-candidate", "unexpected candidate bundle identity")
+    io.require(all(record["binaries"][name]["sha256"] == sums[name] for name in binaries),
+               "candidate binary inventory mismatch")
+    return {name: sums[name] for name in names}, record["binary_build_source_head"]
 
 
 def ports():
@@ -99,8 +145,11 @@ def pair(out, manifest, candidate, previous, donor_base, payout_env, previous_ad
                    "--base-path", str(base), "--listen-addr", f"127.0.0.1:{p2p}", "--port", str(p2p),
                    "--rpc-port", str(rpc), "--rpc-methods", "unsafe", "--name", f"rotation-{name}"]
             with (out / (name + ".log")).open("xb") as log:
-                proc = subprocess.Popen(cmd, env=env, stdin=subprocess.DEVNULL, stdout=log,
-                                        stderr=subprocess.STDOUT, start_new_session=True)
+                if os.name == "nt":
+                    proc = windows_io.start_node(cmd, env, log)
+                else:
+                    proc = subprocess.Popen(cmd, env=env, stdin=subprocess.DEVNULL, stdout=log,
+                                            stderr=subprocess.STDOUT, start_new_session=True)
             processes.append(proc)
             wait_for(lambda: io.rpc(rpc, "hegemon_nodeConfig"), name + " start", processes)
             io.require(io.rpc(rpc, "chain_getBlockHash", [0]) == GENESIS
@@ -116,8 +165,9 @@ def pair(out, manifest, candidate, previous, donor_base, payout_env, previous_ad
         wait_for(connected, "loopback peering", processes)
         yield candidate_rpc, previous_rpc, processes
     finally:
-        for proc in reversed(processes):
-            io.stop_process(proc)
+        with ExitStack() as cleanup:
+            for proc in processes:
+                cleanup.callback(windows_io.stop_node if os.name == "nt" else io.stop_process, proc)
 
 
 def equal_tip(rpcs, height, processes):
@@ -188,21 +238,34 @@ def run(a):
     out.mkdir(mode=0o700)
     candidate_dir = out / "package"
     archive_sha = a.package_sha256.lower()
-    artifacts = unpack(a.package, candidate_dir, archive_sha)
-    candidate = candidate_dir / "bin/hegemon-node"
+    selected = a.platform or host_platform()
+    io.require(selected in PREVIOUS_SHA and selected == host_platform(), "test needs a matching host OS and architecture")
+    artifacts, build_source = unpack(a.package, candidate_dir, archive_sha, selected)
+    candidate = candidate_dir / "bin" / executable_name("hegemon-node", selected)
     previous = a.previous_node.resolve()
     manifest = candidate_dir / MANIFEST_PATH
-    io.require(io.sha(previous) == PREVIOUS_SHA, "previous node differs from published macOS arm64 binary")
+    io.require(io.sha(previous) == PREVIOUS_SHA[selected], f"previous node differs from published {selected} binary")
+    for path in [previous, a.fixture_binary]:
+        with path.open("rb") as executable:
+            verify_native_header(executable.read(1024 * 1024 + 6), selected)
     for binary, version in [(candidate, "0.11.6"), (previous, "0.11.5")]:
         io.require(subprocess.check_output([binary, "--version"], text=True).strip() == f"hegemon-node {version}",
                    "node version mismatch")
     report = {"candidate_archive_sha256": archive_sha, "candidate_members": artifacts,
-              "published_previous_node_sha256": PREVIOUS_SHA,
+              "published_previous_node_sha256": PREVIOUS_SHA[selected], "platform": selected,
+              "candidate_build_source": build_source, "os_version": platform.platform(),
+              "execution_machine": platform.machine(),
               "chain_id": CHAIN, "genesis_hash": GENESIS, "cli": {}, "passed": False}
+    if sys.platform == "darwin":
+        translated = subprocess.run(["/usr/sbin/sysctl", "-in", "sysctl.proc_translated"],
+                                    text=True, capture_output=True)
+        report["rosetta_translated"] = translated.stdout.strip() == "1" if translated.returncode == 0 else None
     def save():
         io.atomic_json(out / "receipt.json", report)
     def cli(name, args, prompts, binary="private-spend", timeout=180):
-        text, metrics = io.wallet_cli(candidate_dir / "bin" / binary, args, prompts, out / (name + ".log"), timeout)
+        wallet_cli = windows_io.wallet_cli if os.name == "nt" else io.wallet_cli
+        path = candidate_dir / "bin" / executable_name(binary, selected)
+        text, metrics = wallet_cli(path, args, prompts, out / (name + ".log"), timeout)
         report["cli"][name] = metrics
         save()
         return text
@@ -308,6 +371,7 @@ def run(a):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--platform", choices=PREVIOUS_SHA, help="target platform (defaults to this host)")
     parser.add_argument("--package", type=Path, required=True)
     parser.add_argument("--package-sha256", required=True)
     parser.add_argument("--previous-node", type=Path, required=True)

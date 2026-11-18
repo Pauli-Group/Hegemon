@@ -1,0 +1,211 @@
+name: Qualify v0.11.6 native candidates
+
+on:
+  push:
+    branches: [codex/v0.11.6-payout-rotation]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    name: Qualify ${{ matrix.platform }}
+    if: github.ref == 'refs/heads/codex/v0.11.6-payout-rotation'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x86_64
+            runner: ubuntu-24.04
+            triple: x86_64-unknown-linux-gnu
+            exe: ''
+            archive: tar.gz
+          - platform: windows-x86_64
+            runner: windows-2025
+            triple: x86_64-pc-windows-msvc
+            exe: .exe
+            archive: zip
+          - platform: macos-x86_64
+            runner: macos-15-intel
+            triple: x86_64-apple-darwin
+            exe: ''
+            archive: tar.gz
+    defaults:
+      run:
+        shell: bash
+        working-directory: candidate
+    env:
+      # Exact binary source of the previously qualified arm64 candidate.
+      CANDIDATE_SOURCE: aecbd5e0e60208a1502717951b7285b0b25f97e7
+      PLATFORM: ${{ matrix.platform }}
+      TARGET_TRIPLE: ${{ matrix.triple }}
+      EXE: ${{ matrix.exe }}
+      ARCHIVE: hegemon-v0.11.6-local-candidate-${{ matrix.platform }}.${{ matrix.archive }}
+      CARGO_INCREMENTAL: '0'
+      CARGO_TERM_COLOR: never
+      CARGO_NET_RETRY: '10'
+      CARGO_HTTP_TIMEOUT: '600'
+    steps:
+      - name: Check out the qualification harness
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          path: qualification
+          persist-credentials: false
+
+      - name: Check out the immutable candidate beside the harness
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ env.CANDIDATE_SOURCE }}
+          path: candidate
+          persist-credentials: false
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+
+      - name: Install macOS dependencies
+        if: runner.os == 'macOS'
+        run: brew install protobuf
+
+      - name: Install Windows dependencies
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install llvm -y
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          choco install protoc -y
+          exit $LASTEXITCODE
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: '1.91.1'
+          components: rust-src
+
+      - name: Verify native host, exact source and frozen proof inputs
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SOURCE"
+          test "$(git -C ../qualification rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$RUNNER_ARCH" = X64
+          test "$(rustc -vV | sed -n 's/^host: //p' | tr -d '\r')" = "$TARGET_TRIPLE"
+          mkdir -p target/qualification
+          python3 -I -B - <<'PY'
+          import json, os, platform, runpy, sys
+          from pathlib import Path
+          if platform.machine().lower() not in ("amd64", "x86_64") or sys.maxsize <= 2**32:
+              raise SystemExit("expected a native 64-bit x86 Python")
+          identity = runpy.run_path("scripts/check_ntime_rolling_candidate.py")["proof_identity"](Path.cwd())
+          Path("target/qualification/source.json").write_text(json.dumps({
+              "binary_source": os.environ["CANDIDATE_SOURCE"], "harness_source": os.environ["GITHUB_SHA"],
+              "target_triple": os.environ["TARGET_TRIPLE"], "runner_arch": os.environ["RUNNER_ARCH"],
+              "platform": os.environ["PLATFORM"], "private_spend": identity,
+          }, indent=2) + "\n", encoding="utf-8")
+          PY
+
+      - name: Run candidate archive controls
+        run: |
+          set -euo pipefail
+          python3 -I -B scripts/test_package_v0116_candidate.py
+          python3 -I -B ../qualification/scripts/test_v0116_rotation_platforms.py
+
+      - name: Run POSIX source and packaged launcher controls
+        if: runner.os != 'Windows'
+        run: python3 -B -m unittest scripts.test_package_v011_release scripts.test_premainnet_launcher
+
+      - name: Run Windows process ownership and launcher byte controls
+        if: runner.os == 'Windows'
+        run: |
+          set -euo pipefail
+          python3 -I -B scripts/test_v0115_process_ownership.py --require-windows
+          python3 -B scripts/test_check_release_launcher_policy.py \
+            ReleaseLauncherPolicyTests.test_bounded_reader_preserves_crlf_and_ctrl_z_bytes \
+            ReleaseLauncherPolicyTests.test_crlf_helper_requires_its_raw_digest_not_normalized_lf
+
+      - name: Build and package four native release binaries
+        run: |
+          set -euo pipefail
+          bash scripts/build_release_artifacts.sh
+          python3 -I -B scripts/package_v0116_candidate.py --platform "$PLATFORM" \
+            --manifest target/release/hegemon-release-artifacts.json --output target/qualification/package
+
+      - name: Verify the extracted candidate's launcher and complete file inventory
+        run: |
+          set -euo pipefail
+          python3 -I -B - <<'PYTHON'
+          import os, shutil, subprocess, sys
+          from pathlib import Path
+          package = Path("target/qualification/package") / os.environ["ARCHIVE"]
+          extract = Path("target/launcher-smoke")
+          shutil.unpack_archive(package, extract)
+          start = extract / ("hegemon-v0.11.6-local-candidate-" + os.environ["PLATFORM"]) / "start.py"
+          with Path("target/qualification/launcher.txt").open("wb") as out:
+              subprocess.run([sys.executable, "-I", "-B", str(start), "--check-only"], check=True, stdout=out)
+          PYTHON
+
+      - name: Verify five retained proofs and thirty rejection controls
+        run: |
+          set -euo pipefail
+          python3 -I -B scripts/check_v0115_current_binary_proofs.py \
+            --node-bin "$PWD/target/release/hegemon-node$EXE" \
+            --artifact-manifest "$PWD/target/release/hegemon-release-artifacts.json" \
+            --output "$PWD/target/retained-proofs" > target/qualification/retained-proofs.json
+
+      - name: Check active and padded V6 asset slots
+        run: |
+          set -euo pipefail
+          cargo test --release --locked -p transaction-circuit --lib full_shake448 \
+            | tee target/qualification/v6-tests.txt
+          grep -F 'asset_slot_constraint_accepts_one_selection_for_active_notes_and_none_for_padding ... ok' \
+            target/qualification/v6-tests.txt
+          grep -F 'test result: ok. 19 passed; 0 failed' target/qualification/v6-tests.txt
+
+      - name: Build the historical reward issuer from the same source
+        run: |
+          set -euo pipefail
+          cargo test --release --locked -p hegemon-node --lib --features solo-payout-rehearsal \
+            --no-run --message-format=json-render-diagnostics > target/fixture-build.jsonl
+          python3 -I -B - <<'PY'
+          import json
+          from pathlib import Path
+          records = [json.loads(line) for line in Path("target/fixture-build.jsonl").read_text(encoding="utf-8").splitlines()]
+          paths = [r["executable"] for r in records if r.get("reason") == "compiler-artifact"
+                   and r["target"]["name"] == "hegemon_node" and r["target"]["kind"] == ["lib"]
+                   and r["profile"]["test"] and r["executable"]]
+          if len(paths) != 1 or not Path(paths[0]).is_file():
+              raise SystemExit("expected one source-built hegemon_node libtest executable")
+          Path("target/fixture-path.txt").write_text(paths[0], encoding="utf-8")
+          PY
+
+      - name: Download the published v0.11.5 node
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release download v0.11.5 --repo Pauli-Group/Hegemon --pattern "hegemon-node-$PLATFORM$EXE" --dir target
+          chmod +x "target/hegemon-node-$PLATFORM$EXE"
+
+      - name: Rehearse packaged rotation, restore and mature spending with v0.11.5
+        run: |
+          set -euo pipefail
+          archive="target/qualification/package/$ARCHIVE"
+          python3 -B ../qualification/scripts/test_v0116_rotation_compatibility.py \
+            --platform "$PLATFORM" --package "$archive" --package-sha256 "$(awk '{print $1}' "$archive.sha256")" \
+            --previous-node "target/hegemon-node-$PLATFORM$EXE" --fixture-binary "$(cat target/fixture-path.txt)" \
+            --out target/mixed-version
+
+      - name: Retain qualified archive, checksums and receipts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: v0116-qualified-${{ matrix.platform }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            candidate/target/qualification/
+            candidate/target/release/hegemon-release-artifacts.json
+            candidate/target/mixed-version/receipt.json

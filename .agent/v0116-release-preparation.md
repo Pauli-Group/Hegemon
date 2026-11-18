@@ -13,18 +13,22 @@ Build a v0.11.6 candidate for the existing pre-mainnet network. The release cont
 - [x] 2026-11-18. Downloaded the published macOS arm64 v0.11.5 node, checked its SHA-256 against the public asset and confirmed its product version.
 - [x] 2026-11-18. Built the four release executables for macOS arm64 from aecbd5e0e6 and verified the candidate archive, its launcher and every archived checksum.
 - [x] 2026-11-18. Ran the two-version acceptance and packaged wallet restore-and-spend test successfully. Both versions confirmed the same spending transaction in block 122.
+- [ ] 2026-11-18. Build and rehearse the identical candidate source on Linux x86_64, Windows x86_64 and Intel macOS. Record one archive and passing receipt per platform.
 
 ## Decisions
 
 - Bump the software label through protocol/versioning/src/lib.rs and the joining metadata. Keep Cargo.lock byte-identical because it participates in the PrivateSpend relation digest.
 - Use fresh disposable node and wallet stores, the frozen public pre-mainnet manifest and loopback-only peers. A historical issuer test fixture can pace timestamps at the network's target interval while performing actual proof of work. The two release executables still use their normal chain validation and RPC paths.
 - Label the locally built archive as a candidate and bind it to its exact source and binary manifest. Historical v0.11.5 public releases retain their accepted artifacts. Preparation is local.
+- Run native qualification from the authorized CI branch. Build all additional binaries from the source revision already used for Apple Silicon. Check out the portable rehearsal separately and record both revisions in the evidence. The qualification workflow has repository read access and uploads its candidate archives and receipts as workflow artifacts.
 
 ## Milestones
 
 First, pin the source to both feature commits, inspect the byte-level network and proof inputs, and run the V6 relation and statement tests. The diagnostic tests exercise active and padded notes. Save the normal build manifest with the archives.
 
 Second, create an encrypted full wallet with the candidate tools and back it up before the payout schedule is exported. Independently validate real paid blocks with the public v0.11.5 node. Store the canonical block hashes and commitments for the two rewards. After maturity, restore from the encrypted backup into an unused store. Synchronize with the local verified chain, spend both notes in a single ordinary PrivateSpend and verify acceptance and canonical inclusion.
+
+Run these checks on the three native x86_64 runners with the historical v0.11.5 executable for the same operating system. Use the wallet and proof tool extracted from each archive. Exercise the real Windows console prompts through ConPTY. Keep disposable wallet state and logs in the runner's working area and retain the candidate archive, build manifest and compatibility receipt.
 
 ## Concrete steps
 
