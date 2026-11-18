@@ -187,3 +187,99 @@ fn restored_wallet_spends_mature_solo_rewards() {
     );
     assert_eq!(balance.ordinary_available.notes, 2);
 }
+
+/// Produce a closed donor database for an independent released binary to import over P2P.
+/// Only this test's clock is virtual. Template construction, proof of work and import are real.
+#[test]
+#[ignore = "mines 121 full-difficulty pre-mainnet blocks for cross-version wallet qualification"]
+fn issue_public_profile_rotation_fixture() {
+    use std::path::PathBuf;
+    use wallet::solo_payout::SoloPayoutSchedule;
+
+    let base = PathBuf::from(std::env::var_os("HEGEMON_ROTATION_FIXTURE_BASE").unwrap());
+    let schedule_path =
+        PathBuf::from(std::env::var_os("HEGEMON_ROTATION_FIXTURE_SCHEDULE").unwrap());
+    assert!(base.is_absolute() && schedule_path.is_absolute());
+    let manifest: network_profile::NativeNetworkManifest = serde_json::from_slice(include_bytes!(
+        "../../../config/testnet/0.11/network-manifest.json"
+    ))
+    .unwrap();
+    let pow_bits = manifest.pow_bits;
+    let network = NativeNetworkIdentity::from_manifest(manifest).unwrap();
+    let chain_id = network.chain_id();
+    let schedule =
+        SoloPayoutSchedule::from_json(&std::fs::read(&schedule_path).unwrap(), chain_id).unwrap();
+    assert_eq!((schedule.first_height(), schedule.last_height()), (1, 2));
+    let unrelated = RootSecret::from_bytes([0xa3; 32])
+        .derive()
+        .poseidon2_v8_address(0)
+        .unwrap()
+        .shielded_address();
+    assert!((1..=2)
+        .all(|height| schedule.address_at(height).unwrap().pk_recipient != unrelated.pk_recipient));
+
+    // Never overwrite or extend an existing node database.
+    std::fs::create_dir(&base).unwrap();
+    let mut cfg = config(&base, &network, None);
+    cfg.dev = false;
+    cfg.pow_bits = pow_bits;
+    cfg.bootstrap_mining_authoring = true;
+    cfg.solo_payout_schedule = Some(schedule_path);
+    let mut node = NativeNode::open(cfg.clone()).unwrap();
+    let genesis = node.best_meta();
+    assert_eq!(genesis.height, 0);
+    assert_eq!(
+        hex32(&genesis.hash),
+        "0xd9a8cfc158790b0251c7493d7261da771f7d57be63bce750ba8c1af5d92a9ad3"
+    );
+    let last_height = 1 + protocol_versioning::COINBASE_MATURITY;
+    let mut reward_hashes = Vec::new();
+    for height in 1..=last_height {
+        if height == 3 {
+            drop(node);
+            cfg.solo_payout_schedule = None;
+            cfg.miner_address = Some(unrelated.encode().unwrap());
+            node = NativeNode::reopen_after_sled_release_for_test(cfg.clone()).unwrap();
+        }
+        let timestamp = genesis.timestamp_ms + height * HISTORICAL_BLOCK_INTERVAL_MS;
+        assert!(timestamp <= current_time_ms());
+        let block = timestamp_admission::with_native_admission_time(timestamp, || {
+            let work = node.prepare_work().unwrap();
+            assert_eq!((work.height, work.timestamp_ms), (height, timestamp));
+            let seal = (0..2048)
+                .find_map(|round| mine_native_round(work.clone(), round))
+                .expect("fixed nominal-cadence public target exhausted its PoW search");
+            node.import_mined_block(&work, seal).unwrap().unwrap()
+        });
+        let recipient = if height <= 2 {
+            schedule.address_at(height).unwrap()
+        } else {
+            &unrelated
+        };
+        wallet::poseidon2_v8_coinbase::public_poseidon2_v8_reward_opening(
+            &notes(&block)[0],
+            recipient,
+        )
+        .unwrap();
+        if height <= 2 {
+            reward_hashes.push(hex32(&block.hash));
+        }
+        if height % 10 == 0 {
+            eprintln!("historical pre-mainnet fixture mined height {height}");
+        }
+    }
+    let tip = node.best_meta();
+    assert_eq!(tip.height, last_height);
+    node.db.flush().unwrap();
+    drop(node);
+    let receipt = json!({
+        "height": tip.height, "genesis_hash": hex32(&genesis.hash), "chain_id": hex32(&chain_id),
+        "tip_hash": hex32(&tip.hash), "first_reward_hash": reward_hashes[0],
+        "second_reward_hash": reward_hashes[1], "timestamp_step_ms": HISTORICAL_BLOCK_INTERVAL_MS,
+    });
+    std::fs::write(
+        base.join("rotation-fixture.json"),
+        serde_json::to_vec_pretty(&receipt).unwrap(),
+    )
+    .unwrap();
+}

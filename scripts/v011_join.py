@@ -16,6 +16,11 @@ from urllib.parse import urlsplit
 SEEDS = ("hegemon.pauli.group:30333", "devnet.hegemonprotocol.com:30333")
 NETWORK_SHA256 = "386f21b8d9b474fce096c0691ec7d625f292e9aadf0cd5f06fb4088442ec6754"
 MAX_FILE = 1024 * 1024 * 1024
+SOFTWARE_VERSIONS = {
+    "v0.11": "0.11.0", "v0.11.1": "0.11.1", "v0.11.2": "0.11.2",
+    "v0.11.3": "0.11.3", "v0.11.4": "0.11.4", "v0.11.5": "0.11.5", "v0.11.6": "0.11.6",
+}
+PUBLIC_SUBMIT_RELEASES = ("v0.11.3", "v0.11.4", "v0.11.5", "v0.11.6")
 
 
 def fail(message: str) -> None:
@@ -130,7 +135,7 @@ def verify_bundle(root: Path, *, check_host: bool = True):
         fail("release record is not ready for public v0.11 joining")
     software_release = bundle.get("software_release", "v0.11")
     software_version = bundle.get("software_version", "0.11.0")
-    if {"v0.11": "0.11.0", "v0.11.1": "0.11.1", "v0.11.2": "0.11.2", "v0.11.3": "0.11.3", "v0.11.4": "0.11.4", "v0.11.5": "0.11.5"}.get(software_release) != software_version or release.get("software_release", "v0.11") != software_release or release.get("software_version", "0.11.0") != software_version:
+    if software_release not in SOFTWARE_VERSIONS or SOFTWARE_VERSIONS[software_release] != software_version or release.get("software_release", "v0.11") != software_release or release.get("software_version", "0.11.0") != software_version:
         fail("bundle and release software identities disagree")
     if release.get("network_manifest_sha256") != NETWORK_SHA256 or digest_file(root, manifest_name) != NETWORK_SHA256 or release.get("seeds") != list(SEEDS):
         fail("frozen network identity/approved seeds mismatch")
@@ -172,7 +177,7 @@ def arguments(argv=None):
     parser.add_argument("--miner-address", help="public recipient only; never a key or seed")
     parser.add_argument("--solo-payout-schedule", metavar="PATH", help="public schedule exported by the wallet for this chain")
     parser.add_argument("--wallet-rpc", action="store_true", help="enable submission RPC on loopback only for your local native wallet")
-    parser.add_argument("--public-submit-rpc", action="store_true", help="opt in to bounded public PrivateSpend submission (v0.11.3, v0.11.4 and v0.11.5 bundles only); loopback unless --rpc-external is explicit")
+    parser.add_argument("--public-submit-rpc", action="store_true", help="opt in to bounded public PrivateSpend submission (v0.11.3 through v0.11.6 bundles); loopback unless --rpc-external is explicit")
     parser.add_argument("--rpc-external", action="store_true", help="bind public-submit RPC on all interfaces; requires --public-submit-rpc")
     parser.add_argument("--rpc-cors", help="one exact browser Origin for public-submit; omitted means closed browser access; no wildcard")
     parser.add_argument("--data-dir", help="deliberately selected v0.11 node database; never an old-chain directory")
@@ -192,8 +197,9 @@ def launch_command(root: Path, args, environment):
         fail("--rpc-cors requires --public-submit-rpc")
     if args.public_submit_rpc:
         bundle = read_json(root, "bundle.json")
-        if (bundle.get("software_release"), bundle.get("software_version")) not in (("v0.11.3", "0.11.3"), ("v0.11.4", "0.11.4"), ("v0.11.5", "0.11.5")):
-            fail("public-submit requires an exact v0.11.3, v0.11.4 or v0.11.5 bundle; other binaries cannot be relabeled")
+        software_release = bundle.get("software_release")
+        if software_release not in PUBLIC_SUBMIT_RELEASES or bundle.get("software_version") != SOFTWARE_VERSIONS[software_release]:
+            fail("public-submit requires an exact v0.11.3 through v0.11.6 bundle; other binaries cannot be relabeled")
         if args.rpc_cors is not None:
             browser_origin(args.rpc_cors)
     env = dict(environment)
