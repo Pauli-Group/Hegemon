@@ -508,12 +508,14 @@ fn write_new(path: &Path, bytes: &[u8]) -> Result<()> {
     let mut f = opts.open(path)?;
     f.write_all(bytes)?;
     f.sync_all()?;
-    fs::File::open(
-        path.parent()
+    #[cfg(unix)]
+    {
+        let parent = path
+            .parent()
             .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or(Path::new(".")),
-    )?
-    .sync_all()?;
+            .unwrap_or(Path::new("."));
+        fs::File::open(parent)?.sync_all()?;
+    }
     Ok(())
 }
 async fn rpc(url: &str, method: &str, param: Option<Value>) -> Result<Value> {
@@ -1713,6 +1715,24 @@ mod bootstrap_tests {
             .unwrap_err()
             .to_string()
             .contains("--manifest"));
+    }
+
+    #[test]
+    fn export_writes_exact_bytes_and_preserves_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("export.bin");
+        write_new(&path, b"export bytes").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"export bytes");
+        assert!(write_new(&path, b"replacement").is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"export bytes");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
     }
 
     #[test]
