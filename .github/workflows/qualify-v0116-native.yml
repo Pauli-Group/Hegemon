@@ -38,8 +38,8 @@ jobs:
         shell: bash
         working-directory: candidate
     env:
-      # Exact binary source of the previously qualified arm64 candidate.
-      CANDIDATE_SOURCE: aecbd5e0e60208a1502717951b7285b0b25f97e7
+      # Exact corrected binary source used for all four package tests.
+      CANDIDATE_SOURCE: 36e4ded8a0519bf115b96c1d49f50622e6f7f4c3
       PLATFORM: ${{ matrix.platform }}
       TARGET_TRIPLE: ${{ matrix.triple }}
       EXE: ${{ matrix.exe }}
@@ -164,6 +164,14 @@ jobs:
           grep -F 'asset_slot_constraint_accepts_one_selection_for_active_notes_and_none_for_padding ... ok' \
             target/qualification/v6-tests.txt
           grep -F 'test result: ok. 19 passed; 0 failed' target/qualification/v6-tests.txt
+
+      - name: Check wallet export and overwrite protection
+        run: |
+          set -euo pipefail
+          cargo test --release --locked -p wallet --bin private-spend --no-default-features --features rpc-client \
+            bootstrap_tests::export_writes_exact_bytes_and_preserves_existing_file -- --exact \
+            | tee target/qualification/wallet-export-test.txt
+          grep -F 'test result: ok. 1 passed; 0 failed' target/qualification/wallet-export-test.txt
 
       - name: Build the historical reward issuer from the same source
         run: |
