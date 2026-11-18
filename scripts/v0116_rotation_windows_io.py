@@ -55,12 +55,26 @@ class ConsoleKernel(owned.WindowsKernel):
     def create_suspended(self, argv, cwd, env, stdio, job, information=None):
         size = owned.SIZE_T()
         c.set_last_error(0)
-        sized = self.dll.InitializeProcThreadAttributeList(None, 2, 0, c.byref(size))
+        sized = self.dll.InitializeProcThreadAttributeList(None, 3, 0, c.byref(size))
         if sized or c.get_last_error() != 122 or not size.value:
             raise self.error("size console process attribute list")
         attributes = c.create_string_buffer(size.value)
-        self.checked("InitializeProcThreadAttributeList", attributes, 2, 0, c.byref(size))
-        try:
+        with ExitStack() as cleanup:
+            owned.require(len(stdio) == 3, "exactly three wallet stdio descriptors required")
+            current = self.dll.GetCurrentProcess()
+            std_handles = (owned.HANDLE * 3)()
+            for i, fd in enumerate(stdio):
+                duplicate = owned.HANDLE()
+                self.checked("DuplicateHandle", current, self.msvcrt.get_osfhandle(fd),
+                             current, c.byref(duplicate), 0, True, 2)
+                cleanup.callback(self.close, duplicate.value)
+                std_handles[i] = duplicate.value
+            owned.require(len(set(std_handles)) == 3 and job not in std_handles,
+                          "exact distinct wallet stdio handle allowlist required")
+            self.checked("InitializeProcThreadAttributeList", attributes, 3, 0, c.byref(size))
+            cleanup.callback(self.dll.DeleteProcThreadAttributeList, attributes)
+            self.checked("UpdateProcThreadAttribute", attributes, 0, owned.HANDLE_LIST,
+                         std_handles, c.sizeof(std_handles), None, None)
             jobs = (owned.HANDLE * 1)(job)
             self.checked("UpdateProcThreadAttribute", attributes, 0, owned.JOB_LIST,
                          jobs, c.sizeof(jobs), None, None)
@@ -70,6 +84,8 @@ class ConsoleKernel(owned.WindowsKernel):
                          self.console, c.sizeof(self.console), None, None)
             info = owned.StartupInfoEx()
             info.StartupInfo.cb = c.sizeof(info)
+            info.StartupInfo.dwFlags = 0x100  # STARTF_USESTDHANDLES
+            info.StartupInfo.hStdInput, info.StartupInfo.hStdOutput, info.StartupInfo.hStdError = std_handles
             info.lpAttributeList = c.cast(attributes, c.c_void_p)
             command_text = subprocess.list2cmdline(argv)
             command = c.create_unicode_buffer(command_text, len(command_text.encode("utf-16-le")) // 2 + 1)
@@ -77,13 +93,11 @@ class ConsoleKernel(owned.WindowsKernel):
             env_block = c.create_unicode_buffer(env_text + "\0", len(env_text.encode("utf-16-le")) // 2 + 2)
             flags = (owned.CREATE_SUSPENDED | owned.CREATE_UNICODE_ENVIRONMENT
                      | owned.EXTENDED_STARTUPINFO_PRESENT)
-            # No inheritable handles, shell, or redirected terminal file. The
-            # child opens CONIN$ and CONOUT$ in its own console through rpassword.
-            self.checked("CreateProcessW", argv[0], command, None, None, False, flags,
+            # ConPTY supplies CONIN$/CONOUT$. Explicit stdio keeps ordinary
+            # println!/eprint! output out of the runner's inherited log handles.
+            self.checked("CreateProcessW", argv[0], command, None, None, True, flags,
                          c.cast(env_block, c.c_void_p), str(cwd), c.byref(info), c.byref(information))
             return information.hProcess, information.hThread, int(information.dwProcessId)
-        finally:
-            self.dll.DeleteProcThreadAttributeList(attributes)
 
 
 def _ensure_node_console():
@@ -169,6 +183,7 @@ def wallet_cli(binary, arguments, prompts, log_path, timeout, check=True):
     kernel = ConsoleKernel()
     started = time.monotonic()
     deadline = started + timeout
+    terminal = bytearray()
     output = bytearray()
     changed = threading.Event()
     lock = threading.Lock()
@@ -177,13 +192,13 @@ def wallet_cli(binary, arguments, prompts, log_path, timeout, check=True):
 
     # Continue draining while closing the pseudoconsole. On Windows Server
     # 2022 ClosePseudoConsole is synchronous and may emit a final screen update.
-    def drain(stream):
+    def drain(stream, destination):
         try:
             with stream:
                 while chunk := stream.read(65536):
                     with lock:
-                        free = OUTPUT_LIMIT - len(output)
-                        output.extend(chunk[:free])
+                        free = OUTPUT_LIMIT - len(terminal) - len(output)
+                        destination.extend(chunk[:free])
                         if len(chunk) > free:
                             overflow.set()
                     changed.set()
@@ -194,43 +209,55 @@ def wallet_cli(binary, arguments, prompts, log_path, timeout, check=True):
         finally:
             changed.set()
 
-    sent = consumed = 0
+    sent = 0
+    consumed = [0, 0]
     actor = None
-    reader = None
+    readers = []
     with ExitStack() as stack:
         in_read, in_write = os.pipe()
         writer = stack.enter_context(os.fdopen(in_write, "wb", buffering=0))
         console_input = stack.enter_context(os.fdopen(in_read, "rb", buffering=0))
         out_read, out_write = os.pipe()
         console_output = stack.enter_context(os.fdopen(out_write, "wb", buffering=0))
-        output_stream = stack.enter_context(os.fdopen(out_read, "rb", buffering=0))
+        terminal_stream = stack.enter_context(os.fdopen(out_read, "rb", buffering=0))
+        result_read, result_write = os.pipe()
+        result_stream = stack.enter_context(os.fdopen(result_read, "rb", buffering=0))
+        result_writer = stack.enter_context(os.fdopen(result_write, "wb", buffering=0))
+        stdin = stack.enter_context(open(os.devnull, "rb"))
         try:
             kernel.open_console(console_input.fileno(), console_output.fileno())
-            reader = threading.Thread(target=drain, args=(output_stream,), daemon=True)
-            reader.start()
-            actor = owned.WindowsProcess(argv, cwd, env, (), kernel=kernel)
+            for stream, destination in ((terminal_stream, terminal), (result_stream, output)):
+                reader = threading.Thread(target=drain, args=(stream, destination), daemon=True)
+                reader.start()
+                readers.append(reader)
+            stdio = (stdin.fileno(), result_writer.fileno(), result_writer.fileno())
+            actor = owned.WindowsProcess(argv, cwd, env, stdio, kernel=kernel)
+            result_writer.close()
             console_input.close()
             console_output.close()
             while actor.poll() is None:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise TimeoutError("Windows wallet CLI timed out")
-                if overflow.is_set() or read_errors or not reader.is_alive():
+                if overflow.is_set() or read_errors:
                     raise RuntimeError("Windows wallet terminal disconnected or exceeded output limit")
                 if changed.wait(min(remaining, 0.05)):
                     changed.clear()
                     if sent < len(prompts):
                         with lock:
-                            visible = _text(output)
-                        # ConPTY can elide trailing spaces at the cursor.
+                            streams = (_text(terminal), _text(output))
+                        # private-spend prompts on CONOUT$, wallet prompts on stderr.
+                        # ConPTY can elide the trailing space at the cursor.
                         needle, answer = prompts[sent]
                         needle = needle.rstrip(b" ")
-                        index = visible.find(needle, consumed)
-                        if index >= 0:
-                            if writer.write(answer + b"\r") != len(answer) + 1:
-                                raise RuntimeError("Windows wallet terminal accepted partial input")
-                            sent += 1
-                            consumed = index + len(needle)
+                        for channel, visible in enumerate(streams):
+                            index = visible.find(needle, consumed[channel])
+                            if index >= 0:
+                                if writer.write(answer + b"\r") != len(answer) + 1:
+                                    raise RuntimeError("Windows wallet terminal accepted partial input")
+                                consumed[channel] = index + len(needle)
+                                sent += 1
+                                break
             actor.finish(deadline)
             actor.close()
         finally:
@@ -240,23 +267,27 @@ def wallet_cli(binary, arguments, prompts, log_path, timeout, check=True):
             finally:
                 console_input.close()
                 console_output.close()
+                result_writer.close()
                 writer.close()
-                if reader is None or not reader.is_alive():
-                    output_stream.close()
+                if not readers or not readers[0].is_alive():
+                    terminal_stream.close()
                 kernel.close_console()
-                if reader is not None:
+                for reader in readers:
                     reader.join(owned.CLEANUP_SECONDS)
                     if reader.is_alive():
-                        raise RuntimeError("Windows wallet console reader did not exit")
+                        raise RuntimeError("Windows wallet output reader did not exit")
     if overflow.is_set() or read_errors:
         raise RuntimeError("Windows wallet terminal output incomplete")
+    # Keep only the explicit standard streams. The prompt/response terminal
+    # is never written to the log or returned to the rehearsal.
     visible = _text(output)
     for _, answer in prompts:
         visible = visible.replace(answer, b"<redacted>")
     with Path(log_path).open("xb") as log:
         log.write(visible)
     if check and (actor.code != 0 or sent != len(prompts)):
-        raise RuntimeError(f"wallet failed or exited before its expected prompts; see {Path(log_path).name}")
+        raise RuntimeError(f"wallet exit {actor.code}, prompts {sent}/{len(prompts)}, "
+                           f"stdio {len(output)} bytes, console {len(terminal)} bytes; see {Path(log_path).name}")
     return visible.decode("utf-8", "replace"), {
         "pid": actor.pid, "exit_code": actor.code, "elapsed_seconds": time.monotonic() - started,
         "prompts_answered": sent, "log_sha256": hashlib.sha256(visible).hexdigest(),

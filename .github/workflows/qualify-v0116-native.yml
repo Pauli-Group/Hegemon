@@ -127,6 +127,36 @@ jobs:
             ReleaseLauncherPolicyTests.test_bounded_reader_preserves_crlf_and_ctrl_z_bytes \
             ReleaseLauncherPolicyTests.test_crlf_helper_requires_its_raw_digest_not_normalized_lf
 
+      - name: Smoke-test hidden prompts and captured wallet JSON on Windows
+        if: runner.os == 'Windows'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release download v0.11.5 --repo Pauli-Group/Hegemon \
+            --pattern private-spend-windows-x86_64.exe --dir target
+          python3 -I -B - <<'PY'
+          import hashlib, json, secrets, sys, tempfile
+          from pathlib import Path
+          sys.path.insert(0, str(Path('../qualification/scripts').resolve()))
+          from combined_upgrade_acceptance.combined_io import PASS_PROMPT
+          from v0116_rotation_windows_io import wallet_cli
+
+          exe = Path('target/private-spend-windows-x86_64.exe').resolve()
+          if hashlib.sha256(exe.read_bytes()).hexdigest() != '6e3ed029a5726bc6be21240228b1617f25407e30ba95257d620e2fb55b6990ca':
+              raise SystemExit('wrong v0.11.5 wallet binary')
+          with tempfile.TemporaryDirectory(prefix='v0116-console-') as directory:
+              scratch = Path(directory)
+              secret = secrets.token_hex(16)
+              prompts = [(PASS_PROMPT, secret), (b'Confirm encrypted wallet passphrase: ', secret)]
+              output, evidence = wallet_cli(exe, ['--wallet', scratch / 'smoke.wallet', 'bootstrap-new'],
+                                            prompts, scratch / 'cli.log', 60)
+              records = [json.loads(line[line.index('{'):]) for line in output.splitlines() if '{' in line]
+              if not (len(records) == 1 and records[0].get('schema') == 'hegemon.private-spend.bootstrap.v1'
+                      and evidence['prompts_answered'] == 2 and secret not in output):
+                  raise SystemExit('hidden prompt and captured JSON contract failed')
+          PY
+
       - name: Build and package four native release binaries
         run: |
           set -euo pipefail
