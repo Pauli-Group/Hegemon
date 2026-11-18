@@ -1638,6 +1638,19 @@ impl<'a> R1csBuilder<'a> {
         });
     }
 
+    fn assert_asset_slot_count(
+        &mut self,
+        name: &str,
+        active: Shake256Wire,
+        selectors: [Shake256Wire; BALANCE_SLOTS],
+    ) {
+        let mut count = QirLinearCombination::constant(0);
+        for selector in selectors {
+            count = count.plus_wire(selector, 1);
+        }
+        self.assert_linear_zero(name, count.minus_wire(active));
+    }
+
     fn assert_true(&mut self, name: &str, bit: Shake256Wire) {
         self.assert_eq(name, bit, self.one);
     }
@@ -4273,14 +4286,10 @@ impl ValidatedFullShake448Relation {
                 );
             }
             builder.set_family(QirConstraintFamily::AssetSlotSelection);
-            let selector_expression = inputs[index].selectors.iter().copied().fold(
-                QirLinearCombination::wire(input_flags[index])
-                    .plus_wire(one, GOLDILOCKS_MODULUS - 1),
-                |expression, selector| expression.plus_wire(selector, 1),
-            );
-            builder.assert_linear_zero(
+            builder.assert_asset_slot_count(
                 &format!("input[{index}].selectors.equal_active"),
-                selector_expression,
+                input_flags[index],
+                inputs[index].selectors,
             );
             for slot in 0..BALANCE_SLOTS {
                 let selected = builder.and(
@@ -4332,14 +4341,10 @@ impl ValidatedFullShake448Relation {
                 );
             }
             builder.set_family(QirConstraintFamily::AssetSlotSelection);
-            let selector_expression = outputs[index].selectors.iter().copied().fold(
-                QirLinearCombination::wire(output_flags[index])
-                    .plus_wire(one, GOLDILOCKS_MODULUS - 1),
-                |expression, selector| expression.plus_wire(selector, 1),
-            );
-            builder.assert_linear_zero(
+            builder.assert_asset_slot_count(
                 &format!("output[{index}].selectors.equal_active"),
-                selector_expression,
+                output_flags[index],
+                outputs[index].selectors,
             );
             for slot in 0..BALANCE_SLOTS {
                 let selected = builder.and(
@@ -5840,6 +5845,32 @@ mod source_level_tests {
         assert!(
             validate_native_balance_equation(u128::MAX, 0, 0, SignedMagnitude::default(),).is_err()
         );
+    }
+
+    #[test]
+    fn asset_slot_constraint_accepts_one_selection_for_active_notes_and_none_for_padding() {
+        for active in [false, true] {
+            for mask in 0..(1u32 << BALANCE_SLOTS) {
+                let mut witness = Vec::new();
+                let mut constraints = Vec::new();
+                let mut builder = R1csBuilder::new(&mut witness, &mut constraints);
+                let flag = builder.alloc_bit("active", active);
+                let selectors = core::array::from_fn(|slot| {
+                    builder.alloc_bit("selector", mask & (1 << slot) != 0)
+                });
+                builder.set_family(QirConstraintFamily::AssetSlotSelection);
+                builder.assert_asset_slot_count("selectors.equal_active", flag, selectors);
+
+                let satisfied = constraints
+                    .iter()
+                    .all(|row| row.residual(&witness).unwrap() == 0);
+                assert_eq!(
+                    satisfied,
+                    mask.count_ones() == u32::from(active),
+                    "active={active}, selector mask={mask:04b}"
+                );
+            }
+        }
     }
 
     #[test]
