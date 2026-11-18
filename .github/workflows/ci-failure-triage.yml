@@ -1,0 +1,86 @@
+name: CI failure triage
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Analyze a failed RP05 run or exercise one deliberate fixture failure
+        type: choice
+        options:
+          - run
+          - smoke
+        default: run
+        required: true
+      run_id:
+        description: RP05 proof package run ID (run mode only)
+        type: string
+        required: false
+
+permissions: {}
+
+jobs:
+  collect:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'Pauli-Group/Hegemon' &&
+      github.ref == 'refs/heads/main'
+    permissions:
+      actions: read
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      finding: ${{ steps.history.outputs.finding || steps.smoke.outputs.finding }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /scripts/ci_triage_collect.py
+            /scripts/rp05_ci.py
+            /scripts/rp05_proof_package.py
+            /formal/rp05/source-manifest.json
+            /formal/rp05/generated/Sources/
+      - name: Read the failed RP05 step
+        id: history
+        if: inputs.mode == 'run'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TRIAGE_RUN_ID: ${{ inputs.run_id }}
+        run: python3 -I -B scripts/ci_triage_collect.py
+      - name: Exercise the guard with a temporary stale proof fixture
+        id: smoke
+        if: inputs.mode == 'smoke'
+        run: python3 -I -B scripts/ci_triage_collect.py --smoke
+
+  report:
+    needs: collect
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'Pauli-Group/Hegemon' &&
+      github.ref == 'refs/heads/main' &&
+      needs.collect.outputs.finding != ''
+    permissions:
+      contents: read
+    environment:
+      name: ci-triage-main
+      deployment: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /scripts/ci_triage_collect.py
+            /scripts/ci_triage_report.py
+      - name: Write the run summary
+        env:
+          TRIAGE_FINDING: ${{ needs.collect.outputs.finding }}
+          TRIAGE_MODE: ${{ inputs.mode }}
+          HEGEMON_CI_TRIAGE_OPENAI_API_KEY: ${{ secrets.HEGEMON_CI_TRIAGE_OPENAI_API_KEY }}
+        run: python3 -I -B scripts/ci_triage_report.py
