@@ -5,6 +5,8 @@
 
 #![forbid(unsafe_code)]
 
+use std::borrow::Cow;
+
 use codec::{Decode, DecodeWithMemLimit, DecodeWithMemTracking, Encode};
 use hegemon_hash384::{blake2b_384_domain_hash, domains};
 use protocol_shielded_pool::{
@@ -34,7 +36,8 @@ use transaction_circuit::{
     hashing_pq::ciphertext_hash_bytes,
     smallwood_poseidon2_v8_coinbase::{
         poseidon2_v8_default_note_nodes, poseidon2_v8_note_commitment,
-        poseidon2_v8_note_tree_compress, poseidon2_v8_words_from_canonical_bytes,
+        poseidon2_v8_note_tree_compress, poseidon2_v8_single_key_authorization_digest,
+        poseidon2_v8_words_from_canonical_bytes,
     },
     smallwood_poseidon2_v8_frontend::{
         SmallwoodPoseidon2V8SourceRelationFactory, SmallwoodPoseidon2V8VerifierRelationFactory,
@@ -253,6 +256,47 @@ pub struct Poseidon2V8OwnedNoteView {
     pub spent: bool,
     pub created_height: u64,
     pub created_block_hash: [u8; 32],
+}
+
+impl Poseidon2V8OwnedNoteView {
+    /// Resolve the authority from the opening and original block height, which
+    /// are already in the encrypted mirror and survive maturity and restart.
+    pub fn spending_keys<'a>(
+        &self,
+        root: &'a DerivedKeys,
+        chain_id: [u8; 32],
+    ) -> Result<Cow<'a, DerivedKeys>, WalletError> {
+        self.spending_authority(root, chain_id)
+            .map(|(owner, _)| owner)
+    }
+
+    /// The second result is the common circuit's legacy_ordinary selector.
+    /// Reward notes embed SINGLE directly. Imported private native fee change
+    /// in the same mirror embeds ordinary_owner(SINGLE) instead.
+    pub fn spending_authority<'a>(
+        &self,
+        root: &'a DerivedKeys,
+        chain_id: [u8; 32],
+    ) -> Result<(Cow<'a, DerivedKeys>, bool), WalletError> {
+        if let Some(authority) = recipient_authority(self.opening, root, self.diversifier_index)? {
+            if opening_has_owner(self.opening, authority) {
+                return Ok((Cow::Borrowed(root), true));
+            }
+            let ordinary = transaction_circuit::private_spend::ordinary_owner(authority)
+                .map_err(|_| WalletError::InvalidState("invalid native ordinary owner"))?;
+            if opening_has_owner(self.opening, ordinary) {
+                return Ok((Cow::Borrowed(root), false));
+            }
+        }
+        if self.diversifier_index == 0 {
+            if let Some(child) =
+                solo_reward_owner(self.opening, root, chain_id, self.created_height)?
+            {
+                return Ok((Cow::Owned(child), true));
+            }
+        }
+        Err(WalletError::NoteMismatch("wallet does not own V8 note"))
+    }
 }
 
 /// A public commitment and its membership witness at one exact canonical
@@ -564,6 +608,35 @@ impl Poseidon2V8WalletState {
                 "V8 wallet mirror genesis mismatch",
             )),
         }
+    }
+
+    /// The old generic RPC scanner initialized this release with no stablecoin
+    /// root and could journal rewards without recognizing their rotated keys.
+    /// Replay the blocks under the verified release context from height one.
+    pub(crate) fn prepare_unpinned_source_replay(
+        &mut self,
+        genesis_hash: [u8; 32],
+        stablecoin_root: Poseidon2V8Digest,
+    ) -> Result<(), WalletError> {
+        let Some(original) = self.canonical_tip_at_height(0) else {
+            return Ok(());
+        };
+        if original.block_hash != genesis_hash || original.stablecoin_root.is_some() {
+            return Ok(());
+        }
+        if self.stablecoin_root.is_some()
+            || self.blocks.iter().any(|block| {
+                block.stablecoin_root_before.is_some() || block.stablecoin_root_after.is_some()
+            })
+        {
+            return Err(WalletError::InvalidState(
+                "historical wallet journal has conflicting stablecoin roots",
+            ));
+        }
+        self.validate()?;
+        self.rollback_to(0, genesis_hash)?;
+        self.stablecoin_root = Some(stablecoin_root);
+        Ok(())
     }
 
     pub(crate) fn ensure_launch_genesis(
@@ -977,7 +1050,16 @@ impl Poseidon2V8WalletState {
         block: &Poseidon2V8CanonicalBlock,
         keys: Option<&DerivedKeys>,
     ) -> Result<Poseidon2V8SyncDelta, WalletError> {
-        self.apply_block_with_transfer_decoder(block, keys, |wire| {
+        self.apply_block_on_chain(block, keys, None)
+    }
+
+    pub(crate) fn apply_block_on_chain(
+        &mut self,
+        block: &Poseidon2V8CanonicalBlock,
+        keys: Option<&DerivedKeys>,
+        chain_id: Option<[u8; 32]>,
+    ) -> Result<Poseidon2V8SyncDelta, WalletError> {
+        self.apply_block_with_transfer_decoder(block, keys, chain_id, |wire| {
             let (expected, route) = poseidon2_v8_production_selection_at(block.height)?;
             decode_v8_transfer(wire, expected, route)
         })
@@ -1003,7 +1085,7 @@ impl Poseidon2V8WalletState {
                 "V8 block is outside the retained-test context",
             ));
         }
-        self.apply_block_with_transfer_decoder(block, keys, |wire| {
+        self.apply_block_with_transfer_decoder(block, keys, None, |wire| {
             decode_v8_transfer(wire, context.expected, context.route)
         })
     }
@@ -1012,6 +1094,7 @@ impl Poseidon2V8WalletState {
         &mut self,
         block: &Poseidon2V8CanonicalBlock,
         keys: Option<&DerivedKeys>,
+        chain_id: Option<[u8; 32]>,
         decode_transfer: impl Fn(PendingActionWire) -> Result<DecodedPoseidon2V8Action, WalletError>,
     ) -> Result<Poseidon2V8SyncDelta, WalletError> {
         if self.maturity_blocks != protocol_versioning::COINBASE_MATURITY {
@@ -1119,7 +1202,7 @@ impl Poseidon2V8WalletState {
                     let mut pending = Vec::new();
                     for note in notes {
                         let owned_opening = keys
-                            .map(|keys| recover_coinbase_note(&note, keys))
+                            .map(|keys| recover_coinbase_note(&note, keys, chain_id, block.height))
                             .transpose()?
                             .flatten()
                             .map(|(opening, index)| (opening_to_words(opening), index));
@@ -1238,14 +1321,20 @@ impl Poseidon2V8WalletState {
                 let position = self.append_commitment(note.commitment)?;
                 delta.commitments = delta.commitments.saturating_add(1);
                 if let (Some(keys), Some((opening, index))) = (keys, note.owned_opening) {
+                    let opening = words_to_opening(opening)?;
+                    let owner =
+                        owned_reward_keys(opening, keys, index, chain_id, reward.created_height)?
+                            .ok_or(WalletError::NoteMismatch(
+                            "wallet does not own queued V8 reward",
+                        ))?;
                     self.insert_owned_note_with_origin(
-                        words_to_opening(opening)?,
+                        opening,
                         note.commitment,
                         index,
                         position,
                         reward.created_height,
                         reward.created_block_hash,
-                        keys,
+                        &owner,
                     )?;
                     delta.recovered = delta.recovered.saturating_add(1);
                 }
@@ -2020,27 +2109,76 @@ fn pending_action_hash(wire: &PendingActionWire) -> [u8; 48] {
     blake2b_384_domain_hash(domains::ACTION_ID_V3, [body.as_slice()])
 }
 
+/// Match the public recipient first. Unrelated blocks need neither ML-KEM key
+/// generation nor trial decryption. Spending authority must match separately.
+fn recipient_authority(
+    opening: SmallwoodPoseidon2V8NoteOpening,
+    keys: &DerivedKeys,
+    index: u32,
+) -> Result<Option<Poseidon2V8Digest>, WalletError> {
+    if opening.recipient_key != keys.poseidon2_v8_recipient_words(index)? {
+        return Ok(None);
+    }
+    poseidon2_v8_single_key_authorization_digest(keys.spend.poseidon2_v8_words()?)
+        .map(Some)
+        .map_err(|_| WalletError::InvalidState("invalid V8 spending authority"))
+}
+
+fn opening_has_owner(opening: SmallwoodPoseidon2V8NoteOpening, owner: Poseidon2V8Digest) -> bool {
+    opening.authorization_key == owner[..4] && opening.randomness[..3] == owner[4..]
+}
+
+fn reward_matches(
+    opening: SmallwoodPoseidon2V8NoteOpening,
+    keys: &DerivedKeys,
+    index: u32,
+) -> Result<bool, WalletError> {
+    Ok(recipient_authority(opening, keys, index)?
+        .is_some_and(|owner| opening_has_owner(opening, owner)))
+}
+
+fn solo_reward_owner(
+    opening: SmallwoodPoseidon2V8NoteOpening,
+    root: &DerivedKeys,
+    chain_id: [u8; 32],
+    height: u64,
+) -> Result<Option<DerivedKeys>, WalletError> {
+    let child = root.solo_payout_keys(chain_id, height);
+    Ok(reward_matches(opening, &child, 0)?.then_some(child))
+}
+
+fn owned_reward_keys<'a>(
+    opening: SmallwoodPoseidon2V8NoteOpening,
+    root: &'a DerivedKeys,
+    index: u32,
+    chain_id: Option<[u8; 32]>,
+    height: u64,
+) -> Result<Option<Cow<'a, DerivedKeys>>, WalletError> {
+    if reward_matches(opening, root, index)? {
+        return Ok(Some(Cow::Borrowed(root)));
+    }
+    if let (0, Some(chain)) = (index, chain_id) {
+        return Ok(solo_reward_owner(opening, root, chain, height)?.map(Cow::Owned));
+    }
+    Ok(None)
+}
+
 fn recover_coinbase_note(
     note: &Poseidon2V8CoinbaseNoteData,
     keys: &DerivedKeys,
+    chain_id: Option<[u8; 32]>,
+    height: u64,
 ) -> Result<Option<(SmallwoodPoseidon2V8NoteOpening, u32)>, WalletError> {
+    // The decoder already checked the public opening against the commitment.
+    // A miner-controlled header can hint at a legacy diversifier but cannot
+    // suppress discovery of a primary or a height-derived solo payout.
     let ciphertext = NoteCiphertext::from_chain_bytes(&note.encrypted_note.encode())?;
-    // Header index is merely a hint. Always try the primary payout address as
-    // well, so changing that public header cannot hide an owned primary reward.
-    // Threshold scanners instead use their exact pinned policy address.
-    for index in [ciphertext.diversifier_index, 0] {
-        let material = keys.poseidon2_v8_address(index)?;
-        if let Ok(opening) = crate::poseidon2_v8_coinbase::public_poseidon2_v8_reward_opening(
-            note,
-            &material.shielded_address(),
-        ) {
-            return Ok(Some((opening, index)));
-        }
-        if index == 0 {
-            break;
-        }
+    let hint = ciphertext.diversifier_index;
+    let opening = protocol_opening_to_relation(note.opening);
+    if hint != 0 && reward_matches(opening, keys, hint)? {
+        return Ok(Some((opening, hint)));
     }
-    Ok(None)
+    Ok(owned_reward_keys(opening, keys, 0, chain_id, height)?.map(|_| (opening, 0)))
 }
 
 fn recover_transfer_note(
@@ -2516,7 +2654,7 @@ pub(crate) mod tests {
     // Under the activated cadence, a positive boundary with no miner claim uses
     // action12's existing one-note carrier. The wallet reads the public opening,
     // rather than assigning ownership from its historical `miner_note` label.
-    fn treasury_only_reward_action(note: Poseidon2V8CoinbaseNoteData) -> Vec<u8> {
+    pub(crate) fn one_note_reward_action(note: Poseidon2V8CoinbaseNoteData) -> Vec<u8> {
         let mut wire =
             decode_canonical_action_exact(&coinbase_action(&MintPoseidon2V8CoinbaseArgs {
                 miner_note: note.clone(),
@@ -2540,6 +2678,40 @@ pub(crate) mod tests {
         let mut hash = [branch; 32];
         hash[..8].copy_from_slice(&height.to_le_bytes());
         hash
+    }
+
+    #[test]
+    fn solo_reward_scan_uses_chain_and_origin_height_despite_an_incorrect_index_hint() {
+        let keys = RootSecret::from_bytes([0x47; 32]).derive();
+        let chain = [0x48; 32];
+        let height = 19;
+        let address = keys
+            .solo_payout_keys(chain, height)
+            .poseidon2_v8_address(0)
+            .unwrap();
+        let mut reward = build_poseidon2_v8_coinbase_args(
+            &address.shielded_address(),
+            50,
+            &mut StdRng::seed_from_u64(73),
+        )
+        .unwrap()
+        .miner_note;
+        reward.encrypted_note.ciphertext[3..7].copy_from_slice(&17u32.to_le_bytes());
+
+        let opening = protocol_opening_to_relation(reward.opening);
+        assert_eq!(
+            recover_coinbase_note(&reward, &keys, Some(chain), height).unwrap(),
+            Some((opening, 0))
+        );
+        for (chain, height) in [
+            (Some(chain), height + 1),
+            (Some([0x49; 32]), height),
+            (None, height),
+        ] {
+            assert!(recover_coinbase_note(&reward, &keys, chain, height)
+                .unwrap()
+                .is_none());
+        }
     }
 
     #[test]
@@ -2581,7 +2753,7 @@ pub(crate) mod tests {
                 .decrypt(&keys[0].poseidon2_v8_address(0).unwrap())
                 .is_err()
         );
-        let action = treasury_only_reward_action(reward.clone());
+        let action = one_note_reward_action(reward.clone());
         let recovered = poseidon2_v8_reward_notes_from_canonical_action(&action)
             .unwrap()
             .unwrap();
@@ -2723,7 +2895,7 @@ pub(crate) mod tests {
         )
         .unwrap()
         .miner_note;
-        let replacement_action = treasury_only_reward_action(replacement.clone());
+        let replacement_action = one_note_reward_action(replacement.clone());
         let replacement_block = |height: u64| {
             canonical_block(
                 height,
@@ -2814,8 +2986,8 @@ pub(crate) mod tests {
         let second = coinbase_args(&root, amount, 911).miner_note;
         for height in 1..=239 {
             let actions = match height {
-                60 => vec![treasury_only_reward_action(first.clone())],
-                120 => vec![treasury_only_reward_action(second.clone())],
+                60 => vec![one_note_reward_action(first.clone())],
+                120 => vec![one_note_reward_action(second.clone())],
                 _ => vec![],
             };
             store
@@ -4116,9 +4288,12 @@ pub(crate) mod tests {
                 .map(|h| mirror.canonical_tip_at_height(h).unwrap())
                 .collect::<Vec<_>>();
             let apply = |mirror: &mut Poseidon2V8WalletState| {
-                mirror.apply_block_with_transfer_decoder(&block, Some(&keys), |wire| {
-                    decode_native_asset_launch(wire, context, parent, &references)
-                })
+                mirror.apply_block_with_transfer_decoder(
+                    &block,
+                    Some(&keys),
+                    Some(context.chain_id()),
+                    |wire| decode_native_asset_launch(wire, context, parent, &references),
+                )
             };
             let delta = apply(&mut mirror).unwrap();
             assert_eq!(block.height, 135);
@@ -4155,7 +4330,7 @@ pub(crate) mod tests {
             duplicate_block.hash = [204; 32];
             let mut rejected = mirror.clone();
             assert!(matches!(
-                rejected.apply_block_with_transfer_decoder(&duplicate_block, None, |_| {
+                rejected.apply_block_with_transfer_decoder(&duplicate_block, None, None, |_| {
                     Ok(DecodedPoseidon2V8Action::AssetSpend(duplicate.clone()))
                 }),
                 Err(WalletError::InvalidState(
@@ -4193,7 +4368,7 @@ pub(crate) mod tests {
                 // Intentionally bypass the earlier native reference decoder to
                 // exercise the shared mirror's independent canonical guard.
                 assert!(rejected
-                    .apply_block_with_transfer_decoder(&block, None, |_| {
+                    .apply_block_with_transfer_decoder(&block, None, None, |_| {
                         Ok(DecodedPoseidon2V8Action::AssetSpend(changed.clone()))
                     })
                     .is_err());
@@ -4216,7 +4391,7 @@ pub(crate) mod tests {
             let before = fork.clone();
             let block = asset_block(&fork, &public);
             assert!(fork
-                .apply_block_with_transfer_decoder(&block, None, |_| {
+                .apply_block_with_transfer_decoder(&block, None, None, |_| {
                     Ok(DecodedPoseidon2V8Action::AssetSpend(public.clone()))
                 })
                 .is_err());

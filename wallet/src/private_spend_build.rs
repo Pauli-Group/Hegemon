@@ -111,6 +111,30 @@ impl SpendInput {
             },
         })
     }
+    /// Spend a canonical native input using its recipient's spending authority.
+    pub fn from_owned_note(
+        note: &crate::poseidon2_v8_sync::Poseidon2V8OwnedNoteView,
+        keys: &DerivedKeys,
+        chain_id: [u8; 32],
+    ) -> Result<Self, WalletError> {
+        if note.spent {
+            return Err(invalid("native note is already spent"));
+        }
+        let (owner, legacy_ordinary) = note.spending_authority(keys, chain_id)?;
+        let position = note
+            .position
+            .try_into()
+            .map_err(|_| invalid("native note position overflow"))?;
+        Self::native(
+            note.opening,
+            position,
+            note.path,
+            &owner,
+            chain_id,
+            legacy_ordinary,
+        )
+    }
+
     /// Typed legacy native opening, validated by the common relation before proof.
     pub fn legacy(
         note: relation::Note,
@@ -119,11 +143,22 @@ impl SpendInput {
         keys: &DerivedKeys,
         chain_id: [u8; 32],
     ) -> Result<Self, WalletError> {
+        Self::native(note, position, siblings, keys, chain_id, true)
+    }
+
+    fn native(
+        note: relation::Note,
+        position: u32,
+        siblings: [relation::Digest; 32],
+        keys: &DerivedKeys,
+        chain_id: [u8; 32],
+        legacy_ordinary: bool,
+    ) -> Result<Self, WalletError> {
         Ok(Self {
             chain_id: Some(chain_id),
             inner: relation::PrivateInput {
                 occupied: 1,
-                legacy_ordinary: 1,
+                legacy_ordinary: u64::from(legacy_ordinary),
                 note,
                 position,
                 siblings,
@@ -912,6 +947,60 @@ pub(crate) mod tests {
             },
         ]
     }
+    #[test]
+    fn imported_recovery_fee_change_keeps_ordinary_spend_authority() {
+        use crate::asset_spend_v1::AssetNotePayload;
+        use crate::poseidon2_v8_sync::{Poseidon2V8CanonicalBlock, Poseidon2V8WalletState};
+        use transaction_circuit::smallwood_poseidon2_v8_coinbase::poseidon2_v8_single_key_authorization_digest;
+
+        let keys = keys(8);
+        let spend = keys.spend.poseidon2_v8_words().unwrap();
+        let authority = poseidon2_v8_single_key_authorization_digest(spend).unwrap();
+        let mut opening = relation::Note {
+            value: 99,
+            recipient_key: keys.poseidon2_v8_recipient_words(7).unwrap(),
+            rho: [37; 4],
+            randomness: [38; 4],
+            ..Default::default()
+        };
+        relation::set_note_owner(&mut opening, relation::ordinary_owner(authority).unwrap());
+        let cm = relation::note_commitment(opening).unwrap();
+        let fee = AssetNotePayload {
+            recipient_index: 7,
+            authority,
+            note: synthetic_crypto::private_note_payload::NoteOpening {
+                value: opening.value,
+                asset_id: opening.asset_id,
+                recipient_key: opening.recipient_key,
+                authorization_key: opening.authorization_key,
+                rho: opening.rho,
+                randomness: opening.randomness,
+            },
+        };
+        let block = Poseidon2V8CanonicalBlock {
+            height: 1,
+            parent_hash: [1; 32],
+            hash: [2; 32],
+            action_bytes: vec![],
+        };
+        let mut mirror = Poseidon2V8WalletState::default();
+        mirror
+            .ensure_genesis_for_test(block.parent_hash, [1; 7])
+            .unwrap();
+        let position = mirror.append_journal_test_commitment(&block, cm).unwrap();
+        mirror
+            .import_recovery_native_fee(&fee, cm, position, &block, &keys)
+            .unwrap();
+        let note = mirror.owned_notes().unwrap().remove(0);
+        let input = SpendInput::from_owned_note(&note, &keys, [3; 32]).unwrap();
+        assert_eq!(input.inner.legacy_ordinary, 0);
+        assert!(input.inner.spend_key == spend);
+        assert_eq!(
+            relation::real_nullifier(spend, input.inner.position, opening).unwrap(),
+            note.nullifier
+        );
+    }
+
     pub(crate) fn journal_template_fixture() -> TreasuryFinalTemplate {
         let ks = [keys(71), keys(72), keys(73)];
         let addresses = ks

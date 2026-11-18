@@ -65,6 +65,8 @@ poseidon2-v8-retained-test-support = ["wallet/poseidon2-v8-retained-test-support
 # Explicit, isolated Development-profile candidate verification. This does not
 # add launch authority to the production source registry.
 development-candidate = []
+# Disposable mining and wallet restoration rehearsal on a Development chain.
+solo-payout-rehearsal = ["development-candidate", "wallet/rpc-client", "wallet/private-spend-dev-artifacts"]
 
 [dev-dependencies]
 blake2 = "0.10"

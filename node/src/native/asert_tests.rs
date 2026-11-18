@@ -29,6 +29,7 @@ fn rehearsal_config(path: &Path) -> NativeConfig {
         mine_threads: 1,
         bootstrap_mining_authoring: false,
         miner_address: None,
+        solo_payout_schedule: None,
         pow_bits: EASY_BITS,
     }
 }

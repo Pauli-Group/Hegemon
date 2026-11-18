@@ -926,10 +926,7 @@ impl<'a> HtlcPreparation<'a> {
         }
         let (recipient, authority) = address_fields(destination)?;
         let keys = store.derived_keys()?.ok_or(WalletError::WatchOnly)?;
-        let spend_key = Zeroizing::new(keys.spend.poseidon2_v8_words()?);
-        let owned_authority = poseidon2_v8_single_key_authorization_digest(*spend_key)
-            .map_err(htlc::surface_error)?;
-        let (input_commitment, nullifier, output) = if action == HtlcAction::Lock {
+        let (input_commitment, nullifier, output, spend_key) = if action == HtlcAction::Lock {
             if recipient != private.locked_note.recipient_key
                 || ![
                     (offer.claim_recipient, offer.claim_authority),
@@ -958,21 +955,30 @@ impl<'a> HtlcPreparation<'a> {
                     "HTLC Lock needs exactly one owned note worth offer value plus fee",
                 ));
             }
-            let material = keys.poseidon2_v8_address(owned.diversifier_index)?;
-            build_poseidon2_v8_owned_spend_input(
+            let owner = owned.spending_keys(&keys, context.chain_id())?;
+            let material = owner.poseidon2_v8_address(owned.diversifier_index)?;
+            let input = build_poseidon2_v8_owned_spend_input(
                 &material,
-                &keys.spend,
+                &owner.spend,
                 owned.opening,
                 owned.position,
                 owned.path,
             )?;
-            (owned.commitment, owned.nullifier, private.locked_note)
+            (
+                owned.commitment,
+                owned.nullifier,
+                private.locked_note,
+                Zeroizing::new(input.spend_key),
+            )
         } else {
             let expected = if action == HtlcAction::Claim {
                 (offer.claim_recipient, offer.claim_authority)
             } else {
                 (offer.refund_recipient, offer.refund_authority)
             };
+            let spend_key = Zeroizing::new(keys.spend.poseidon2_v8_words()?);
+            let owned_authority = poseidon2_v8_single_key_authorization_digest(*spend_key)
+                .map_err(htlc::surface_error)?;
             if (recipient, authority) != expected || owned_authority != expected.1 {
                 return Err(invalid(
                     "HTLC branch destination or wallet authority differs from offer",
@@ -1006,6 +1012,7 @@ impl<'a> HtlcPreparation<'a> {
                 )
                 .map_err(htlc::surface_error)?,
                 output,
+                spend_key,
             )
         };
         // The locked owner differs from a SingleKey owner: encrypt this exact opening directly.

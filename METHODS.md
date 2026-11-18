@@ -753,6 +753,14 @@ Bitcoin80/Stratum tests and add the changed contract checks; their names in a
 runbook are not evidence that a release artifact has passed. Consensus
 maturity and additional pool confirmations are separate from finality.
 
+For solo payout rotation, back up an encrypted full wallet before provisioning
+any addresses. Generate two distinct payout authorities, mine their rewards and
+restore to a fresh wallet with only that backup. Scan from genesis, check both
+maturity boundaries, then prove one ordinary spend with the two recovered keys.
+Compare its nullifiers with the restored mirror and verify that the native node
+includes the spend and that the wallet recognizes the outputs. The independent
+key-derivation vectors fix the scheme for future wallet restores.
+
 #### Compression feed-forward migration
 
 The repaired width-16 compression mode is

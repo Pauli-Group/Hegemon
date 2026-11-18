@@ -140,6 +140,18 @@ impl WalletStore {
     pub fn launch_chain_id(&self) -> Result<[u8; 32], WalletError> {
         Ok(self.launch_context()?.chain_id())
     }
+    #[cfg(feature = "rpc-client")]
+    pub(crate) fn pinned_launch_context(
+        &self,
+    ) -> Result<Option<crate::poseidon2_v8_sync::LaunchWalletContext>, WalletError> {
+        self.with_state(|state| {
+            state
+                .native_launch_context
+                .as_ref()
+                .map(|pin| pin.current_context())
+                .transpose()
+        })
+    }
     pub fn require_launch_context(
         &self,
         context: crate::poseidon2_v8_sync::LaunchWalletContext,
@@ -587,6 +599,65 @@ impl WalletStore {
         self.with_state(|state| Ok(state.derived.clone()))
     }
 
+    /// Export payout addresses without advancing a cursor or modifying the wallet.
+    pub fn solo_payout_schedule(
+        &self,
+        chain_id: [u8; 32],
+        first_height: u64,
+        count: usize,
+    ) -> Result<crate::solo_payout::SoloPayoutSchedule, WalletError> {
+        self.with_state(|state| {
+            if let Some(context) = &state.native_launch_context {
+                let expected = context.current_context()?.chain_id();
+                if expected != chain_id {
+                    return Err(WalletError::ChainMismatch {
+                        expected: hex::encode(expected),
+                        actual: hex::encode(chain_id),
+                    });
+                }
+            }
+            let keys = state.derived.as_ref().ok_or(WalletError::WatchOnly)?;
+            crate::solo_payout::SoloPayoutSchedule::derive(keys, chain_id, first_height, count)
+        })
+    }
+
+    /// Atomically create or renew this wallet's public schedule, including disjoint ranges.
+    pub fn export_solo_payout_schedule(
+        &self,
+        path: &Path,
+        chain_id: [u8; 32],
+        first_height: u64,
+        count: usize,
+    ) -> Result<crate::solo_payout::SoloPayoutSchedule, WalletError> {
+        use crate::solo_payout::{SoloPayoutSchedule, MAX_SOLO_PAYOUT_SCHEDULE_BYTES};
+        use std::io::{ErrorKind, Read};
+
+        let schedule = self.solo_payout_schedule(chain_id, first_height, count)?;
+        let bytes = schedule.to_json()?;
+        // The sibling lock survives file replacement and serializes competing exporters.
+        let (path, _export_lock) = lock_wallet_file(path)?;
+        let replace = match fs::File::open(&path) {
+            Ok(file) => {
+                let mut existing = Vec::new();
+                file.take(MAX_SOLO_PAYOUT_SCHEDULE_BYTES as u64 + 1)
+                    .read_to_end(&mut existing)?;
+                let old = SoloPayoutSchedule::from_json(&existing, chain_id)?;
+                let height = old.first_height();
+                let expected = self.solo_payout_schedule(chain_id, height, 1)?;
+                if old.address_at(height)? != expected.address_at(height)? {
+                    return Err(WalletError::InvalidArgument(
+                        "existing solo payout schedule belongs to a different wallet",
+                    ));
+                }
+                true
+            }
+            Err(err) if err.kind() == ErrorKind::NotFound => false,
+            Err(err) => return Err(err.into()),
+        };
+        publish_private_file(&path, &bytes, replace)?;
+        Ok(schedule)
+    }
+
     /// Returns the deterministic 32-byte signing seed for account-based extrinsics.
     ///
     /// Full wallets derive this from the stored root secret. Watch-only wallets
@@ -886,8 +957,30 @@ impl WalletStore {
         &self,
         block: &Poseidon2V8CanonicalBlock,
     ) -> Result<Poseidon2V8SyncDelta, WalletError> {
+        let chain_id = self.with_state(|state| {
+            state
+                .native_launch_context
+                .as_ref()
+                .map(|context| context.current_context().map(|context| context.chain_id()))
+                .transpose()
+        })?;
         self.with_poseidon2_v8_mut_and_block(Some(block), None, |mirror, keys| {
-            mirror.apply_block(block, keys)
+            mirror.apply_block_on_chain(block, keys, chain_id)
+        })
+    }
+
+    #[cfg(feature = "rpc-client")]
+    pub(crate) fn apply_unpinned_rpc_block(
+        &self,
+        block: &Poseidon2V8CanonicalBlock,
+        genesis: [u8; 32],
+        chain_id: [u8; 32],
+    ) -> Result<Poseidon2V8SyncDelta, WalletError> {
+        self.with_poseidon2_v8_mutation(Some(block), None, |mirror, keys, was_unpinned| {
+            if !was_unpinned || mirror.canonical_hash(0) != Some(genesis) || chain_id == [0; 32] {
+                return Err(WalletError::InvalidState("RPC reward scan chain mismatch"));
+            }
+            mirror.apply_block_on_chain(block, keys, Some(chain_id))
         })
     }
 
@@ -2092,6 +2185,20 @@ impl WalletStore {
     where
         F: FnOnce(&mut Poseidon2V8WalletState, Option<&DerivedKeys>) -> Result<T, WalletError>,
     {
+        self.with_poseidon2_v8_mutation(block, launch_context, |mirror, keys, _| {
+            func(mirror, keys)
+        })
+    }
+
+    fn with_poseidon2_v8_mutation<F, T>(
+        &self,
+        block: Option<&Poseidon2V8CanonicalBlock>,
+        launch_context: Option<(crate::poseidon2_v8_sync::LaunchWalletContext, bool)>,
+        func: F,
+    ) -> Result<T, WalletError>
+    where
+        F: FnOnce(&mut Poseidon2V8WalletState, Option<&DerivedKeys>, bool) -> Result<T, WalletError>,
+    {
         self.ensure_writable()?;
         let mut state = self
             .state
@@ -2139,7 +2246,7 @@ impl WalletStore {
                 derived,
                 ..
             } = &mut *state;
-            match func(poseidon2_v8, derived.as_ref()) {
+            match func(poseidon2_v8, derived.as_ref(), previous_context.is_none()) {
                 Ok(result) => result,
                 Err(error) => {
                     state.poseidon2_v8 = previous;
@@ -2452,6 +2559,10 @@ fn validate_imported_local_note_opening(
 /// and then atomically renamed into place, so replacing an existing permissive
 /// file does not leave newly-written secret material world-readable.
 pub fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), WalletError> {
+    publish_private_file(path, bytes, true)
+}
+
+fn publish_private_file(path: &Path, bytes: &[u8], replace: bool) -> Result<(), WalletError> {
     if let Some(parent) = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -2463,9 +2574,17 @@ pub fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), WalletError> 
     let tmp_id = u64::from_le_bytes(tmp_suffix);
     let tmp = path.with_extension(format!("tmp-{tmp_id:x}"));
     write_private_new_file(&tmp, bytes)?;
-    if let Err(err) = fs::rename(&tmp, path) {
-        let _ = fs::remove_file(&tmp);
-        return Err(err.into());
+    if replace {
+        if let Err(err) = fs::rename(&tmp, path) {
+            let _ = fs::remove_file(&tmp);
+            return Err(err.into());
+        }
+    } else {
+        // Publish the completed inode without clobbering a concurrently created file.
+        let installed = fs::hard_link(&tmp, path);
+        let cleaned = fs::remove_file(&tmp);
+        installed?;
+        cleaned?;
     }
     set_private_file_permissions(path)?;
     // The reservation must survive a process/OS restart before RPC can run:
@@ -5791,6 +5910,54 @@ mod tests {
         assert_eq!(mode, 0o600);
     }
 
+    #[test]
+    fn solo_payout_export_renews_only_the_original_wallet_schedule() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("payouts.json");
+        let owner = WalletStore::create_from_root(
+            dir.path().join("owner.wallet"),
+            "test",
+            RootSecret::from_bytes([10; 32]),
+        )
+        .unwrap();
+        let other = WalletStore::create_from_root(
+            dir.path().join("other.wallet"),
+            "test",
+            RootSecret::from_bytes([20; 32]),
+        )
+        .unwrap();
+        let chain = [3; 32];
+        let export =
+            |store: &WalletStore, first| store.export_solo_payout_schedule(&path, chain, first, 2);
+        export(&owner, 100).unwrap();
+        let original = fs::read(&path).unwrap();
+        for first in [101, 200] {
+            assert!(matches!(
+                export(&other, first),
+                Err(WalletError::InvalidArgument(
+                    "existing solo payout schedule belongs to a different wallet"
+                ))
+            ));
+            assert_eq!(fs::read(&path).unwrap(), original);
+        }
+        for first in [101, 200] {
+            let renewed = export(&owner, first).unwrap();
+            assert_eq!(fs::read(&path).unwrap(), renewed.to_json().unwrap());
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        fs::write(&path, b"unrelated").unwrap();
+        assert!(export(&owner, 300).is_err());
+        assert!(publish_private_file(&path, b"another first export", false).is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"unrelated");
+    }
+
     #[cfg(unix)]
     #[test]
     fn private_append_file_is_created_private_on_unix() {
@@ -6746,8 +6913,10 @@ impl WalletStore {
         let context = token.context();
         token.authorize(context, token.activation_height(), 1)?;
         let (stablecoin_root, note_root) = context.source_genesis_roots()?;
-        self.with_poseidon2_v8_mut_and_block(None, Some((context, true)), |mirror, _| {
-            token.authorize(context, token.activation_height(), 1)?;
+        self.with_poseidon2_v8_mutation(None, Some((context, true)), |mirror, _, was_unpinned| {
+            if was_unpinned {
+                mirror.prepare_unpinned_source_replay(context.genesis_hash(), stablecoin_root)?;
+            }
             mirror.ensure_launch_genesis(context.genesis_hash(), stablecoin_root, note_root)
         })
     }

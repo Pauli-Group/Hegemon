@@ -668,6 +668,7 @@ fn retained_carrier_cli_guard_child() {
         #[cfg(feature = "development-candidate")]
         development_recovery_json: None,
         print_crypto_profile: false,
+        solo_payout_schedule: None,
         dev: true,
         tmp: false,
         base_path: Some(directory.path().canonicalize().unwrap()),
@@ -779,6 +780,7 @@ fn retained_rp03_socket_child() {
         #[cfg(feature = "development-candidate")]
         development_recovery_json: None,
         print_crypto_profile: false,
+        solo_payout_schedule: None,
         dev: true,
         tmp: false,
         base_path: Some(base),

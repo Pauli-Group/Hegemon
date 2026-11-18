@@ -34,6 +34,7 @@ fn config(path: &Path) -> NativeConfig {
         mine_threads: 1,
         bootstrap_mining_authoring: false,
         miner_address: None,
+        solo_payout_schedule: None,
         pow_bits: 0x207f_ffff,
     }
 }

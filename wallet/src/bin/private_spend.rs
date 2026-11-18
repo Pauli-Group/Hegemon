@@ -848,7 +848,7 @@ fn ordinary_input(
         .find(|n| n.position == position && !n.spent)
         .context("unspent ordinary input absent")?;
     Ok((
-        SpendInput::legacy(n.opening, n.position.try_into()?, n.path, k, r.chain_id)?,
+        SpendInput::from_owned_note(&n, k, r.chain_id)?,
         n.opening.value,
     ))
 }

@@ -26,6 +26,7 @@ fn canonicality_test_config(
         mine_threads: 1,
         bootstrap_mining_authoring: false,
         miner_address,
+        solo_payout_schedule: None,
         pow_bits: 0x207f_ffff,
     }
 }

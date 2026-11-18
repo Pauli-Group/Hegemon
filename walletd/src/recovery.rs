@@ -697,16 +697,14 @@ mod enabled {
             note: feenote,
             authority: feeauth,
         };
-        let localkey = Zeroizing::new(keys.spend.poseidon2_v8_words().map_err(op)?);
-        let localauth = coinbase::poseidon2_v8_single_key_authorization_digest(*localkey)
-            .map_err(|_| err("local authority"))?;
-        let ordinary = private::ordinary_owner(localauth).map_err(op)?;
+        let (fee_keys, legacy_ordinary) = fee
+            .spending_authority(&keys, current.chain_id)
+            .map_err(op)?;
+        let fee_spend_key = Zeroizing::new(fee_keys.spend.poseidon2_v8_words().map_err(op)?);
         let n = fee.opening;
-        let legacy =
-            u64::from(n.authorization_key != ordinary[..4] || n.randomness[..3] != ordinary[4..]);
         let feeinput = private::PrivateInput {
             occupied: 1,
-            legacy_ordinary: legacy,
+            legacy_ordinary: u64::from(legacy_ordinary),
             note: private::Note {
                 value: n.value,
                 asset_id: n.asset_id,
@@ -717,10 +715,10 @@ mod enabled {
             },
             position: u32::try_from(fee.position).map_err(|_| err("fee position32"))?,
             siblings: fee.path,
-            spend_key: *localkey,
+            spend_key: *fee_spend_key,
             dummy_secret: [0; 5],
         };
-        if private::real_nullifier(*localkey, feeinput.position, feeinput.note).map_err(op)?
+        if private::real_nullifier(*fee_spend_key, feeinput.position, feeinput.note).map_err(op)?
             != fee.nullifier
         {
             return Err(err("owned fee NF differs"));
@@ -764,7 +762,7 @@ mod enabled {
                 position: position.unwrap(),
                 siblings: path,
                 freeze_siblings: frozenpath,
-                spend_key: (*localkey).into(),
+                spend_key: keys.spend.poseidon2_v8_words().map_err(op)?.into(),
             },
             _ => {
                 let (_, r, _) = address(

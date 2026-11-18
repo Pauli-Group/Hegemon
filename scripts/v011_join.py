@@ -168,8 +168,9 @@ def browser_origin(value):
 
 def arguments(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mine", action="store_true", help="explicitly enable mining; requires a full public reward address")
+    parser.add_argument("--mine", action="store_true", help="enable mining with a public reward address or solo payout schedule")
     parser.add_argument("--miner-address", help="public recipient only; never a key or seed")
+    parser.add_argument("--solo-payout-schedule", metavar="PATH", help="public schedule exported by the wallet for this chain")
     parser.add_argument("--wallet-rpc", action="store_true", help="enable submission RPC on loopback only for your local native wallet")
     parser.add_argument("--public-submit-rpc", action="store_true", help="opt in to bounded public PrivateSpend submission (v0.11.3, v0.11.4 and v0.11.5 bundles only); loopback unless --rpc-external is explicit")
     parser.add_argument("--rpc-external", action="store_true", help="bind public-submit RPC on all interfaces; requires --public-submit-rpc")
@@ -206,19 +207,28 @@ def launch_command(root: Path, args, environment):
         fail("HEGEMON_MINE must be exactly 0 or 1")
     mining = args.mine or mine_value == "1"
     recipient = args.miner_address or env.get("HEGEMON_MINER_ADDRESS", "")
-    if mining and not re.fullmatch(r"shca1[023456789acdefghjklmnpqrstuvwxyz]{100,4096}", recipient):
+    schedule = args.solo_payout_schedule if args.solo_payout_schedule is not None else env.get("HEGEMON_SOLO_PAYOUT_SCHEDULE", "")
+    if (args.solo_payout_schedule is not None or schedule) and not schedule.strip():
+        fail("solo payout schedule path must be nonblank")
+    if mining and bool(recipient) == bool(schedule):
+        fail("mining requires exactly one public reward address or solo payout schedule")
+    if (recipient or schedule) and not mining:
+        fail("a payout recipient or schedule requires explicit --mine or HEGEMON_MINE=1")
+    if recipient and not re.fullmatch(r"shca1[023456789acdefghjklmnpqrstuvwxyz]{100,4096}", recipient):
         fail("mining requires a full public shca1 recipient; the node checks its checksum and network")
-    if recipient and not mining:
-        fail("a reward address requires explicit --mine or HEGEMON_MINE=1")
     data_dir = Path(args.data_dir or env.get("HEGEMON_NODE_PATH") or Path.home() / ".hegemon-node-v0.11").expanduser().absolute()
     if data_dir == root or root in data_dir.parents:
         fail("keep node state outside the release bundle")
     env.update(HEGEMON_SEEDS=seeds, HEGEMON_MINE="1" if mining else "0", HEGEMON_BOOTSTRAP_AUTHORING="0")
-    if mining:
+    if recipient:
         env["HEGEMON_MINER_ADDRESS"] = recipient
     else:
         env.pop("HEGEMON_MINER_ADDRESS", None)
     command = [str(binary), "--network", "pre-mainnet", "--network-manifest", str(root / "config/testnet/0.11/network-manifest.json"), "--base-path", str(data_dir), "--rpc-port", str(args.rpc_port), "--port", str(args.p2p_port), "--rpc-methods", "public-submit" if args.public_submit_rpc else "unsafe" if args.wallet_rpc else "safe", "--name", "Hegemon-v0.11"]
+    if schedule:
+        # An older node must reject the request instead of silently forfeiting rewards.
+        env["HEGEMON_SOLO_PAYOUT_SCHEDULE"] = schedule
+        command.append(f"--solo-payout-schedule={schedule}")
     if args.rpc_external:
         command.append("--rpc-external")
     if args.rpc_cors is not None:

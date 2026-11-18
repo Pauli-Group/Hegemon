@@ -93,6 +93,8 @@ enum Commands {
         out: Option<PathBuf>,
     },
     Init(InitArgs),
+    /// Export one public solo mining payout address per block height.
+    SoloPayoutSchedule(SoloPayoutArgs),
     /// Sync wallet using native node RPC
     #[command(name = "node-sync")]
     NodeSync(NodeSyncArgs),
@@ -139,6 +141,24 @@ struct InitArgs {
 struct StoreArgs {
     #[arg(long)]
     store: PathBuf,
+}
+
+#[derive(Parser)]
+struct SoloPayoutArgs {
+    #[arg(long)]
+    store: PathBuf,
+    /// Network chain ID (32-byte hex).
+    #[arg(long, value_parser = parse_hex_32)]
+    chain_id: [u8; 32],
+    /// First block height covered by this schedule, inclusive.
+    #[arg(long)]
+    first_height: u64,
+    /// Number of consecutive block heights to provision (1 through 4096).
+    #[arg(long)]
+    count: usize,
+    /// New schedule file or an existing schedule for the same network.
+    #[arg(long)]
+    output: PathBuf,
 }
 
 #[derive(Parser)]
@@ -411,6 +431,7 @@ fn main() -> Result<()> {
         }),
         Commands::Scan { ivk, ledger, out } => cmd_scan(&ivk, &ledger, out.as_deref()),
         Commands::Init(args) => cmd_init(args),
+        Commands::SoloPayoutSchedule(args) => cmd_solo_payout_schedule(args),
         Commands::NodeSync(args) => cmd_node_sync(args),
         Commands::NodeDaemon(args) => cmd_node_daemon(args),
         Commands::Status(args) => cmd_status(args),
@@ -437,6 +458,21 @@ fn cmd_generate(count: u32, out: Option<PathBuf>) -> Result<()> {
     } else {
         println!("{}", json);
     }
+    Ok(())
+}
+
+fn cmd_solo_payout_schedule(args: SoloPayoutArgs) -> Result<()> {
+    let passphrase = get_passphrase("Enter wallet passphrase: ")?;
+    let store = WalletStore::open_read_only(&args.store, &passphrase)?;
+    let schedule = store
+        .export_solo_payout_schedule(&args.output, args.chain_id, args.first_height, args.count)
+        .with_context(|| format!("Write solo payout schedule {}", args.output.display()))?;
+    println!(
+        "Wrote public solo payout addresses for heights {} through {} to {}",
+        schedule.first_height(),
+        schedule.last_height(),
+        args.output.display()
+    );
     Ok(())
 }
 

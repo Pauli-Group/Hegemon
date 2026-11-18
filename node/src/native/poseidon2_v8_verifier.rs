@@ -567,7 +567,7 @@ fn validate_retained_carrier_process_request(
         || config.mine
         || config.mine_threads != 1
         || config.bootstrap_mining_authoring
-        || config.miner_address.is_some()
+        || config.has_miner_payout()
         || config.pow_bits != 0x207f_ffff
         || !(1..=4).contains(&config.max_peers)
     {
@@ -3588,6 +3588,7 @@ mod tests {
             mine_threads: 1,
             bootstrap_mining_authoring: false,
             miner_address: None,
+            solo_payout_schedule: None,
             pow_bits: 0x207f_ffff,
         }
     }

@@ -50,10 +50,43 @@ export HEGEMON_MINER_ADDRESS=$(printf '%s\n{"id":1,"method":"status.get","params
   | jq -r '.result.primaryAddress')
 ```
 
+### Optional solo payout rotation
+
+Build the wallet tools and native node from the revision that supports solo payout rotation. On the full-wallet host, set `WALLET_STORE` to your encrypted wallet, `PAYOUT_FILE` to the schedule destination, and `CHAIN_ID` to the verified network chain ID. Set `FIRST_HEIGHT` to a positive height at or before your next mining job. This example provisions 2,048 consecutive **network block heights**, including heights mined by peers.
+
+```bash
+cargo build --release --locked -p wallet --bin wallet --bin private-spend
+./target/release/wallet solo-payout-schedule --store "$WALLET_STORE" \
+  --chain-id "$CHAIN_ID" --first-height "$FIRST_HEIGHT" --count 2048 \
+  --output "$PAYOUT_FILE"
+```
+
+Transfer the schedule privately to the solo mining host. It contains public addresses whose association reveals they belong to one miner. Keep the encrypted wallet backup and passphrase on the wallet host. To start the pre-mainnet miner from the updated source checkout, run
+
+```bash
+unset HEGEMON_MINER_ADDRESS
+export HEGEMON_SOLO_PAYOUT_SCHEDULE="/absolute/path/to/solo-payouts.json"
+export HEGEMON_SEEDS="hegemon.pauli.group:30333,devnet.hegemonprotocol.com:30333"
+export HEGEMON_MINE=1
+bash ./start.sh
+```
+
+Use the same approved seeds on every shared-network miner and enable NTP or chrony. Jobs at the same height use the same address, including replacement blocks after a reorganization. The chain publishes each reward amount and its public keys. Keep the file writable only by the operator who provisions payouts.
+
+Before the last covered height, generate a new range from the same wallet and chain. Keep an overlap for reorganizations and atomically replace the file on the mining host. At the first uncovered height the node reads the new file. Without a valid entry it stops issuing mining work until coverage is restored. The CLI accepts up to 4,096 heights per file.
+
+To recover, use the encrypted **full-wallet** backup, even one made before exporting the first schedule. Restore to an unused wallet path, then synchronize against the intended manifest and genesis using a trusted node. The scanner derives the payout key from each reward's original height. A reward issued at height `h` enters the spendable tree at the end of block `h + 119` and can be spent in block `h + 120`.
+
+```bash
+./target/release/private-spend --wallet "$RESTORED_WALLET" bootstrap-recover --source "$WALLET_BACKUP"
+./target/release/private-spend --wallet "$RESTORED_WALLET" \
+  --manifest "$NETWORK_MANIFEST" --genesis "$GENESIS_HASH" --rpc "$NODE_RPC" sync
+```
+
 ## 4. Start a mining node
 
 ```bash
-HEGEMON_MINE=1 HEGEMON_MINER_ADDRESS="$HEGEMON_MINER_ADDRESS" \
+HEGEMON_MINE=1 \
   ./target/release/hegemon-node --dev \
   --base-path /tmp/node-a \
   --port 30333 \

@@ -1120,6 +1120,7 @@ fn withheld_unverified_locator_never_changes_native_mining_sync_gate() {
         mine_threads: 1,
         bootstrap_mining_authoring: true,
         miner_address: None,
+        solo_payout_schedule: None,
         pow_bits: NATIVE_DEV_POW_BITS,
     };
     let node = NativeNode::open(config).expect("test node");
@@ -1171,6 +1172,7 @@ fn known_taller_nonwinning_locator_never_closes_native_mining_sync_gate() {
         mine_threads: 1,
         bootstrap_mining_authoring: true,
         miner_address: None,
+        solo_payout_schedule: None,
         pow_bits: 0x207f_ffff,
     };
     let node = NativeNode::open(config).expect("test node");
@@ -1319,6 +1321,7 @@ fn transport_test_node(name: &str) -> (tempfile::TempDir, Arc<NativeNode>) {
         mine_threads: 1,
         bootstrap_mining_authoring: true,
         miner_address: None,
+        solo_payout_schedule: None,
         pow_bits: NATIVE_DEV_POW_BITS,
     };
     let node = NativeNode::open(config).expect("test node");

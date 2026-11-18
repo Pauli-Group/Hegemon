@@ -3089,6 +3089,7 @@ fn submit_action_returns_exact_rejection_response() {
         mine_threads: 1,
         bootstrap_mining_authoring: false,
         miner_address: None,
+        solo_payout_schedule: None,
         pow_bits: 0x207f_ffff,
     };
     let node = NativeNode::open(config).expect("node");
@@ -3126,6 +3127,7 @@ fn submit_action_rejects_invalid_shielded_transfer_before_persistence() {
         mine_threads: 1,
         bootstrap_mining_authoring: false,
         miner_address: None,
+        solo_payout_schedule: None,
         pow_bits: test_pow_bits,
     };
     let node = NativeNode::open(config).expect("node");
@@ -5045,6 +5047,7 @@ fn side_branch_with_more_work_reorganizes_canonical_chain() {
         mine_threads: 1,
         bootstrap_mining_authoring: false,
         miner_address: None,
+        solo_payout_schedule: None,
         pow_bits: test_pow_bits,
     };
     let node = NativeNode::open(config).expect("node");
@@ -9037,6 +9040,7 @@ fn manual_coinbase_action_submission_is_rejected() {
         mine_threads: 1,
         bootstrap_mining_authoring: false,
         miner_address: None,
+        solo_payout_schedule: None,
         pow_bits: test_pow_bits,
     };
     let node = NativeNode::open(config).expect("node");
@@ -27515,6 +27519,7 @@ fn live_mining_requires_shared_seeds_or_explicit_bootstrap_authoring() {
         #[cfg(feature = "development-candidate")]
         development_recovery_json: None,
         print_crypto_profile: false,
+        solo_payout_schedule: None,
         dev: false,
         tmp: false,
         base_path: Some(base_path),
@@ -38678,6 +38683,7 @@ pub(super) fn test_config(
         mine_threads: 1,
         bootstrap_mining_authoring: false,
         miner_address: None,
+        solo_payout_schedule: None,
         pow_bits,
     }
 }

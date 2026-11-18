@@ -724,6 +724,35 @@ impl NodeRpcClient {
             .map_err(|error| WalletError::Rpc(format!("hegemon_nodeConfig failed: {error}")))
     }
 
+    /// Read the native chain identity from the header addressed by the already
+    /// observed genesis hash. This is a consistency check on the trusted RPC.
+    pub(crate) async fn genesis_chain_id(
+        &self,
+        genesis: [u8; 32],
+    ) -> Result<[u8; 32], WalletError> {
+        self.ensure_connected().await?;
+        let header: serde_json::Value = self
+            .client
+            .read()
+            .await
+            .request(
+                "chain_getHeader",
+                rpc_params![format!("0x{}", hex::encode(genesis))],
+            )
+            .await
+            .map_err(|error| {
+                WalletError::Rpc(format!("chain_getHeader(genesis) failed: {error}"))
+            })?;
+        if header["number"] != "0x0" {
+            return Err(WalletError::InvalidState(
+                "native genesis header is unavailable",
+            ));
+        }
+        hex_to_array(header["chainId"].as_str().ok_or(WalletError::InvalidState(
+            "native genesis header has no chain identity",
+        ))?)
+    }
+
     /// Read the native private-spend descriptor for verified wallet sync.
     /// Callers must bind this public readback to their selected network authority.
     pub async fn private_spend_parameters(&self) -> Result<serde_json::Value, WalletError> {

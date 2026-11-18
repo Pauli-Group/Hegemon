@@ -90,7 +90,17 @@ class PreMainnetLauncherTests(unittest.TestCase):
         self.assertEqual(result["env"]["HEGEMON_MINER_ADDRESS"], "public-test-recipient")
         for value in ("", " \t "):
             self.rejected(self.launch({"HEGEMON_MINE": "1", "HEGEMON_MINER_ADDRESS": value}),
-                          "HEGEMON_MINER_ADDRESS must")
+                          "Mining requires")
+
+    def test_rotating_mining_passes_explicit_node_flag_and_rejects_conflicts(self):
+        schedule = str(self.home / "solo payouts.json")
+        mining = {"HEGEMON_MINE": "1", "HEGEMON_SOLO_PAYOUT_SCHEDULE": schedule}
+        result = self.success(self.launch(mining))
+        self.assertEqual(result["argv"][-1], "--solo-payout-schedule=" + schedule)
+        self.assertEqual(result["env"]["HEGEMON_MINER_ADDRESS"], "")
+        self.assertEqual(result["env"]["HEGEMON_SEEDS"], ",".join(self.record["seeds"]))
+        self.rejected(self.launch({**mining, "HEGEMON_MINER_ADDRESS": "fixed"}), "select only one")
+        self.rejected(self.launch({**mining, "HEGEMON_SOLO_PAYOUT_SCHEDULE": "   "}), "nonblank")
 
     def test_nonbinary_mining_flag_rejects(self):
         self.rejected(self.launch({"HEGEMON_MINE": "true"}), "HEGEMON_MINE must be 0 or 1")

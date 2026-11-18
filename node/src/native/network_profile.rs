@@ -703,6 +703,7 @@ mod tests {
             mine_threads: 1,
             bootstrap_mining_authoring: true,
             miner_address: None,
+            solo_payout_schedule: None,
         }
     }
 
@@ -1030,6 +1031,7 @@ mod tests {
         std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
         let make_cli = |development_candidate| NativeCli {
             print_crypto_profile: false,
+            solo_payout_schedule: None,
             network: Some(NativeNetworkProfile::Development),
             network_manifest: Some(manifest_path.clone()),
             development_candidate,
@@ -1270,6 +1272,7 @@ mod action_scope_tests {
             mine_threads: 1,
             bootstrap_mining_authoring: true,
             miner_address: None,
+            solo_payout_schedule: None,
             pow_bits: NATIVE_DEV_POW_BITS,
         };
         config.network = NativeNetworkIdentity::development();

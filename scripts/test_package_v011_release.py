@@ -311,6 +311,33 @@ class PackagingTests(unittest.TestCase):
             self.assertEqual(env["HEGEMON_MINE"], "1")
             self.assertEqual(env["HEGEMON_MINER_ADDRESS"], public)
 
+    def test_solo_schedule_is_passed_explicitly_and_cannot_mix_with_a_fixed_recipient(self):
+        bundle, _ = self.fixture_bundle()
+        self.set_bundle_software(bundle, "v0.11.5", "0.11.5")
+        schedule = str(self.root / "solo payouts.json")
+        env_name = "HEGEMON_SOLO_PAYOUT_SCHEDULE"
+        with mock.patch.object(join.sys, "platform", "linux"), mock.patch.object(join.platform, "machine", return_value="x86_64"):
+            for argv, environment in (
+                (["--mine", "--solo-payout-schedule", schedule], {}),
+                ([], {"HEGEMON_MINE": "1", env_name: schedule}),
+            ):
+                command, env = join.launch_command(bundle, join.arguments(argv), environment)
+                self.assertIn("--solo-payout-schedule=" + schedule, command)
+                self.assertEqual(env[env_name], schedule)
+                self.assertEqual(env["HEGEMON_MINE"], "1")
+                self.assertNotIn("HEGEMON_MINER_ADDRESS", env)
+                self.assertEqual(env["HEGEMON_SEEDS"], ",".join(join.SEEDS))
+            address = "shca1" + "q" * 110
+            for argv, environment in (
+                (["--mine", "--miner-address", address], {env_name: schedule}),
+                (["--mine", "--solo-payout-schedule", schedule], {"HEGEMON_MINER_ADDRESS": address}),
+                (["--mine", "--solo-payout-schedule", ""], {}),
+                (["--mine"], {env_name: "   "}),
+                ([], {env_name: schedule}),
+            ):
+                with self.subTest(argv=argv, environment=environment), self.assertRaises(ValueError):
+                    join.launch_command(bundle, join.arguments(argv), environment)
+
     def test_port_arguments_use_native_flags_without_external_rpc(self):
         bundle, _ = self.fixture_bundle()
         with mock.patch.object(join, "verify_bundle", return_value=bundle / "bin/hegemon-node"):

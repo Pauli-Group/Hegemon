@@ -2006,6 +2006,7 @@ mod pending_action_observer_tests {
             mine_threads: 1,
             bootstrap_mining_authoring: false,
             miner_address: None,
+            solo_payout_schedule: None,
         }
     }
 
@@ -2343,6 +2344,7 @@ mod hgn_only_release_boundary_tests {
             mine_threads: 1,
             bootstrap_mining_authoring: false,
             miner_address: None,
+            solo_payout_schedule: None,
         }
     }
 

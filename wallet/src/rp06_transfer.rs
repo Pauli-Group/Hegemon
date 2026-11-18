@@ -259,10 +259,11 @@ fn construct_material<'a, R: RngCore + CryptoRng + ?Sized>(
             2];
     for input in 0..2 {
         let note = &spend.notes[input];
-        let material = keys.poseidon2_v8_address(note.diversifier_index)?;
+        let owner = note.spending_keys(&keys, context.chain_id())?;
+        let material = owner.poseidon2_v8_address(note.diversifier_index)?;
         inputs[input] = build_poseidon2_v8_owned_spend_input(
             &material,
-            &keys.spend,
+            &owner.spend,
             note.opening,
             note.position,
             note.path,

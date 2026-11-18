@@ -350,6 +350,9 @@ pub struct NativeCli {
     /// Print the compiled production cryptographic profile as JSON and exit.
     #[arg(long)]
     pub print_crypto_profile: bool,
+    /// File of public solo-miner payout addresses exported by the wallet.
+    #[arg(long, value_name = "PATH")]
+    pub solo_payout_schedule: Option<PathBuf>,
     /// Explicit network selection. Omission preserves the legacy chain.
     #[arg(long, value_enum)]
     pub network: Option<NativeNetworkProfile>,
@@ -431,6 +434,7 @@ pub struct NativeConfig {
     pub mine_threads: u32,
     pub bootstrap_mining_authoring: bool,
     pub miner_address: Option<String>,
+    pub solo_payout_schedule: Option<PathBuf>,
     pub pow_bits: u32,
 }
 
@@ -545,6 +549,11 @@ impl NativeConfig {
             .ok()
             .map(|raw| raw.trim().to_string())
             .filter(|raw| !raw.is_empty());
+        let solo_payout_schedule = cli.solo_payout_schedule.or_else(|| {
+            std::env::var_os("HEGEMON_SOLO_PAYOUT_SCHEDULE")
+                .filter(|path| !path.is_empty())
+                .map(PathBuf::from)
+        });
         let legacy_pow_bits = if cli.dev {
             NATIVE_DEV_POW_BITS
         } else {
@@ -571,8 +580,13 @@ impl NativeConfig {
             mine_threads,
             bootstrap_mining_authoring,
             miner_address,
+            solo_payout_schedule,
             pow_bits,
         })
+    }
+
+    fn has_miner_payout(&self) -> bool {
+        self.miner_address.is_some() || self.solo_payout_schedule.is_some()
     }
 
     fn permits_empty_seed_authoring(&self) -> bool {
@@ -4577,6 +4591,7 @@ type NativeSyncTestObserver = Arc<dyn Fn(&NativeNode) + Send + Sync>;
 
 pub struct NativeNode {
     config: NativeConfig,
+    solo_payout: Option<solo_payout::SoloPayoutFile>,
     public_rpc_admission: PublicRpcAdmission,
     db: sled::Db,
     meta_tree: sled::Tree,
@@ -4776,6 +4791,7 @@ mod public_submit_fixture_tests;
 mod rpc;
 mod service;
 pub(crate) mod smallwood_v8_lifetime;
+mod solo_payout;
 mod storage;
 mod sync_chunks;
 mod treasury;

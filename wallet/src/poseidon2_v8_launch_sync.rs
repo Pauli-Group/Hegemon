@@ -348,7 +348,8 @@ impl Poseidon2V8WalletState {
             ..=parent.height)
             .filter_map(|height| self.canonical_tip_at_height(height))
             .collect::<Vec<_>>();
-        self.apply_block_with_transfer_decoder(block, keys, |wire| match wire.action_id {
+        let chain = Some(context.chain_id());
+        self.apply_block_with_transfer_decoder(block, keys, chain, |wire| match wire.action_id {
             launch_candidate::HTLC_ACTION_ID
             | launch_candidate::RP06_ACTION_ID
             | launch_candidate::PRIVATE_SPEND_ACTION_ID => {

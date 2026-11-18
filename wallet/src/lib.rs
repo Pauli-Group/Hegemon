@@ -37,6 +37,7 @@ pub mod rp06_transfer;
 pub mod rp06_transfer_store;
 pub mod rpc;
 pub mod scanner;
+pub mod solo_payout;
 mod serde_bytes48;
 pub mod shielded_tx;
 pub mod store;

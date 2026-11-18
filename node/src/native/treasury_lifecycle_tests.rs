@@ -11,6 +11,10 @@ use transaction_circuit::smallwood_poseidon2_v8_coinbase::{
 };
 use wallet::RootSecret;
 
+#[cfg(feature = "solo-payout-rehearsal")]
+#[path = "solo_payout_rotation_lifecycle.rs"]
+mod solo_payout_rotation;
+
 const TEST_POW_BITS: u32 = 0x207f_ffff;
 const HISTORICAL_BLOCK_INTERVAL_MS: u64 = (consensus::reward::RETARGET_TIMESPAN_MS
     / (consensus::reward::RETARGET_WINDOW - 1))
@@ -60,6 +64,7 @@ fn config(path: &Path, network: &NativeNetworkIdentity, miner: Option<String>) -
         mine_threads: 1,
         bootstrap_mining_authoring: false,
         miner_address: miner,
+        solo_payout_schedule: None,
         pow_bits: TEST_POW_BITS,
     }
 }
@@ -92,6 +97,12 @@ fn assert_same(a: &NativeNode, b: &NativeNode) {
 }
 
 fn mine(node: &NativeNode) -> NativeBlockMeta {
+    let block = mine_historical_block(node);
+    assert_eq!(store(node).proof_lifetime_count().unwrap().get(), 0);
+    block
+}
+
+fn mine_historical_block(node: &NativeNode) -> NativeBlockMeta {
     let mut work = node.prepare_work().unwrap();
     let parent = node.best_meta();
     assert_eq!(work.parent_hash, parent.hash);
@@ -146,7 +157,6 @@ fn mine(node: &NativeNode) -> NativeBlockMeta {
         .expect("actual mined block must advance");
     assert_eq!(block.timestamp_ms, work.timestamp_ms);
     assert_eq!(block.pow_bits, work.pow_bits);
-    assert_eq!(store(node).proof_lifetime_count().unwrap().get(), 0);
     block
 }
 

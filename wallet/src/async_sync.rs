@@ -47,6 +47,10 @@ use tokio::sync::RwLock;
 use crate::error::WalletError;
 use crate::node_rpc::{CiphertextEntry, NodeRpcClient};
 use crate::notes::NoteCiphertext;
+use crate::poseidon2_v8_sync::{
+    LaunchWalletContext, Poseidon2V8CanonicalBlock, Poseidon2V8SyncDelta,
+};
+use crate::private_spend_rpc::SourcePrivateSpendAuthority;
 use crate::store::WalletStore;
 use crate::sync::SyncOutcome;
 use crate::viewing::{FullViewingKey, IncomingViewingKey, RecoveredNote};
@@ -54,6 +58,95 @@ use crate::viewing::{FullViewingKey, IncomingViewingKey, RecoveredNote};
 pub const WALLET_SYNC_EXPECTED_TREE_DEPTH: u64 =
     transaction_circuit::constants::CIRCUIT_MERKLE_DEPTH as u64;
 pub const WALLET_SYNC_MAX_SNAPSHOT_GAP: u64 = 1_048_576;
+
+enum NativeScanRoute {
+    Historical {
+        chain_id: [u8; 32],
+    },
+    Source(SourcePrivateSpendAuthority),
+    #[cfg(feature = "private-spend-dev-artifacts")]
+    Development(crate::private_spend_rpc::DevelopmentPrivateSpendAuthority),
+}
+
+impl NativeScanRoute {
+    fn source(
+        config: &serde_json::Value,
+        parameters: &serde_json::Value,
+        genesis: [u8; 32],
+        height: u64,
+    ) -> Result<Self, WalletError> {
+        // The release registry independently binds the public manifest and the
+        // observed genesis to the allowed chain and transaction proof verifier.
+        let manifest = serde_json::to_vec(&config["networkManifest"])
+            .map_err(|e| WalletError::Serialization(e.to_string()))?;
+        let token = SourcePrivateSpendAuthority::from_verified_node(
+            &manifest, genesis, genesis, config, parameters, height,
+        )?;
+        Ok(Self::Source(token))
+    }
+
+    fn initialize(&self, store: &WalletStore, genesis: [u8; 32]) -> Result<(), WalletError> {
+        match self {
+            Self::Historical { .. } => store.ensure_poseidon2_v8_genesis(genesis),
+            Self::Source(token) => store.initialize_private_spend_source_context(token),
+            #[cfg(feature = "private-spend-dev-artifacts")]
+            Self::Development(token) => store.initialize_private_spend_development_context(token),
+        }
+    }
+
+    fn apply(
+        &self,
+        store: &WalletStore,
+        genesis: [u8; 32],
+        block: &Poseidon2V8CanonicalBlock,
+    ) -> Result<Poseidon2V8SyncDelta, WalletError> {
+        match self {
+            Self::Historical { chain_id } => {
+                store.apply_unpinned_rpc_block(block, genesis, *chain_id)
+            }
+            Self::Source(token) => store.apply_private_spend_source_block(block, token),
+            #[cfg(feature = "private-spend-dev-artifacts")]
+            Self::Development(token) => store.apply_private_spend_development_block(block, token),
+        }
+    }
+}
+
+fn require_rpc_identity(
+    config: &serde_json::Value,
+    genesis: [u8; 32],
+    chain_id: [u8; 32],
+    pinned: Option<LaunchWalletContext>,
+) -> Result<(), WalletError> {
+    if genesis == [0; 32]
+        || chain_id == [0; 32]
+        || config["chainId"] != format!("0x{}", hex::encode(chain_id))
+    {
+        return Err(WalletError::InvalidState(
+            "RPC chain identity differs from genesis header",
+        ));
+    }
+    let profile = &config["networkProfile"];
+    if (profile == "legacy"
+        && (!config["networkManifest"].is_null() || !config["networkManifestDigest"].is_null()))
+        || (profile != "legacy" && config["networkManifest"]["profile"] != *profile)
+    {
+        return Err(WalletError::InvalidState(
+            "RPC network profile differs from its manifest",
+        ));
+    }
+    if let Some(pin) = pinned {
+        if genesis != pin.genesis_hash()
+            || chain_id != pin.chain_id()
+            || config["networkManifestDigest"]
+                != format!("0x{}", hex::encode(pin.manifest_digest()))
+        {
+            return Err(WalletError::InvalidState(
+                "RPC network differs from pinned wallet context",
+            ));
+        }
+    }
+    Ok(())
+}
 
 /// Async wallet synchronization engine
 ///
@@ -100,6 +193,53 @@ impl AsyncWalletSyncEngine {
         self
     }
 
+    async fn native_scan_route(
+        &self,
+        genesis: [u8; 32],
+        height: u64,
+    ) -> Result<NativeScanRoute, WalletError> {
+        let config = self.client.node_config().await?;
+        let chain_id = self.client.genesis_chain_id(genesis).await?;
+        let pinned = self.store.pinned_launch_context()?;
+        require_rpc_identity(&config, genesis, chain_id, pinned)?;
+        let route = match config["networkProfile"].as_str() {
+            Some("pre-mainnet" | "mainnet") => NativeScanRoute::source(
+                &config,
+                &self.client.private_spend_parameters().await?,
+                genesis,
+                height,
+            )?,
+            Some("development")
+                if !config["networkManifest"]["development_candidate"].is_null() =>
+            {
+                // The configured RPC cannot opt a wallet into a Development candidate.
+                #[cfg(feature = "private-spend-dev-artifacts")]
+                if let Some(pin) = pinned {
+                    let parameters = self.client.private_spend_parameters().await?;
+                    let manifest = serde_json::to_vec(&config["networkManifest"])
+                        .map_err(|e| WalletError::Serialization(e.to_string()))?;
+                    let token = crate::private_spend_rpc::DevelopmentPrivateSpendAuthority::from_verified_node(
+                        &manifest, pin.genesis_hash(), genesis, &config, &parameters, height,
+                    )?;
+                    self.store.require_launch_context(token.context())?;
+                    return Ok(NativeScanRoute::Development(token));
+                }
+                return Err(WalletError::InvalidState(
+                    "Development candidate requires wallet private-spend sync with its explicit network context",
+                ));
+            }
+            Some("legacy" | "development") if pinned.is_none() => {
+                NativeScanRoute::Historical { chain_id }
+            }
+            _ => {
+                return Err(WalletError::InvalidState(
+                    "unknown or inconsistent native RPC network profile",
+                ))
+            }
+        };
+        Ok(route)
+    }
+
     /// Perform a single synchronization pass
     ///
     /// Fetches all new commitments, ciphertexts, and nullifiers from the node
@@ -113,6 +253,9 @@ impl AsyncWalletSyncEngine {
 
             // Validate genesis hash to detect chain resets
             let metadata = self.client.get_chain_metadata().await?;
+            let route = self
+                .native_scan_route(metadata.genesis_hash, metadata.block_number)
+                .await?;
             if !self.skip_genesis_check {
                 // Try to set genesis hash (will fail if mismatched)
                 self.store.set_genesis_hash(metadata.genesis_hash)?;
@@ -133,6 +276,7 @@ impl AsyncWalletSyncEngine {
                     _ => {}
                 }
             }
+            route.initialize(&self.store, metadata.genesis_hash)?;
 
             // Detect deep rewrites when genesis stays the same but historical blocks changed.
             // Without this check, a wallet can keep stale commitments and build invalid anchors.
@@ -408,6 +552,7 @@ impl AsyncWalletSyncEngine {
             self.store.refresh_pending(latest.height, &nullifier_set)?;
             let latest_hash = parse_hash_32(&latest.hash)?;
             self.sync_poseidon2_v8(
+                &route,
                 metadata.genesis_hash,
                 latest.height,
                 latest_hash,
@@ -428,12 +573,12 @@ impl AsyncWalletSyncEngine {
     /// RPC's chain choice or independently verify consensus and transaction proofs.
     async fn sync_poseidon2_v8(
         &self,
+        route: &NativeScanRoute,
         genesis_hash: [u8; 32],
         target_height: u64,
         target_hash: [u8; 32],
         outcome: &mut SyncOutcome,
     ) -> Result<(), WalletError> {
-        self.store.ensure_poseidon2_v8_genesis(genesis_hash)?;
         let initial_tip = self.store.poseidon2_v8_tip()?;
         let mut ancestor_height = initial_tip.height.min(target_height);
         loop {
@@ -475,7 +620,7 @@ impl AsyncWalletSyncEngine {
             let block = self.client.canonical_block_actions(height).await?.ok_or(
                 WalletError::InvalidState("canonical V8 sync block is unavailable"),
             )?;
-            let delta = self.store.apply_poseidon2_v8_canonical_block(&block)?;
+            let delta = route.apply(&self.store, genesis_hash, &block)?;
             outcome.poseidon2_v8_blocks = outcome.poseidon2_v8_blocks.saturating_add(1);
             outcome.poseidon2_v8_commitments = outcome
                 .poseidon2_v8_commitments
@@ -757,6 +902,167 @@ mod tests {
     };
     use rand::{rngs::StdRng, SeedableRng};
     use serde::Deserialize;
+
+    fn release_rpc_fixture() -> (serde_json::Value, serde_json::Value, [u8; 32], [u8; 32]) {
+        use serde_json::json;
+        let manifest: serde_json::Value = serde_json::from_str(include_str!(
+            "../../config/testnet/0.11/network-manifest.json"
+        ))
+        .unwrap();
+        let release: serde_json::Value =
+            serde_json::from_str(include_str!("../../config/testnet/0.11/release-v0115.json"))
+                .unwrap();
+        let source: serde_json::Value =
+            serde_json::from_str(include_str!("../../config/v011-release-successor.json")).unwrap();
+        let chain = parse_hash_32(release["chain_id"].as_str().unwrap()).unwrap();
+        let genesis = parse_hash_32(release["genesis_hash"].as_str().unwrap()).unwrap();
+        let config = json!({
+            "chainId": release["chain_id"], "networkProfile": "pre-mainnet", "networkManifest": manifest,
+            "networkManifestDigest": format!("0x{}", source["current_identity"]["manifest_digest"].as_str().unwrap())
+        });
+        let parameters = json!({
+            "relation_digest": hex::encode(transaction_circuit::private_spend::relation_digest()),
+            "action_id": protocol_versioning::launch_candidate::PRIVATE_SPEND_ACTION_ID,
+            "public_words": transaction_circuit::private_spend::PUBLIC_WORDS,
+            "ciphertext_bytes": transaction_circuit::private_spend::CIPHERTEXT_BYTES,
+        });
+        (config, parameters, genesis, chain)
+    }
+
+    #[test]
+    fn restored_rpc_wallet_pins_exact_reward_chain_before_advancing() {
+        let (config, parameters, genesis, chain) = release_rpc_fixture();
+        let dir = tempfile::tempdir().unwrap();
+        let backup = dir.path().join("before.wallet");
+        let destination = dir.path().join("restored.wallet");
+        drop(
+            WalletStore::create_from_root(&backup, "backup", RootSecret::from_bytes([3; 32]))
+                .unwrap(),
+        );
+        let store = WalletStore::recover_keys_to_fresh_wallet(
+            &backup,
+            "backup",
+            &destination,
+            "new passphrase",
+        )
+        .unwrap();
+        assert!(store.pinned_launch_context().unwrap().is_none());
+        assert!(require_rpc_identity(&config, genesis, [2; 32], None).is_err());
+        assert!(NativeScanRoute::source(&config, &parameters, [1; 32], 0).is_err());
+        require_rpc_identity(&config, genesis, chain, None).unwrap();
+        NativeScanRoute::source(&config, &parameters, genesis, 0)
+            .unwrap()
+            .initialize(&store, genesis)
+            .unwrap();
+        drop(store);
+        let reopened = WalletStore::open(&destination, "new passphrase").unwrap();
+        let pin = reopened.pinned_launch_context().unwrap().unwrap();
+        assert_eq!(pin.chain_id(), chain);
+        assert_eq!(pin.genesis_hash(), genesis);
+        assert!(require_rpc_identity(&config, [1; 32], chain, Some(pin)).is_err());
+        assert_eq!(reopened.poseidon2_v8_tip().unwrap().height, 0);
+    }
+
+    #[test]
+    fn upgraded_rpc_wallet_replays_historical_rewards_once() {
+        use crate::poseidon2_v8_coinbase::build_poseidon2_v8_coinbase_args;
+        use crate::poseidon2_v8_sync::tests::one_note_reward_action;
+        let (config, parameters, genesis, chain) = release_rpc_fixture();
+        let route = NativeScanRoute::source(&config, &parameters, genesis, 1).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("existing.wallet");
+        let root = RootSecret::from_bytes([0x54; 32]);
+        let address = root
+            .derive()
+            .solo_payout_keys(chain, 1)
+            .poseidon2_v8_address(0)
+            .unwrap();
+        let note = build_poseidon2_v8_coinbase_args(
+            &address.shielded_address(),
+            37,
+            &mut StdRng::seed_from_u64(2),
+        )
+        .unwrap()
+        .miner_note;
+        let block = Poseidon2V8CanonicalBlock {
+            height: 1,
+            hash: [0x68; 32],
+            parent_hash: genesis,
+            action_bytes: vec![one_note_reward_action(note)],
+        };
+        let store = WalletStore::create_from_root(&path, "test", root).unwrap();
+        store.ensure_poseidon2_v8_genesis(genesis).unwrap();
+        store.apply_poseidon2_v8_canonical_block(&block).unwrap();
+        store.set_last_synced_height(1).unwrap();
+        store.set_last_synced_block_hash(block.hash).unwrap();
+        assert!(store.pinned_launch_context().unwrap().is_none());
+        assert_eq!(store.poseidon2_v8_tip().unwrap().height, 1);
+        assert_eq!(
+            store
+                .private_spend_balance()
+                .unwrap()
+                .immature_coinbase
+                .notes,
+            0
+        );
+        drop(store);
+
+        let reopened = WalletStore::open(&path, "test").unwrap();
+        route.initialize(&reopened, genesis).unwrap();
+        assert_eq!(reopened.poseidon2_v8_tip().unwrap().height, 0);
+        assert_eq!(reopened.last_synced_height().unwrap(), 1);
+        assert_eq!(reopened.last_synced_block_hash().unwrap(), Some(block.hash));
+        drop(reopened);
+        let reopened = WalletStore::open(&path, "test").unwrap();
+        route.apply(&reopened, genesis, &block).unwrap();
+        route.initialize(&reopened, genesis).unwrap();
+        let tip = reopened.poseidon2_v8_tip().unwrap();
+        assert_eq!((tip.height, tip.stablecoin_root), (1, Some([0; 7])));
+        let balance = reopened.private_spend_balance().unwrap();
+        assert_eq!(
+            (
+                balance.immature_coinbase.notes,
+                balance.immature_coinbase.atoms
+            ),
+            (1, 37)
+        );
+    }
+
+    #[test]
+    fn upgraded_rpc_wallet_rejects_conflicting_or_previously_pinned_history() {
+        let (config, parameters, genesis, _) = release_rpc_fixture();
+        let route = NativeScanRoute::source(&config, &parameters, genesis, 0).unwrap();
+        let NativeScanRoute::Source(token) = &route else {
+            unreachable!()
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("conflict.wallet");
+        let store =
+            WalletStore::create_from_root(&path, "test", RootSecret::from_bytes([3; 32])).unwrap();
+        store
+            .ensure_poseidon2_v8_genesis_for_test(genesis, [7; 7])
+            .unwrap();
+        assert!(route.initialize(&store, genesis).is_err());
+        assert!(store.pinned_launch_context().unwrap().is_none());
+        assert_eq!(
+            store.poseidon2_v8_tip().unwrap().stablecoin_root,
+            Some([7; 7])
+        );
+
+        let path = dir.path().join("previously-pinned.wallet");
+        let store =
+            WalletStore::create_from_root(&path, "test", RootSecret::from_bytes([4; 32])).unwrap();
+        store.ensure_poseidon2_v8_genesis(genesis).unwrap();
+        store
+            .initialize_pinned_launch_context(token.context())
+            .unwrap();
+        assert!(route.initialize(&store, genesis).is_err());
+        assert_eq!(store.poseidon2_v8_tip().unwrap().stablecoin_root, None);
+        assert_eq!(
+            store.pinned_launch_context().unwrap(),
+            Some(token.context())
+        );
+    }
 
     fn sample_ciphertext_entry(index: u64) -> CiphertextEntry {
         let root = RootSecret::from_bytes([index as u8; 32]);

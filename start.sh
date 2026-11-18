@@ -1,25 +1,34 @@
 #!/usr/bin/env bash
 # Start the release-bound v0.11 pre-mainnet node. Default role: sync/relay.
-# Mining requires HEGEMON_MINE=1 and HEGEMON_MINER_ADDRESS=<your public address>.
+# With HEGEMON_MINE=1, select a fixed public address or a public solo payout schedule.
 # No wallet is created, opened or deleted. Keep NTP/chrony enabled.
 set -euo pipefail
 
 if [[ "$#" -ne 0 ]]; then
-  echo "Usage: ./start.sh (configure mining through HEGEMON_MINE and HEGEMON_MINER_ADDRESS)" >&2
+  echo "Usage: bash start.sh (set HEGEMON_MINE=1 and either HEGEMON_MINER_ADDRESS or HEGEMON_SOLO_PAYOUT_SCHEDULE)" >&2
   exit 64
 fi
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RELEASE_DIR="$ROOT/config/testnet/0.11"
 : "${HEGEMON_MINE:=0}"
 : "${HEGEMON_MINER_ADDRESS:=}"
+: "${HEGEMON_SOLO_PAYOUT_SCHEDULE:=}"
 : "${HEGEMON_NODE_BIN:=$ROOT/target/release/hegemon-node}"
 : "${HEGEMON_NODE_PATH:=$HOME/.hegemon-node-v0.11}"
 
+if [[ -n "$HEGEMON_SOLO_PAYOUT_SCHEDULE" ]]; then
+  if [[ -z "${HEGEMON_SOLO_PAYOUT_SCHEDULE//[[:space:]]/}" || -n "${HEGEMON_MINER_ADDRESS//[[:space:]]/}" ]]; then
+    echo "Set a nonblank HEGEMON_SOLO_PAYOUT_SCHEDULE or HEGEMON_MINER_ADDRESS; select only one." >&2
+    exit 1
+  fi
+  # An older binary must reject this flag instead of silently authoring unpaid work.
+  set -- "--solo-payout-schedule=$HEGEMON_SOLO_PAYOUT_SCHEDULE"
+fi
 case "$HEGEMON_MINE" in
   0) ;;
   1)
-    if [[ -z "${HEGEMON_MINER_ADDRESS//[[:space:]]/}" ]]; then
-      echo "HEGEMON_MINER_ADDRESS must be your full public reward address when mining." >&2
+    if [[ -z "${HEGEMON_MINER_ADDRESS//[[:space:]]/}" && -z "$HEGEMON_SOLO_PAYOUT_SCHEDULE" ]]; then
+      echo "Mining requires HEGEMON_MINER_ADDRESS or HEGEMON_SOLO_PAYOUT_SCHEDULE." >&2
       exit 1
     fi
     ;;
@@ -80,4 +89,4 @@ exec "$HEGEMON_NODE_BIN" \
   --base-path "$HEGEMON_NODE_PATH" \
   --rpc-port 9944 \
   --rpc-methods safe \
-  --name "Hegemon-v0.11"
+  --name "Hegemon-v0.11" "$@"

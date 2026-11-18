@@ -86,6 +86,24 @@ pub struct DerivedKeys {
 }
 
 impl DerivedKeys {
+    /// A separate V8 identity for a solo reward, reproducible from the root backup.
+    /// Height is the reward's block height, including when replaying an old fork.
+    pub fn solo_payout_keys(&self, chain_id: [u8; 32], height: u64) -> DerivedKeys {
+        let height = height.to_le_bytes();
+        let child = |role: &[u8], parent: &[u8; KEY_SIZE]| {
+            wallet_kdf_v3(
+                b"Hegemon.Wallet.SoloPayout.v1",
+                &[role, &chain_id, &height, parent],
+            )
+        };
+        DerivedKeys {
+            spend: SpendKey(child(b"spend", &self.spend.0)),
+            view: ViewKey(child(b"view", &self.view.0)),
+            encryption: EncryptionSeed(child(b"enc", &self.encryption.0)),
+            diversifier: DiversifierKey(child(b"derive", &self.diversifier.0)),
+        }
+    }
+
     pub fn address(&self, index: u32) -> Result<AddressKeyMaterial, WalletError> {
         AddressKeyMaterial::derive_with_spend(
             index,
@@ -104,6 +122,12 @@ impl DerivedKeys {
             &self.diversifier,
             &self.spend,
         )
+    }
+
+    /// Match a public reward recipient without deriving the ML-KEM keypair.
+    pub fn poseidon2_v8_recipient_words(&self, index: u32) -> Result<[u64; 4], WalletError> {
+        self.view
+            .poseidon2_v8_recipient_words(&self.diversifier.derive(index))
     }
 }
 
@@ -151,6 +175,20 @@ impl ViewKey {
 
     pub fn pk_recipient(&self, diversifier: &[u8; KEY_SIZE]) -> [u8; KEY_SIZE] {
         wallet_kdf_v3(domains::WALLET_RECIPIENT_KEY_V3, &[&self.0, diversifier])
+    }
+
+    fn poseidon2_v8_recipient_words(
+        &self,
+        diversifier: &[u8; KEY_SIZE],
+    ) -> Result<[u64; 4], WalletError> {
+        transaction_circuit::smallwood_poseidon2_v8_coinbase::poseidon2_v8_recipient_key_words(
+            self.pk_recipient(diversifier),
+        )
+        .map_err(|error| {
+            WalletError::Serialization(format!(
+                "V8 recipient-key field derivation failed: {error:?}"
+            ))
+        })
     }
 }
 
@@ -217,15 +255,7 @@ impl AddressKeyMaterial {
         spend: &SpendKey,
     ) -> Result<Self, WalletError> {
         let diversifier = diversifier_key.derive(index);
-        let recipient_words =
-            transaction_circuit::smallwood_poseidon2_v8_coinbase::poseidon2_v8_recipient_key_words(
-                view.pk_recipient(&diversifier),
-            )
-            .map_err(|error| {
-                WalletError::Serialization(format!(
-                    "V8 recipient-key field derivation failed: {error:?}"
-                ))
-            })?;
+        let recipient_words = view.poseidon2_v8_recipient_words(&diversifier)?;
         let spend_words = spend.poseidon2_v8_words()?;
         let authorization_digest = transaction_circuit::smallwood_poseidon2_v8_coinbase::poseidon2_v8_single_key_authorization_digest(spend_words)
             .map_err(|error| WalletError::Serialization(format!("V8 authorization key derivation failed: {error:?}")))?;
@@ -395,6 +425,35 @@ mod tests {
     use rand::{rngs::StdRng, SeedableRng};
 
     use super::*;
+
+    #[test]
+    fn solo_payout_v1_derivation_matches_backup_vector() {
+        let keys = RootSecret::from_bytes([7; 32]).derive();
+        let child = keys.solo_payout_keys([8; 32], 123);
+        // Pin all four roles: changing any one would strand previously issued rewards.
+        for (actual, expected) in [
+            (
+                child.spend.0,
+                "83c8a7d62a8e5f08403377fcd2e4ffde531175366d0a3cbfb5d086e74b342373",
+            ),
+            (
+                child.view.0,
+                "64826c8cab7ae52cab1755b3a53904b6402d5b87d24f4618469624798185c136",
+            ),
+            (
+                child.encryption.0,
+                "4b336cdc46c5d69d4412b662443c6ad158c2272582dc29aff92dcd657d47b278",
+            ),
+            (
+                child.diversifier.0,
+                "70ada37d26e8fe322ea3766ad4a5e344b14e666c122ff6096c9dcec53971eb69",
+            ),
+        ] {
+            assert_eq!(hex::encode(actual), expected);
+        }
+        assert_ne!(child.spend, keys.solo_payout_keys([9; 32], 123).spend);
+        assert_ne!(child.spend, keys.solo_payout_keys([8; 32], 124).spend);
+    }
 
     #[test]
     fn derived_keys_deterministic() {

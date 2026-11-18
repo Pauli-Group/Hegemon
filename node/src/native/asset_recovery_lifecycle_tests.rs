@@ -227,6 +227,7 @@ fn config(
         mine: false,
         mine_threads: 1,
         bootstrap_mining_authoring: false,
+        solo_payout_schedule: None,
         miner_address: Some(
             fee.poseidon2_v8_address(0)
                 .unwrap()

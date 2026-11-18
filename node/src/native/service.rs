@@ -118,6 +118,7 @@ pub(super) async fn run_with_config(config: NativeConfig) -> Result<()> {
         chain_id = %hex32(&config.chain_id()),
         seeds = ?config.seeds,
         miner_address = ?config.miner_address,
+        solo_payout_rotation = config.solo_payout_schedule.is_some(),
         "starting native Hegemon node"
     );
 
@@ -3153,6 +3154,7 @@ mod launch_peer_source_tests {
             mine_threads: 1,
             bootstrap_mining_authoring: true,
             miner_address: None,
+            solo_payout_schedule: None,
             pow_bits: NATIVE_DEV_POW_BITS,
         })
         .unwrap();

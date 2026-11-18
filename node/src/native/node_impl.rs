@@ -2171,6 +2171,7 @@ fn inspect_native_pow_metadata_bincode_exact(
 
 impl NativeNode {
     pub fn open(config: NativeConfig) -> Result<Arc<Self>> {
+        let solo_payout = solo_payout::SoloPayoutFile::from_config(&config)?;
         validate_public_rpc_cors(
             config.rpc_methods.trim().to_ascii_lowercase().as_str(),
             config.rpc_cors.as_deref(),
@@ -2288,6 +2289,7 @@ impl NativeNode {
         let selected_chain_id = config.chain_id();
         let node = Arc::new(Self {
             config,
+            solo_payout,
             public_rpc_admission,
             db,
             meta_tree,
@@ -3971,7 +3973,7 @@ impl NativeNode {
             .treasury_reward_policy()
             .entitlement(height)
             .map_or(0, |e| e.payout);
-        if self.config.miner_address.is_none() && treasury_due == 0 {
+        if !self.config.has_miner_payout() && treasury_due == 0 {
             return Ok(None);
         }
         if actions.iter().any(is_coinbase_action) {
@@ -3982,6 +3984,11 @@ impl NativeNode {
             return Ok(None);
         }
         let Some(production) = self.fresh_coinbase_authority_at_height(height)? else {
+            if self.solo_payout.is_some() {
+                return Err(anyhow!(
+                    "solo payout requires an active V8 reward route at height {height}"
+                ));
+            }
             if treasury_due > 0 {
                 return Err(anyhow!("mandatory treasury payout lacks mint authority"));
             }
@@ -4030,7 +4037,7 @@ impl NativeNode {
             }
             return Ok(action.encoded_size());
         }
-        if self.config.miner_address.is_none()
+        if !self.config.has_miner_payout()
             && self
                 .treasury_reward_policy()
                 .entitlement(height)
@@ -4300,13 +4307,9 @@ impl NativeNode {
             }
             return self.build_allocated_reward_action(height, amount);
         }
-        let miner_address = self
-            .config
-            .miner_address
-            .as_deref()
+        let recipient = self
+            .miner_payout_address_at(height)?
             .ok_or_else(|| anyhow!("native coinbase reservation requires a miner address"))?;
-        let recipient = ShieldedAddress::decode(miner_address)
-            .with_context(|| "decode HEGEMON_MINER_ADDRESS for native coinbase")?;
         self.build_poseidon2_v8_auto_coinbase_action(&recipient, amount)
     }
 
@@ -4332,12 +4335,7 @@ impl NativeNode {
         let funding_amount = policy
             .entitlement(height)
             .map_or(per_height_funding, |e| e.payout);
-        let miner = self
-            .config
-            .miner_address
-            .as_deref()
-            .map(ShieldedAddress::decode)
-            .transpose()?;
+        let miner = self.miner_payout_address_at(height)?;
         if policy.entitlement(height).is_some() && (miner.is_none() || miner_amount == 0) {
             if funding_amount == 0 {
                 return Err(anyhow!("no positive reward to construct"));
@@ -6814,7 +6812,7 @@ impl NativeNode {
                 "native persisted best record changed during work-template construction"
             ));
         }
-        if self.config.miner_address.is_some() {
+        if self.config.has_miner_payout() {
             pending_actions.retain(|action| !is_coinbase_action(action));
         }
         if force_empty_actions {
@@ -7090,6 +7088,14 @@ impl NativeNode {
                 best.supply_digest
             }
         };
+        if self.solo_payout.is_some()
+            && !actions.iter().any(is_coinbase_action)
+            && expected_coinbase_amount(&actions, height)? > 0
+        {
+            return Err(anyhow!(
+                "refusing solo mining template without its reward at height {height}"
+            ));
+        }
         let kernel_root = consensus::types::kernel_root_from_shielded_root(&state_root);
         let bridge_messages = bridge_messages_from_actions(&actions, height)?;
         let message_root = bridge_message_root(&bridge_messages);
@@ -11303,7 +11309,7 @@ impl NativeNode {
             .copied()
             .collect::<BTreeSet<_>>();
         replace_pending_actions_in_state(state, retained)?;
-        if self.config.miner_address.is_some() {
+        if self.config.has_miner_payout() {
             let pending_before_coinbase_prune =
                 state.pending_actions.keys().copied().collect::<Vec<_>>();
             prune_auto_coinbase_actions_from_pending(state, context);

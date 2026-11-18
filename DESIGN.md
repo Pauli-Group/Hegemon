@@ -1251,6 +1251,15 @@ old roots and proof artifacts cannot be reinterpreted under it. See
 [external mining pool interfaces](docs/POOL_INTERFACES.md) for the contract,
 reorg/accounting boundary and separate single-key operator-tool scope.
 
+Solo miners can provision a height-indexed file of public payout addresses.
+The full wallet derives independent spending, viewing, encryption and diversifier
+keys from its existing secret material, the chain ID and the candidate block
+height. Each child uses address index zero. Mining nodes select the address
+while building a template. The wallet rediscovers it from the public reward
+opening at its original height and uses the same child for its nullifier and
+spend. The schedule is operator-private association data. Blocks use the
+existing reward format, maturity queue and spending proof.
+
 The width-16 candidate compressor uses the separate `COMPFF01` compression
 identity and returns `P(left || right || domain || COMPFF01)[i] + left[i]`
 in the Goldilocks field for all seven output limbs. Permutation rounds,

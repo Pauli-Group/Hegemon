@@ -601,8 +601,8 @@ impl WalletStore {
                     ));
                 }
             }
-            // Matured native coinbase and ordinary transfers use their existing
-            // canonical opening and legacy SINGLE-owner interpretation.
+            // This mirror also retains private recovery fee change alongside
+            // matured coinbase and ordinary transfers.
             for n in s.poseidon2_v8.owned_notes()? {
                 if !n.spent
                     && n.opening.asset_id == 0
@@ -610,17 +610,19 @@ impl WalletStore {
                     && !reserved.contains(&n.nullifier)
                     && seen.insert(n.nullifier)
                 {
+                    let (owner, legacy_ordinary) =
+                        n.spending_authority(keys, context.chain_id())?;
                     native.push((
                         n.opening.value,
                         n.position,
                         selected_input(
                             s,
-                            keys,
+                            &owner,
                             n.commitment,
                             n.nullifier,
                             n.position,
                             note_from_native(n.opening),
-                            1,
+                            u64::from(legacy_ordinary),
                             None,
                         )?,
                     ));
